@@ -77,6 +77,8 @@ machine(MachineType:TCC, "TCC Cache")
     // Coming from Memory Controller
     WBAck,                  desc="writethrough ack from memory";
     Bypass,                 desc="Bypass the entire L2 cache";
+
+    FwdWT,                  desc="...";
   }
 
   // STATES
@@ -335,6 +337,8 @@ machine(MachineType:TCC, "TCC Cache")
               trigger(Event:L2_Repl, victim, getCacheEntry(victim), TBEs.lookup(victim));
             }
           }
+        } else if (in_msg.Type == CoherenceResponseType:FwdWT) {
+          trigger(Event:FwdWT, in_msg.addr, cache_entry, tbe);
         } else {
           error("Unexpected Response Message to Core");
         }
@@ -949,6 +953,29 @@ machine(MachineType:TCC, "TCC Cache")
     }
   }
 
+  action(sn_sendNack, "sn", desc="reject the forward request") {
+      enqueue(responseToNB_out, ResponseMsg, 1) {
+        out_msg.addr := address;
+        out_msg.Type := CoherenceResponseType:Nack;
+        out_msg.Sender := machineID;
+        out_msg.Destination.add(mapAddressToMachine(address, MachineType:Directory));
+        out_msg.MessageSize := MessageSizeType:Response_Control;
+        DPRINTF(RubySlicc, "%s\n", out_msg);
+      }
+  }
+
+  action(sf_sendFwdack, "sf", desc="send the forward request ack") {
+      enqueue(responseToNB_out, ResponseMsg, 1) {
+        out_msg.addr := address;
+        out_msg.Type := CoherenceResponseType:Fwdack;
+        out_msg.Sender := machineID;
+        out_msg.Destination.add(mapAddressToMachine(address, MachineType:Directory));
+        out_msg.MessageSize := MessageSizeType:Response_Control;
+        DPRINTF(RubySlicc, "%s\n", out_msg);
+      }
+  }
+
+
   // END ACTIONS
 
   // BEGIN TRANSITIONS
@@ -1405,4 +1432,15 @@ machine(MachineType:TCC, "TCC Cache")
     i_invL2;
     p_popRequestQueue;
    }
+
+  // transition({W, V, I, IV, WI, WIB, A}, FwdWT) {
+  //   sn_sendNack;
+  //   pr_popResponseQueue;
+  // }
+
+  // transition(M, FwdWT) {
+  //   wcb_writeCacheBlock;
+  //   sf_sendFwdack;
+  //   pr_popResponseQueue;
+  // }
 }

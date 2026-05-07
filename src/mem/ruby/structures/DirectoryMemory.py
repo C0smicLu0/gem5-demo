@@ -53,3 +53,30 @@ class RubyDirectoryMemory(SimObject):
         "Size of a block in bytes. Usually same as cache line size."
     )
     ruby_system = Param.RubySystem(Parent.any, "")
+
+    # --- 多粒度目录元数据（GPU_VIPER） ---
+    #
+    # 这些参数用于启用一个“附加”的目录元数据框架，以支持多粒度（K-grain）
+    # 目录机制的研究。该框架采用最小侵入式设计不会改变现有的一致性消息流程或协议语义。
+    #
+    # 区域粒度集合必须包含最小粒度 64B。所有粒度大小均需为 2 的幂，
+    # 且必须是 64B 的整数倍。
+    mg_enable = Param.Bool(
+        False, "Enable multi-granularity directory metadata"
+    )
+    mg_region_grains = VectorParam.UInt32(
+        [],
+        "Region grain set in bytes (e.g., [64, 1024] or [64, 512, 2048])",
+    )
+    mg_policy = Param.String(
+        "ideal",
+        "Shadow-directory policy mode: ideal, custom, acg, baseline, or profile",
+    )
+    mg_shatter_threshold = Param.UInt32(
+        4,
+        "SPSR shatter threshold for custom policy; ignored by profile policy",
+    )
+    mg_profile_thresholds = VectorParam.UInt32(
+        [],
+        "Candidate sharer thresholds for profile policy; empty uses defaults",
+    )

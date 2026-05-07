@@ -31,7 +31,12 @@
 
 
 enumeration(CoherenceRequestType, desc="Coherence Request Types") {
-  // CPU Request Types ONLY
+  GETX,      desc="Get eXclusive";
+  GETS,      desc="Get Shared";
+  PUTS,       desc="Put Shared";
+  PUTX,       desc="Put Modified";
+  GETF,      desc="Issue exclusive for Flushing";
+
   RdBlk,        desc="Read Blk";
   RdBlkM,       desc="Read Blk Modified";
   RdBlkS,       desc="Read Blk Shared";
@@ -102,6 +107,11 @@ enumeration(CoherenceResponseType, desc="Coherence Response Types") {
   PrivateAck,      desc="Ack that r-buf received private notify";
   RegionWbAck,     desc="Writeback Ack that r-buf completed deallocation";
   DirReadyAck,     desc="Directory (mem ctrl)<->region dir handshake";
+
+  FwdWT,        desc="...";
+  FwdAtomic,    desc="...";
+  Fwdack,          desc="...";
+  Nack,            desc="...";
 }
 
 enumeration(CoherenceState, default="CoherenceState_NA", desc="Coherence State") {
@@ -144,6 +154,8 @@ structure(CPURequestMsg, desc="...", interface="Message") {
 
   bool isGLCSet, default="false",   desc="GLC flag value in the request";
   bool isSLCSet, default="false",   desc="SLC flag value in the request";
+
+  bool isExclusive, default="true", desc="if cache line at exclusive status";
 
   bool functionalRead(Packet *pkt) {
     // Only PUTX messages contains the data block
@@ -259,7 +271,8 @@ structure(ResponseMsg, desc="...", interface="Message") {
 
   bool isGLCSet, default="false", desc="GLC flag value in the request that triggered response";
   bool isSLCSet, default="false", desc="SLC flag value in the request that triggered response";
-
+  
+  WriteMask writeMask, desc="Write Through Data";
 
   bool functionalRead(Packet *pkt) {
     // Only PUTX messages contains the data block
@@ -321,6 +334,12 @@ enumeration(TriggerType, desc="Trigger Type") {
   WriteData,            desc="Write to full cacheblock data";
   WriteDone,            desc="Sequencer says that write is done";
   AtomicDone,           desc="Atomic is done";
+  
+  ProbeClean,         desc="...";
+  ProbeDirty,         desc="...";
+  SharersEmpty,       desc="...";
+  SharersNotEmpty,    desc="...";
+  FakeOwner,          desc="...";
 }
 
 enumeration(CacheId, desc="Which Cache in the Core") {

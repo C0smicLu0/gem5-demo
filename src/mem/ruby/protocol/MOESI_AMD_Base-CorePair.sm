@@ -169,6 +169,8 @@ machine(MachineType:CorePair, "CP-like Core Coherence")
     PrbInv,             desc="probe, no need for data";
     PrbShrData,         desc="probe downgrade, return O or M data";
 
+    FwdWT,              desc="...";
+    FwdAtomic,          desc="...";
   }  // END EVENTS
 
   enumeration(RequestType, desc="To communicate stats from transitions to recordStats") {
@@ -502,6 +504,10 @@ machine(MachineType:CorePair, "CP-like Core Coherence")
           }
         } else if (in_msg.Type == CoherenceResponseType:NBSysWBAck) {
           trigger(Event:NB_AckWB, in_msg.addr, cache_entry, tbe);
+        } else if (in_msg.Type == CoherenceResponseType:FwdWT) {
+          trigger(Event:FwdWT, in_msg.addr, cache_entry, tbe);
+        // } else if (in_msg.Type == CoherenceResponseType:FwdAtomic) {
+        //   trigger(Event:FwdAtomic, in_msg.addr, cache_entry, tbe);
         } else {
           error("Unexpected Response Message to Core");
         }
@@ -1099,6 +1105,36 @@ machine(MachineType:CorePair, "CP-like Core Coherence")
       cache_entry.DataBlk := in_msg.DataBlk;
       cache_entry.Dirty := in_msg.Dirty;
     }
+  }
+
+  action(w2_writeDcachel2, "w2", desc="write data to l2") {
+    peek(responseToCore_in, ResponseMsg) {
+      assert(is_valid(cache_entry));
+      cache_entry.DataBlk.copyPartial(in_msg.DataBlk, in_msg.writeMask);
+      cache_entry.Dirty := in_msg.Dirty;
+    }
+  }
+
+  action(sn_sendNack, "sn", desc="reject the forward request") {
+      enqueue(responseNetwork_out, ResponseMsg, issue_latency) {
+        out_msg.addr := address;
+        out_msg.Type := CoherenceResponseType:Nack;
+        out_msg.Sender := machineID;
+        out_msg.Destination.add(mapAddressToMachine(address, MachineType:Directory));
+        out_msg.MessageSize := MessageSizeType:Response_Control;
+        DPRINTF(RubySlicc, "%s\n", out_msg);
+      }
+  }
+
+  action(sf_sendFwdack, "sf", desc="send the forward request ack") {
+      enqueue(responseNetwork_out, ResponseMsg, issue_latency) {
+        out_msg.addr := address;
+        out_msg.Type := CoherenceResponseType:Fwdack;
+        out_msg.Sender := machineID;
+        out_msg.Destination.add(mapAddressToMachine(address, MachineType:Directory));
+        out_msg.MessageSize := MessageSizeType:Response_Control;
+        DPRINTF(RubySlicc, "%s\n", out_msg);
+      }
   }
 
   action(ss_sendStaleNotification, "ss", desc="stale data; nothing to writeback") {
@@ -2950,6 +2986,21 @@ machine(MachineType:CorePair, "CP-like Core Coherence")
     pd_sendProbeResponseData;
     pp_popProbeQueue;
   }
+
+  transition({I,S,E0,E1,Es,O,I_M0,I_M1,I_M0M1,I_M1M0,I_M0Ms,I_M1Ms,I_E0S,I_E1S,I_ES,IF_E0S,IF_E1S,IF_ES,IF0_ES,IF1_ES,F_S0,F_S1,ES_I,MO_I,MO_S0,MO_S1,S_F0,S_F1,S_F,O_F0,O_F1,O_F,Si_F0,Si_F1,S_M0,S_M1,O_M0,O_M1,S0,S1,Es_F0,Es_F1,Es_F,E0_F,E1_F,E0_Es,E1_Es,Ms_F0,Ms_F1,Ms_F,M0_F,M0_Ms,M1_F,M1_Ms,I_C,S0_C,S1_C,S_C}, {FwdWT, FwdAtomic}) {
+    sn_sendNack;
+    pr_popResponseQueue;
+  }
+  transition({Ms,M0,M1}, FwdWT) {
+    w2_writeDcachel2;
+    sf_sendFwdack;
+    pr_popResponseQueue;
+  }
+  // transition({Ms,M0,M1}, FwdAtomic) {
+  //   at2_performAtomicl2;
+  //   sf_sendFwdack;
+  //   pr_popResponseQueue;
+  // }
 
   // END TRANSITIONS
 }

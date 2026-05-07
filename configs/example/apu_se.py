@@ -72,7 +72,7 @@ parser.add_argument(
     "-u",
     "--num-compute-units",
     type=int,
-    default=4,
+    default=16,
     help="number of GPU compute units",
 ),
 parser.add_argument(

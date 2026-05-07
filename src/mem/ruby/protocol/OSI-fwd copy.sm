@@ -1,0 +1,2230 @@
+machine(MachineType:Directory, "AMD Baseline protocol")
+: DirectoryMemory * directory;
+  CacheMemory * L3CacheMemory;
+  Cycles response_latency := 5;
+  Cycles l3_hit_latency := 50;
+  bool noTCCdir := "False";
+  int TCC_select_num_bits;
+  bool useL3OnWT := "False";
+  bool cacheGpuReadInL3 := "True";    // 控制 GPU 读请求是否在 L3 留存
+  bool L2isWB;
+  Cycles to_memory_controller_latency := 1;
+
+  // DMA
+  MessageBuffer * requestFromDMA, network="From", virtual_network="1", vnet_type="request";
+  MessageBuffer * responseToDMA, network="To", virtual_network="3", vnet_type="response";
+
+  // From the Cores
+  MessageBuffer * requestFromCores, network="From", virtual_network="0", vnet_type="request";
+  MessageBuffer * responseFromCores, network="From", virtual_network="2", vnet_type="response";
+  MessageBuffer * unblockFromCores, network="From", virtual_network="4", vnet_type="unblock";
+
+  MessageBuffer * probeToCore, network="To", virtual_network="0", vnet_type="request";
+  MessageBuffer * responseToCore, network="To", virtual_network="2", vnet_type="response";
+
+  MessageBuffer * triggerQueue;
+  MessageBuffer * L3triggerQueue;
+
+  MessageBuffer * requestToMemory;
+  MessageBuffer * responseFromMemory;
+{
+  // STATES
+  state_declaration(State, desc="Directory states", default="Directory_State_I") {
+    // Base
+    I, AccessPermission:Invalid, desc="Invalid";
+    S, AccessPermission:Read_Write, desc="Shared";
+    O, AccessPermission:Maybe_Stale, desc="Owner & Modified & Exclusive";
+
+    // Transient
+    IS, AccessPermission:Busy, desc="Blocked, was in I, already gotMemory";
+    IS_M, AccessPermission:Busy, desc="Blocked, was in I, waiting for Memory";
+
+    IO, AccessPermission:Busy, desc="Blocked, was in I, already gotMemory";
+    IO_M, AccessPermission:Busy, desc="Blocked, was in I, waiting for Memory";
+    IE_M, AccessPermission:Busy, desc="Blocked, was in I, waiting for Memory";
+
+    IDR_M, AccessPermission:Busy, desc="Blocked, was in I, waiting for Memory";
+    IDW_M, AccessPermission:Busy, desc="Blocked, was in I, waiting for Memory";
+
+    SS_M, AccessPermission:Busy, desc="Blocked, was in S, waiting for Memory";
+    SS, AccessPermission:Busy, desc="Blocked, was in S";
+
+    SO, AccessPermission:Busy, desc="Blocked, was in S, already got probes and Memory";
+    SO_PM, AccessPermission:Busy, desc="Blocked, was in S, waiting for probes and Memory";
+    SO_P, AccessPermission:Busy, desc="Blocked, was in S, waiting for probes";
+    SO_M, AccessPermission:Busy, desc="Blocked, was in S, waiting for Memory";
+
+    S_V, AccessPermission:Busy, desc="Blocked, was in S";
+
+    SDR_M, AccessPermission:Busy, desc="Blocked, was in S, waiting for Memory";
+    SDW_P, AccessPermission:Busy, desc="Blocked, was in S";
+    SDW_M, AccessPermission:Busy, desc="Blocked, was in S";
+    SDW_PM, AccessPermission:Busy, desc="Blocked, was in S";
+
+    OO_P, AccessPermission:Busy, desc="Blocked, was in O, waiting for probes";
+    OO, AccessPermission:Busy, desc="Blocked, was in O";
+    OS, AccessPermission:Busy, desc="Blocked, was in O";
+    OS_M, AccessPermission:Busy, desc="Blocked, was in O";
+
+    O_V, AccessPermission:Busy, desc="Blocked, was in O";
+
+    OM, AccessPermission:Busy, desc="Blocked, was in O";
+    OM_P, AccessPermission:Busy, desc="Blocked, was in O";
+    OM_M, AccessPermission:Busy, desc="Blocked, was in O";
+    OM_PM, AccessPermission:Busy, desc="Blocked, was in O";
+
+    ODR_P, AccessPermission:Busy, desc="Blocked, was in O, waiting for probes";
+    ODR_M, AccessPermission:Busy, desc="Blocked, was in O";
+    ODW_P, AccessPermission:Busy, desc="Blocked, was in O, waiting for probes";
+    ODW_M, AccessPermission:Busy, desc="Blocked, was in O";
+    ODW_PM, AccessPermission:Busy, desc="Blocked, was in O";
+
+    F, AccessPermission:Busy, desc="sent Flus, blocked till ack";
+
+    O_Fwd, AccessPermission:Busy, desc="Blocked, was in O";
+    O_FwdA, AccessPermission:Busy, desc="Blocked, was in O";
+  }
+
+  // Events
+  enumeration(Event, desc="Directory events") {
+    // CPU requests
+    RdBlkS,             desc="...";
+    RdBlkM,             desc="...";
+    RdBlk,              desc="...";
+    CtoD,               desc="...";
+    WriteThrough,       desc="WriteThrough Message";
+    Atomic,             desc="Atomic Message";
+
+    // writebacks
+    VicDirty,           desc="...";
+    VicClean,           desc="...";
+    VicClean_Owner,    desc="...";
+    StaleWB,         desc="Notification that WB has been superceded by a probe";
+
+    // probe responses
+    CPUPrbResp,            desc="Probe Response Msg";
+    CPUPrbRespWB,	       desc="Probe Response Msg and Data";
+
+    ProbeAcksComplete,  desc="Probe Acks Complete";
+
+    L3Hit,              desc="Hit in L3 return data to core";
+
+    // Memory Controller
+    MemData, desc="Fetched data from memory arrives";
+    WBAck, desc="Writeback Ack from memory arrives";
+
+    CoreUnblock,            desc="Core received data, unblock";
+    UnblockWriteThrough,    desc="Unblock because of writethrough request finishing";
+
+    StaleVicDirty,        desc="Core invalidated before VicDirty processed";
+
+    // DMA
+    DmaRead,            desc="DMA read";
+    DmaReadWB,		    desc="DMA read write back";
+    DmaWrite,           desc="DMA write";
+
+    // Flush
+    Flush,              desc="Flush entry";
+
+    ProbeClean,         desc="...";
+    ProbeDirty,         desc="...";
+    SharersEmpty,       desc="...";
+    SharersNotEmpty,    desc="...";
+    FakeOwner,          desc="...";
+
+    FwdWriteThrough,    desc="...";
+    FwdAtomic,    desc="...";
+
+    Fwdack,             desc="finish the forward request";
+    Nack,               desc="reject the forward request";
+  }
+
+  enumeration(RequestType, desc="To communicate stats from transitions to recordStats") {
+    L3DataArrayRead,    desc="Read the data array";
+    L3DataArrayWrite,   desc="Write the data array";
+    L3TagArrayRead,     desc="Read the data array";
+    L3TagArrayWrite,    desc="Write the data array";
+  }
+
+  // DirectoryEntry
+  structure(Entry, desc="...", interface="AbstractCacheEntry", main="false") {
+    State DirectoryState,          desc="Directory state";
+    NetDest Sharers,                   desc="Sharers for this block";
+    NetDest Owner,                     desc="Owner of this block";
+    int WaitingUnblocks,           desc="Number of acks we're waiting for";
+    NetDest VicDirtyIgnore,  desc="VicDirty coming from whom to ignore";
+    bool gpuowner,           desc="...";
+  }
+
+  structure(CacheEntry, desc="...", interface="AbstractCacheEntry") {
+    DataBlock DataBlk,          desc="data for the block";
+    MachineID LastSender,       desc="Mach which this block came from";
+  }
+
+  structure(TBE, desc="...") {
+    Addr PhysicalAddress,   desc="Physical address for this entry";
+    DataBlock DataBlk, desc="DataBlk";
+
+    bool WaitingWBAck, desc="DataBlk WB request sent, but no ack from mem yet";
+    bool WaitingDMAAck, desc="DMA ack sent, waiting for unblock";
+
+    bool Dirty,         desc="Is the data dirty?";
+    int NumPendingAcks,        desc="num acks expected";
+    MachineID OriginalRequestor,        desc="Original Requestor";
+    MachineID CURequestor,        desc="CU that initiated the request";
+    bool Cached,        desc="data hit in Cache";
+    bool MemData,       desc="Got MemData?",default="false";
+    bool wtData,       desc="Got write through data?",default="false";
+    bool atomicData,   desc="Got Atomic op?",default="false";
+    // Note, protocol invariant: atomicData = atomicDataReturn || atomicDataNoReturn;
+    bool atomicDataReturn, desc="Got Atomic op and need return value?",default="false";
+    bool atomicDataNoReturn, desc="Got Atomic op and don't need return value?",default="false";
+    Cycles InitialRequestTime, desc="...";
+    Cycles ForwardRequestTime, desc="...";
+    Cycles ProbeRequestStartTime, desc="...";
+    MachineID LastSender, desc="Mach which this block came from";
+    bool L3Hit, default="false", desc="Was this an L3 hit?";
+    uint64_t probe_id,        desc="probe id for lifetime profiling";
+    WriteMask writeMask,    desc="outstanding write through mask";
+    int Len,            desc="Length of memory request for DMA";
+    // GLC is passed along because it is needed in the return path
+    bool isGLCSet,      desc="Bypass GPU L1 Cache";
+    bool isSLCSet,      desc="Bypass GPU L1 and L2 Cache";
+
+    CoherenceRequestType OriginalRequestType, default="CoherenceRequestType_NA", desc="原始的核心请求类型";
+    bool GPURequest, default="false", desc="请求是否来自 GPU 层级";
+    uint64_t instSeqNum, desc="...";
+  }
+
+  structure(TBETable, external="yes") {
+    TBE lookup(Addr);
+    void allocate(Addr);
+    void deallocate(Addr);
+    bool isPresent(Addr);
+  }
+
+  TBETable TBEs, template="<Directory_TBE>", constructor="m_number_of_TBEs";
+
+  int TCC_select_low_bit, default="m_ruby_system->getBlockSizeBits()";
+
+
+  Tick clockEdge();
+  Tick cyclesToTicks(Cycles c);
+
+  void set_tbe(TBE a);
+  void unset_tbe();
+  void wakeUpAllBuffers();
+  void wakeUpAllBuffers(Addr a);
+  void wakeUpBuffers(Addr a);
+  Cycles curCycle();
+
+  Entry getDirectoryEntry(Addr addr), return_by_pointer="yes" {
+    Entry dir_entry := static_cast(Entry, "pointer", directory.lookup(addr));
+
+    if (is_valid(dir_entry)) {
+      return dir_entry;
+    }
+
+    dir_entry :=  static_cast(Entry, "pointer",
+                              directory.allocate(addr, new Entry));
+    return dir_entry;
+  }
+
+  Entry allocateDirectoryEntry(Addr addr), return_by_pointer="yes" {
+    if (directory.isPresent(addr)) {
+       return static_cast(Entry, "pointer", directory.lookup(addr));
+    }
+    Entry dir_entry;
+    dir_entry := static_cast(Entry, "pointer", directory.allocate(addr, new Entry));
+    return dir_entry;
+  }
+
+  void deallocateDirectoryEntry(Addr addr) {
+    // Always going to transition from a valid state to I when deallocating
+    // Owners and shares must be clear
+    assert(getDirectoryEntry(addr).DirectoryState != State:I);
+    assert(getDirectoryEntry(addr).Owner.count() == 0);
+    assert(getDirectoryEntry(addr).Sharers.count() == 0);
+
+    directory.deallocate(addr);
+  }
+
+  State getState(TBE tbe, CacheEntry entry, Addr addr) {
+    return getDirectoryEntry(addr).DirectoryState;
+  }
+
+  void setState(TBE tbe, CacheEntry entry, Addr addr, State state) {
+    getDirectoryEntry(addr).DirectoryState := state;
+  }
+
+  void functionalRead(Addr addr, Packet *pkt) {
+    TBE tbe := TBEs.lookup(addr);
+    if(is_valid(tbe)) {
+      testAndRead(addr, tbe.DataBlk, pkt);
+    } else {
+      functionalMemoryRead(pkt);
+    }
+  }
+
+  int functionalWrite(Addr addr, Packet *pkt) {
+    int num_functional_writes := 0;
+
+    TBE tbe := TBEs.lookup(addr);
+    if(is_valid(tbe)) {
+      num_functional_writes := num_functional_writes +
+            testAndWrite(addr, tbe.DataBlk, pkt);
+    }
+
+    num_functional_writes := num_functional_writes
+        + functionalMemoryWrite(pkt);
+    return num_functional_writes;
+  }
+
+  AccessPermission getAccessPermission(Addr addr) {
+    // For this Directory, all permissions are just tracked in Directory, since
+    // it's not possible to have something in TBE but not Dir, just keep track
+    // of state all in one place.
+    if (directory.isPresent(addr)) {
+      return Directory_State_to_permission(getDirectoryEntry(addr).DirectoryState);
+    }
+
+    return AccessPermission:NotPresent;
+  }
+
+  void setAccessPermission(CacheEntry entry, Addr addr, State state) {
+    getDirectoryEntry(addr).changePermission(Directory_State_to_permission(state));
+  }
+
+  void recordRequestType(RequestType request_type, Addr addr) {
+    if (request_type == RequestType:L3DataArrayRead) {
+        L3CacheMemory.recordRequestType(CacheRequestType:DataArrayRead, addr);
+    } else if (request_type == RequestType:L3DataArrayWrite) {
+        L3CacheMemory.recordRequestType(CacheRequestType:DataArrayWrite, addr);
+    } else if (request_type == RequestType:L3TagArrayRead) {
+        L3CacheMemory.recordRequestType(CacheRequestType:TagArrayRead, addr);
+    } else if (request_type == RequestType:L3TagArrayWrite) {
+        L3CacheMemory.recordRequestType(CacheRequestType:TagArrayWrite, addr);
+    }
+  }
+
+  bool checkResourceAvailable(RequestType request_type, Addr addr) {
+    if (request_type == RequestType:L3DataArrayRead) {
+      return L3CacheMemory.checkResourceAvailable(CacheResourceType:DataArray, addr);
+    } else if (request_type == RequestType:L3DataArrayWrite) {
+      return L3CacheMemory.checkResourceAvailable(CacheResourceType:DataArray, addr);
+    } else if (request_type == RequestType:L3TagArrayRead) {
+      return L3CacheMemory.checkResourceAvailable(CacheResourceType:TagArray, addr);
+    } else if (request_type == RequestType:L3TagArrayWrite) {
+      return L3CacheMemory.checkResourceAvailable(CacheResourceType:TagArray, addr);
+    } else {
+      error("Invalid RequestType type in checkResourceAvailable");
+      return true;
+    }
+  }
+
+  // ** OUT_PORTS **
+  out_port(dmaResponseQueue_out, DMAResponseMsg, responseToDMA);
+
+  out_port(probeNetwork_out, NBProbeRequestMsg, probeToCore);
+  out_port(responseNetwork_out, ResponseMsg, responseToCore);
+
+  out_port(triggerQueue_out, TriggerMsg, triggerQueue);
+  out_port(L3TriggerQueue_out, TriggerMsg, L3triggerQueue);
+
+  out_port(memQueue_out, MemoryMsg, requestToMemory);
+
+  // ** IN_PORTS **
+
+  // DMA Ports
+  in_port(dmaRequestQueue_in, DMARequestMsg, requestFromDMA, rank=6) {
+    if (dmaRequestQueue_in.isReady(clockEdge())) {
+      peek(dmaRequestQueue_in, DMARequestMsg) {
+        TBE tbe := TBEs.lookup(in_msg.LineAddress);
+        CacheEntry entry := static_cast(CacheEntry, "pointer", L3CacheMemory.lookup(in_msg.LineAddress));
+        if (in_msg.Type == DMARequestType:READ) {
+          if (L2isWB) {
+            // trigger(Event:DmaReadWB, in_msg.LineAddress, entry, tbe);
+          } else {
+            trigger(Event:DmaRead, in_msg.LineAddress, entry, tbe);
+          }
+        } else if (in_msg.Type == DMARequestType:WRITE) {
+          trigger(Event:DmaWrite, in_msg.LineAddress, entry, tbe);
+        } else {
+          error("Unknown DMA msg");
+        }
+      }
+    }
+  }
+
+  // Trigger Queue
+  in_port(triggerQueue_in, TriggerMsg, triggerQueue, rank=5) {
+    if (triggerQueue_in.isReady(clockEdge())) {
+      peek(triggerQueue_in, TriggerMsg) {
+        TBE tbe := TBEs.lookup(in_msg.addr);
+        CacheEntry entry := static_cast(CacheEntry, "pointer", L3CacheMemory.lookup(in_msg.addr));
+        if (in_msg.Type == TriggerType:AcksComplete) {
+          trigger(Event:ProbeAcksComplete, in_msg.addr, entry, tbe);
+        } else if (in_msg.Type == TriggerType:UnblockWriteThrough) {
+          trigger(Event:UnblockWriteThrough, in_msg.addr, entry, tbe);
+        } else if (in_msg.Type == TriggerType:ProbeClean) {
+          trigger(Event:ProbeClean, in_msg.addr, entry, tbe);
+        } else if (in_msg.Type == TriggerType:ProbeDirty) {
+          trigger(Event:ProbeDirty, in_msg.addr, entry, tbe);
+        } else if (in_msg.Type == TriggerType:SharersEmpty) {
+          trigger(Event:SharersEmpty, in_msg.addr, entry, tbe);
+        } else if (in_msg.Type == TriggerType:SharersNotEmpty) {
+          trigger(Event:SharersNotEmpty, in_msg.addr, entry, tbe);
+        } else if (in_msg.Type == TriggerType:FakeOwner) {
+          trigger(Event:FakeOwner, in_msg.addr, entry, tbe);
+        } else {
+          error("Unknown trigger msg");
+        }
+      }
+    }
+  }
+
+  in_port(L3TriggerQueue_in, TriggerMsg, L3triggerQueue, rank=4) {
+    if (L3TriggerQueue_in.isReady(clockEdge())) {
+      peek(L3TriggerQueue_in, TriggerMsg) {
+        TBE tbe := TBEs.lookup(in_msg.addr);
+        CacheEntry entry := static_cast(CacheEntry, "pointer", L3CacheMemory.lookup(in_msg.addr));
+        if (in_msg.Type == TriggerType:L3Hit) {
+          trigger(Event:L3Hit, in_msg.addr, entry, tbe);
+        } else {
+          error("Unknown trigger msg");
+        }
+      }
+    }
+  }
+
+  // Unblock Network
+  in_port(unblockNetwork_in, UnblockMsg, unblockFromCores, rank=3) {
+    if (unblockNetwork_in.isReady(clockEdge())) {
+      peek(unblockNetwork_in, UnblockMsg) {
+        TBE tbe := TBEs.lookup(in_msg.addr);
+        CacheEntry entry := static_cast(CacheEntry, "pointer", L3CacheMemory.lookup(in_msg.addr));
+        trigger(Event:CoreUnblock, in_msg.addr, entry, tbe);
+      }
+    }
+  }
+
+  // Core response network
+  in_port(responseNetwork_in, ResponseMsg, responseFromCores, rank=2) {
+    if (responseNetwork_in.isReady(clockEdge())) {
+      peek(responseNetwork_in, ResponseMsg) {
+        TBE tbe := TBEs.lookup(in_msg.addr);
+        CacheEntry entry := static_cast(CacheEntry, "pointer", L3CacheMemory.lookup(in_msg.addr));
+        if (in_msg.Type == CoherenceResponseType:CPUPrbResp) {
+          if (in_msg.Hit == true && L2isWB) {
+            trigger(Event:CPUPrbRespWB, in_msg.addr, entry, tbe);
+          } else {
+            trigger(Event:CPUPrbResp, in_msg.addr, entry, tbe);
+          }
+        } else if (in_msg.Type == CoherenceResponseType:StaleNotif) {
+            trigger(Event:StaleWB, in_msg.addr, entry, tbe);
+        } else if (in_msg.Type == CoherenceResponseType:Fwdack) {
+            trigger(Event:Fwdack, in_msg.addr, entry, tbe);
+        } else if (in_msg.Type == CoherenceResponseType:Nack) {
+            trigger(Event:Nack, in_msg.addr, entry, tbe);
+        } else {
+          error("Unexpected response type");
+        }
+      }
+    }
+  }
+
+  // off-chip memory request/response is done
+  in_port(memQueue_in, MemoryMsg, responseFromMemory, rank=1) {
+    if (memQueue_in.isReady(clockEdge())) {
+      peek(memQueue_in, MemoryMsg) {
+        TBE tbe := TBEs.lookup(in_msg.addr);
+        CacheEntry entry := static_cast(CacheEntry, "pointer", L3CacheMemory.lookup(in_msg.addr));
+        if (in_msg.Type == MemoryRequestType:MEMORY_READ) {
+          trigger(Event:MemData, in_msg.addr, entry, tbe);
+          DPRINTF(RubySlicc, "%s\n", in_msg);
+        } else if (in_msg.Type == MemoryRequestType:MEMORY_WB) {
+          trigger(Event:WBAck, in_msg.addr, entry, tbe); // ignore WBAcks, don't care about them.
+        } else {
+          DPRINTF(RubySlicc, "%s\n", in_msg.Type);
+          error("Invalid message");
+        }
+      }
+    }
+  }
+
+  in_port(requestNetwork_in, CPURequestMsg, requestFromCores, rank=0) {
+    if (requestNetwork_in.isReady(clockEdge())) {
+      peek(requestNetwork_in, CPURequestMsg) {
+        TBE tbe := TBEs.lookup(in_msg.addr);
+        CacheEntry entry := static_cast(CacheEntry, "pointer", L3CacheMemory.lookup(in_msg.addr));
+        if (in_msg.Type == CoherenceRequestType:RdBlk) {
+          trigger(Event:RdBlk, in_msg.addr, entry, tbe);
+        } else if (in_msg.Type == CoherenceRequestType:RdBlkS) {
+          trigger(Event:RdBlkS, in_msg.addr, entry, tbe);
+        } else if (in_msg.Type == CoherenceRequestType:RdBlkM) {
+          trigger(Event:RdBlkM, in_msg.addr, entry, tbe);
+        } else if (in_msg.Type == CoherenceRequestType:WriteThrough) {
+          if ((getDirectoryEntry(in_msg.addr).DirectoryState == State:O) && 
+          (getDirectoryEntry(in_msg.addr).gpuowner == false) && (getDirectoryEntry(in_msg.addr).Sharers.isEmpty())) {
+            trigger(Event:FwdWriteThrough, in_msg.addr, entry, tbe);
+          } else {
+            trigger(Event:WriteThrough, in_msg.addr, entry, tbe);
+          }
+        } else if (in_msg.Type == CoherenceRequestType:Atomic  ||
+                   in_msg.Type == CoherenceRequestType:AtomicReturn ||
+                   in_msg.Type == CoherenceRequestType:AtomicNoReturn) {
+          if ((getDirectoryEntry(in_msg.addr).DirectoryState == State:O) && 
+          (getDirectoryEntry(in_msg.addr).gpuowner == false) && (getDirectoryEntry(in_msg.addr).Sharers.isEmpty())) {
+            trigger(Event:FwdAtomic, in_msg.addr, entry, tbe);
+          } else {
+            trigger(Event:Atomic, in_msg.addr, entry, tbe);
+          }
+        } else if (in_msg.Type == CoherenceRequestType:VicDirty) {
+          if (getDirectoryEntry(in_msg.addr).VicDirtyIgnore.isElement(in_msg.Requestor)) {
+            DPRINTF(RubySlicc, "Dropping VicDirty for address %s\n", in_msg.addr);
+            trigger(Event:StaleVicDirty, in_msg.addr, entry, tbe);
+          } else {
+            DPRINTF(RubySlicc, "Got VicDirty from %s on %s\n", in_msg.Requestor, in_msg.addr);
+            trigger(Event:VicDirty, in_msg.addr, entry, tbe);
+          }
+        } else if (in_msg.Type == CoherenceRequestType:VicClean) {
+          if (getDirectoryEntry(in_msg.addr).VicDirtyIgnore.isElement(in_msg.Requestor)) {
+            DPRINTF(RubySlicc, "Dropping VicClean for address %s\n", in_msg.addr);
+            trigger(Event:StaleVicDirty, in_msg.addr, entry, tbe);
+          } else {
+            if (getDirectoryEntry(in_msg.addr).Owner.isElement(in_msg.Requestor)) {
+              DPRINTF(RubySlicc, "Got VicClean_Owner from %s on %s\n", in_msg.Requestor, in_msg.addr);
+              trigger(Event:VicClean_Owner, in_msg.addr, entry, tbe);
+            } else {
+              DPRINTF(RubySlicc, "Got VicClean from %s on %s\n", in_msg.Requestor, in_msg.addr);
+              trigger(Event:VicClean, in_msg.addr, entry, tbe);
+            }
+          }
+        } else if (in_msg.Type == CoherenceRequestType:WriteFlush) {
+            DPRINTF(RubySlicc, "Got Flush from %s on %s\n", in_msg.Requestor, in_msg.addr);
+            trigger(Event:Flush, in_msg.addr, entry, tbe);
+        } else {
+          error("Bad request message type");
+        }
+      }
+    }
+  }
+
+  // Actions
+  action(allocDirEntry, "alloc", desc="Allocate directory entry") {
+    allocateDirectoryEntry(address);
+  }
+
+  action(deallocDirEntry, "dealloc", desc="Deallocate directory entry") {
+    deallocateDirectoryEntry(address);
+  }
+
+  action(v_allocateTBE, "v", desc="Allocate TBE entry") {
+    check_allocate(TBEs);
+    peek (requestNetwork_in, CPURequestMsg) {
+      assert(is_valid(tbe) == false);
+      TBEs.allocate(address);
+      set_tbe(TBEs.lookup(address));
+      tbe.OriginalRequestType := in_msg.Type;
+      MachineType requestorType := machineIDToMachineType(in_msg.Requestor);
+      MachineType cuType := machineIDToMachineType(in_msg.CURequestor);
+      bool gpuRequest := false;
+      if (requestorType == MachineType:TCC || requestorType == MachineType:TCCdir ||
+          requestorType == MachineType:TCP || requestorType == MachineType:SQC) {
+        gpuRequest := true;
+      }
+      if (cuType == MachineType:TCP || cuType == MachineType:SQC) {
+        gpuRequest := true;
+      }
+      tbe.GPURequest := gpuRequest;
+      tbe.LastSender := machineID;
+      if (in_msg.Type == CoherenceRequestType:WriteThrough) {
+        tbe.writeMask.clear();
+        tbe.writeMask.orMask(in_msg.writeMask);
+        tbe.wtData := true;
+        tbe.CURequestor := in_msg.CURequestor;
+        tbe.LastSender := in_msg.Requestor;
+      }
+      if (in_msg.Type == CoherenceRequestType:Atomic ||
+          in_msg.Type == CoherenceRequestType:AtomicReturn ||
+          in_msg.Type == CoherenceRequestType:AtomicNoReturn) {
+        tbe.writeMask.clear();
+        tbe.writeMask.orMask(in_msg.writeMask);
+        tbe.atomicData := true;
+        if (in_msg.Type == CoherenceRequestType:AtomicReturn) {
+          tbe.atomicDataReturn := true;
+        } else {
+          assert(in_msg.Type == CoherenceRequestType:AtomicNoReturn);
+          tbe.atomicDataNoReturn := true;
+        }
+        tbe.CURequestor := in_msg.CURequestor;
+        tbe.LastSender := in_msg.Requestor;
+        tbe.isSLCSet := in_msg.isSLCSet;
+      }
+      // GPU read requests also need to track where the requestor came from
+      if (in_msg.Type == CoherenceRequestType:RdBlk) {
+        tbe.CURequestor := in_msg.CURequestor;
+      }
+      tbe.Dirty := false;
+      if (in_msg.Type == CoherenceRequestType:WriteThrough) {
+        tbe.DataBlk.copyPartial(in_msg.DataBlk,in_msg.writeMask);
+        tbe.Dirty := true;
+      }
+      tbe.PhysicalAddress := in_msg.addr;
+      tbe.OriginalRequestor := in_msg.Requestor;
+      tbe.NumPendingAcks := 0;
+      tbe.Cached := in_msg.ForceShared;
+      tbe.InitialRequestTime := in_msg.InitialRequestTime;
+      tbe.isGLCSet := in_msg.isGLCSet;
+      tbe.isSLCSet := in_msg.isSLCSet;
+
+      tbe.instSeqNum := in_msg.instSeqNum;
+      tbe.WaitingWBAck := false;
+      tbe.WaitingDMAAck := false;
+    }
+  }
+
+  action(l_queueMemRdReq, "lr", desc="Read data from memory") {
+      if (L3CacheMemory.isTagPresent(address)) {
+        enqueue(L3TriggerQueue_out, TriggerMsg, l3_hit_latency) {
+          out_msg.addr := address;
+          out_msg.Type := TriggerType:L3Hit;
+          DPRINTF(RubySlicc, "%s\n", out_msg);
+        }
+        CacheEntry entry := static_cast(CacheEntry, "pointer", L3CacheMemory.lookup(address));
+        if (tbe.Dirty == false) {
+          tbe.DataBlk := entry.DataBlk;
+        }
+        tbe.LastSender := entry.LastSender;
+        tbe.L3Hit := true;
+        tbe.MemData := true;
+        L3CacheMemory.setMRU(entry);
+      } else {
+        enqueue(memQueue_out, MemoryMsg, to_memory_controller_latency) {
+          out_msg.addr := address;
+          out_msg.Type := MemoryRequestType:MEMORY_READ;
+          out_msg.Sender := machineID;
+          out_msg.MessageSize := MessageSizeType:Request_Control;
+        }
+      }
+  }
+
+  action(pr_profileL3HitMiss, "pr_l3hm", desc="L3 Hit or Miss Profile") {
+    if (tbe.L3Hit) {
+      L3CacheMemory.profileDemandHit();
+    } else {
+      L3CacheMemory.profileDemandMiss();
+    }
+  }
+
+  action(sfw_sendForwardWT, "sfw", desc="send Forward WT req") {
+    peek(requestNetwork_in, CPURequestMsg) {
+      NetDest dests;
+
+      Entry dir := getDirectoryEntry(address);
+      dests := dir.Owner;
+
+      if (dests.count() > 0) {
+        enqueue(responseNetwork_out, ResponseMsg, response_latency) {
+          out_msg.addr := address;
+          out_msg.Type := CoherenceResponseType:FwdWT;
+          out_msg.DataBlk := tbe.DataBlk;
+          out_msg.Dirty := true;
+          out_msg.MessageSize := MessageSizeType:Response_Data;
+          out_msg.Destination := dests;
+        }
+      }
+    }
+  }
+
+  action(sfa_sendForwardAtomic, "sfa", desc="send Forward Atomic req") {
+    peek(requestNetwork_in, CPURequestMsg) {
+      NetDest dests;
+
+      Entry dir := getDirectoryEntry(address);
+      dests := dir.Owner;
+
+      if (dests.count() > 0) {
+        enqueue(responseNetwork_out, ResponseMsg, response_latency) {
+          out_msg.addr := address;
+          out_msg.Type := CoherenceResponseType:FwdAtomic;
+          out_msg.writeMask := tbe.writeMask;
+          out_msg.atomicDataReturn := tbe.atomicDataReturn;
+          out_msg.atomicDataNoReturn := tbe.atomicDataNoReturn;
+          out_msg.Dirty := true;
+          out_msg.MessageSize := MessageSizeType:Response_Data;
+          out_msg.Destination := dests;
+        }
+      }
+    }
+  }
+
+  action(sc_probeShrCoreData, "sc", desc="probe shared cores, return data") {
+    peek(requestNetwork_in, CPURequestMsg) {
+      NetDest probe_dests;
+
+      Entry dir := getDirectoryEntry(address);
+      probe_dests := dir.Sharers;
+      probe_dests.remove(in_msg.Requestor);
+
+      if (probe_dests.count() > 0) {
+        enqueue(probeNetwork_out, NBProbeRequestMsg, response_latency) {
+          out_msg.addr := address;
+          out_msg.Type := ProbeRequestType:PrbDowngrade;
+          out_msg.ReturnData := true;
+          out_msg.MessageSize := MessageSizeType:Control;
+          out_msg.Destination := probe_dests;
+          tbe.NumPendingAcks := out_msg.Destination.count();
+          out_msg.isGLCSet := in_msg.isGLCSet;
+          out_msg.isSLCSet := in_msg.isSLCSet;
+          DPRINTF(RubySlicc, "%s\n", (out_msg));
+          APPEND_TRANSITION_COMMENT(" sc: Acks remaining: ");
+          APPEND_TRANSITION_COMMENT(tbe.NumPendingAcks);
+          tbe.ProbeRequestStartTime := curCycle();
+          assert(out_msg.Destination.count() > 0);
+        }
+      }
+
+      if (probe_dests.count() == 0) {
+        enqueue(triggerQueue_out, TriggerMsg, 1) {
+          out_msg.addr := address;
+          out_msg.Type := TriggerType:AcksComplete;
+        }
+      }
+    }
+  }
+
+  action(sco_probeShrCoreDatatoOwner, "sco", desc="probe owner core, return data") {
+    assert(getDirectoryEntry(address).Owner.count() != 0);
+    peek(requestNetwork_in, CPURequestMsg) {
+      NetDest probe_dests;
+
+      Entry dir := getDirectoryEntry(address);
+      probe_dests := dir.Owner;
+      probe_dests.remove(in_msg.Requestor);
+
+      if (probe_dests.count() > 0) {
+        enqueue(probeNetwork_out, NBProbeRequestMsg, response_latency) {
+          out_msg.addr := address;
+          out_msg.Type := ProbeRequestType:PrbDowngrade;
+          out_msg.ReturnData := true;
+          out_msg.MessageSize := MessageSizeType:Control;
+          out_msg.Destination := probe_dests;
+          tbe.NumPendingAcks := out_msg.Destination.count();
+          out_msg.isGLCSet := in_msg.isGLCSet;
+          out_msg.isSLCSet := in_msg.isSLCSet;
+          DPRINTF(RubySlicc, "%s\n", (out_msg));
+          APPEND_TRANSITION_COMMENT(" sc: Acks remaining: ");
+          APPEND_TRANSITION_COMMENT(tbe.NumPendingAcks);
+          tbe.ProbeRequestStartTime := curCycle();
+          assert(out_msg.Destination.count() > 0);
+        }
+      }
+
+      if (probe_dests.count() == 0) {
+        enqueue(triggerQueue_out, TriggerMsg, 1) {
+          out_msg.addr := address;
+          out_msg.Type := TriggerType:FakeOwner;
+        }
+      }
+    }
+  }
+
+  action(scod_probeShrCoreDatatoOwnerForDMA, "scod", desc="probe owner core, return data") {
+    peek(dmaRequestQueue_in, DMARequestMsg) {
+      NetDest probe_dests;
+
+      Entry dir := getDirectoryEntry(address);
+      probe_dests := dir.Owner;
+      probe_dests.remove(in_msg.Requestor);
+
+      if (probe_dests.count() > 0) {
+        enqueue(probeNetwork_out, NBProbeRequestMsg, response_latency) {
+          out_msg.addr := address;
+          out_msg.Type := ProbeRequestType:PrbDowngrade;
+          out_msg.ReturnData := true;
+          out_msg.MessageSize := MessageSizeType:Control;
+          out_msg.Destination := probe_dests;
+          tbe.NumPendingAcks := out_msg.Destination.count();
+          DPRINTF(RubySlicc, "%s\n", (out_msg));
+          APPEND_TRANSITION_COMMENT(" sc: Acks remaining: ");
+          APPEND_TRANSITION_COMMENT(tbe.NumPendingAcks);
+          tbe.ProbeRequestStartTime := curCycle();
+          assert(out_msg.Destination.count() > 0);
+        }
+      }
+
+      if (probe_dests.count() == 0) {
+        enqueue(triggerQueue_out, TriggerMsg, 1) {
+          out_msg.addr := address;
+          out_msg.Type := TriggerType:FakeOwner;
+        }
+      }
+    }
+  }
+
+  action(ic_probeInvCore, "ic", desc="probe invalidate core, no return data needed") {
+    peek(requestNetwork_in, CPURequestMsg) {
+      NetDest probe_dests;
+      NetDest range;
+      Entry dir := getDirectoryEntry(address);
+      probe_dests := dir.Sharers;
+
+      range.broadcast(MachineType:CorePair);
+
+      if ((in_msg.Type != CoherenceRequestType:WriteThrough &&
+           in_msg.Type != CoherenceRequestType:Atomic &&
+           in_msg.Type != CoherenceRequestType:AtomicReturn &&
+           in_msg.Type != CoherenceRequestType:AtomicNoReturn) ||
+           !in_msg.NoWriteConflict) {
+            range.add(mapAddressToRange(address, MachineType:TCC,
+                                        TCC_select_low_bit,
+                                        TCC_select_num_bits));
+      }
+
+      probe_dests.AND(range);
+
+      probe_dests.remove(in_msg.Requestor);
+
+      if (probe_dests.count() > 0) {
+        enqueue(probeNetwork_out, NBProbeRequestMsg, response_latency) {
+          out_msg.addr := address;
+          out_msg.Type := ProbeRequestType:PrbInv;
+          out_msg.ReturnData := false;
+          out_msg.MessageSize := MessageSizeType:Control;
+          out_msg.Destination := probe_dests;
+          out_msg.isGLCSet := in_msg.isGLCSet;
+          out_msg.isSLCSet := in_msg.isSLCSet;
+          tbe.NumPendingAcks := out_msg.Destination.count();
+          APPEND_TRANSITION_COMMENT(" ic: Acks remaining: ");
+          APPEND_TRANSITION_COMMENT(tbe.NumPendingAcks);
+          DPRINTF(RubySlicc, "%s\n", out_msg);
+          tbe.ProbeRequestStartTime := curCycle();
+          assert(out_msg.Destination.count() > 0);
+        }
+      }
+
+      if (probe_dests.count() == 0) {
+        enqueue(triggerQueue_out, TriggerMsg, 1) {
+          out_msg.addr := address;
+          out_msg.Type := TriggerType:AcksComplete;
+        }
+      }
+    }
+  }
+
+  action(dc_probeInvCoreData, "dc", desc="probe inv cores, return data") {
+      NetDest probe_dests;
+      NetDest range;
+      Entry dir := getDirectoryEntry(address);
+      probe_dests := dir.Sharers;
+
+      range.broadcast(MachineType:CorePair);
+
+      if ((tbe.OriginalRequestType != CoherenceRequestType:WriteThrough &&
+           tbe.OriginalRequestType != CoherenceRequestType:Atomic &&
+           tbe.OriginalRequestType != CoherenceRequestType:AtomicReturn &&
+           tbe.OriginalRequestType != CoherenceRequestType:AtomicNoReturn)) {
+            range.add(mapAddressToRange(address, MachineType:TCC,
+                                        TCC_select_low_bit,
+                                        TCC_select_num_bits));
+      }
+
+      probe_dests.AND(range);
+
+      probe_dests.remove(tbe.OriginalRequestor);
+
+      if (probe_dests.count() > 0) {
+        enqueue(probeNetwork_out, NBProbeRequestMsg, response_latency) {
+          out_msg.addr := address;
+          out_msg.Type := ProbeRequestType:PrbInv;
+          out_msg.ReturnData := true;
+          out_msg.MessageSize := MessageSizeType:Control;
+          out_msg.Destination := probe_dests;
+          tbe.NumPendingAcks := out_msg.Destination.count();
+          out_msg.isGLCSet := tbe.isGLCSet;
+          out_msg.isSLCSet := tbe.isSLCSet;
+          DPRINTF(RubySlicc, "%s\n", out_msg);
+          APPEND_TRANSITION_COMMENT(" dc: Acks remaining: ");
+          APPEND_TRANSITION_COMMENT(tbe.NumPendingAcks);
+          tbe.ProbeRequestStartTime := curCycle();
+          assert(out_msg.Destination.count() > 0);
+        }
+      }
+
+      if (probe_dests.count() == 0) {
+        enqueue(triggerQueue_out, TriggerMsg, 1) {
+          out_msg.addr := address;
+          out_msg.Type := TriggerType:AcksComplete;
+        }
+      }
+  }
+
+  action(icd_probeInvCoreDataForDMA, "icd", desc="Probe inv cores to sharers, return data for DMA") {
+    peek(dmaRequestQueue_in, DMARequestMsg) {
+      NetDest probe_dests;
+      Entry dir := getDirectoryEntry(address);
+      probe_dests := dir.Sharers;
+      probe_dests.remove(in_msg.Requestor);
+
+      if (probe_dests.count() > 0) {
+        enqueue(probeNetwork_out, NBProbeRequestMsg, response_latency) {
+          out_msg.addr := address;
+          out_msg.Type := ProbeRequestType:PrbInv;
+          out_msg.ReturnData := true;
+          out_msg.MessageSize := MessageSizeType:Control;
+          out_msg.Destination := probe_dests;
+          tbe.NumPendingAcks := out_msg.Destination.count();
+          DPRINTF(RubySlicc, "%s\n", out_msg);
+          APPEND_TRANSITION_COMMENT(" dc: Acks remaining: ");
+          APPEND_TRANSITION_COMMENT(tbe.NumPendingAcks);
+          tbe.ProbeRequestStartTime := curCycle();
+          assert(out_msg.Destination.count() > 0);
+        }
+      }
+
+      if (probe_dests.count() == 0) {
+        enqueue(triggerQueue_out, TriggerMsg, 1) {
+          out_msg.addr := address;
+          out_msg.Type := TriggerType:AcksComplete;
+        }
+      }
+    }
+  }
+
+  action(p_popRequestQueue, "p", desc="pop request queue") {
+    requestNetwork_in.dequeue(clockEdge());
+  }
+
+  action(mt_writeMemDataToTBE, "mt", desc="write Mem data to TBE") {
+    peek(memQueue_in, MemoryMsg) {
+      DPRINTF(RubySlicc, "%s\n", in_msg);
+      if (tbe.wtData == true) {
+        // Keep the write-through data based on mask, but use the memory block
+        // for the masked-off data. If we received a probe with data, the mask
+        // will be filled and the tbe data will fully overwrite the memory
+        // data in the temp block.
+        DataBlock tmpBlk := in_msg.DataBlk;
+        tmpBlk.copyPartial(tbe.DataBlk, tbe.writeMask);
+        tbe.DataBlk := tmpBlk;
+      } else if (tbe.Dirty == false) {
+        tbe.DataBlk := in_msg.DataBlk;
+      }
+      tbe.MemData := true;
+    }
+  }
+
+  action(pm_popMemQueue, "pm", desc="pop mem queue") {
+    dequeueMemRespQueue();
+  }
+
+  action(ptl_popTriggerQueue, "ptl", desc="pop L3 trigger queue") {
+    L3TriggerQueue_in.dequeue(clockEdge());
+  }
+
+  action(sf_setForwardReqTime, "sf", desc="...") {
+    tbe.ForwardRequestTime := curCycle();
+  }
+
+  action(wd_writeBackData, "wd", desc="Write back data if needed") {
+    if (tbe.wtData || tbe.atomicData || tbe.Dirty == false) {
+      // Only perform atomics in the directory if the SLC bit is set, or
+      // if the L2 is WT
+      if (tbe.atomicData && (tbe.isSLCSet || !L2isWB)) {
+        if (tbe.atomicDataReturn) {
+          tbe.DataBlk.atomicPartial(tbe.DataBlk, tbe.writeMask, false);
+        } else {
+          assert(tbe.atomicDataNoReturn);
+          tbe.DataBlk.atomicPartial(tbe.DataBlk, tbe.writeMask, true);
+        }
+      }
+      enqueue(memQueue_out, MemoryMsg, to_memory_controller_latency) {
+        out_msg.addr := address;
+        out_msg.Type := MemoryRequestType:MEMORY_WB;
+        out_msg.Sender := machineID;
+        out_msg.MessageSize := MessageSizeType:Writeback_Data;
+        out_msg.DataBlk := tbe.DataBlk;
+        DPRINTF(ProtocolTrace, "%s\n", out_msg);
+      }
+    }
+  }
+
+  action(s_sendResponseS, "s", desc="send Shared response") {
+    enqueue(responseNetwork_out, ResponseMsg, response_latency) {
+      out_msg.addr := address;
+      out_msg.Type := CoherenceResponseType:NBSysResp;
+      if (tbe.L3Hit) {
+        out_msg.Sender := createMachineID(MachineType:L3Cache, intToID(0));
+      } else {
+        out_msg.Sender := machineID;
+      }
+      out_msg.Destination.add(tbe.OriginalRequestor);
+      out_msg.DataBlk := tbe.DataBlk;
+      out_msg.MessageSize := MessageSizeType:Response_Data;
+      out_msg.Dirty := false;
+      out_msg.State := CoherenceState:Shared;
+      out_msg.InitialRequestTime := tbe.InitialRequestTime;
+      out_msg.ForwardRequestTime := tbe.ForwardRequestTime;
+      out_msg.ProbeRequestStartTime := tbe.ProbeRequestStartTime;
+      out_msg.OriginalResponder := tbe.LastSender;
+      out_msg.CURequestor := tbe.CURequestor;
+      out_msg.L3Hit := tbe.L3Hit;
+      DPRINTF(RubySlicc, "%s\n", out_msg);
+    }
+  }
+
+  action(es_sendResponseES, "es", desc="send Exclusive or Shared response") {
+    enqueue(responseNetwork_out, ResponseMsg, response_latency) {
+      out_msg.addr := address;
+      out_msg.Type := CoherenceResponseType:NBSysResp;
+      if (tbe.L3Hit) {
+        out_msg.Sender := createMachineID(MachineType:L3Cache, intToID(0));
+      } else {
+        out_msg.Sender := machineID;
+      }
+      out_msg.Destination.add(tbe.OriginalRequestor);
+      out_msg.DataBlk := tbe.DataBlk;
+      out_msg.MessageSize := MessageSizeType:Response_Data;
+      out_msg.Dirty := tbe.Dirty;
+      if (tbe.Cached) {
+        out_msg.State := CoherenceState:Shared;
+      } else {
+        out_msg.State := CoherenceState:Exclusive;
+      }
+      out_msg.InitialRequestTime := tbe.InitialRequestTime;
+      out_msg.ForwardRequestTime := tbe.ForwardRequestTime;
+      out_msg.ProbeRequestStartTime := tbe.ProbeRequestStartTime;
+      out_msg.OriginalResponder := tbe.LastSender;
+      out_msg.L3Hit := tbe.L3Hit;
+      out_msg.isGLCSet := tbe.isGLCSet;
+      out_msg.isSLCSet := tbe.isSLCSet;
+      out_msg.CURequestor := tbe.CURequestor;
+      DPRINTF(RubySlicc, "%s\n", out_msg);
+    }
+  }
+
+  action(alwt_allocateL3BlockOnWT, "alwt", desc="allocate the L3 block on WT") {
+    if ((tbe.wtData || tbe.atomicData) && useL3OnWT) {
+      //This tag check does not need to be counted as a hit or Miss, it has already been recorded.
+      if (L3CacheMemory.isTagPresent(address)) {
+        CacheEntry entry := static_cast(CacheEntry, "pointer", L3CacheMemory.lookup(address));
+        APPEND_TRANSITION_COMMENT(" al wrote data to L3 (hit) ");
+        entry.DataBlk := tbe.DataBlk;
+        entry.LastSender := tbe.LastSender;
+      } else {
+        if (L3CacheMemory.cacheAvail(address) == false) {
+          Addr victim := L3CacheMemory.cacheProbe(address);
+          CacheEntry victim_entry := static_cast(CacheEntry, "pointer",
+                                                 L3CacheMemory.lookup(victim));
+          enqueue(memQueue_out, MemoryMsg, to_memory_controller_latency) {
+            out_msg.addr := victim;
+            out_msg.Type := MemoryRequestType:MEMORY_WB;
+            out_msg.Sender := machineID;
+            out_msg.MessageSize := MessageSizeType:Writeback_Data;
+            out_msg.DataBlk := victim_entry.DataBlk;
+          }
+          L3CacheMemory.deallocate(victim);
+        }
+        assert(L3CacheMemory.cacheAvail(address));
+        CacheEntry entry := static_cast(CacheEntry, "pointer", L3CacheMemory.allocate(address, new CacheEntry));
+        APPEND_TRANSITION_COMMENT(" al wrote data to L3 ");
+        entry.DataBlk := tbe.DataBlk;
+        entry.LastSender := tbe.LastSender;
+      }
+    }
+  }
+
+  action(ar_fillL3FromTBE, "ar", desc="将 TBE 中的数据写入或更新 L3") {
+    // 根据原始请求类型判定是否属于普通读请求。
+    // 只要是讀請求都需要放在 L3 中（GPU參數可設置）
+    bool isRead := false;
+    if (tbe.OriginalRequestType == CoherenceRequestType:RdBlk ||
+        tbe.OriginalRequestType == CoherenceRequestType:RdBlkS ||
+        tbe.OriginalRequestType == CoherenceRequestType:RdBlkM) {
+      isRead := true;
+    }
+
+    bool wtLike := tbe.wtData || tbe.atomicData;
+    bool allowWtAlloc := false;
+    // 需要同時保持 wtLike 和 GPURequest 作爲判斷條件，
+    // 因爲 DMA 也會出發 wtLike 為真 
+    if (wtLike && tbe.GPURequest && useL3OnWT) {
+      allowWtAlloc := true;
+    }
+
+    // 读请求和允许的写直达都需要填充 L3。
+    bool shouldFill := isRead || allowWtAlloc;
+    if (isRead && tbe.GPURequest && !cacheGpuReadInL3) {
+      // GPU 读可选择不缓存，以避免占用 L3 容量。
+      shouldFill := false;
+    }
+
+    if (shouldFill) {
+      MachineID src := tbe.LastSender;
+      if (machineIDToMachineType(src) == MachineType:NULL) {
+        src := machineID;
+      }
+
+      if (L3CacheMemory.isTagPresent(address)) {
+        // L3 命中时直接覆盖数据并更新使用记录。
+        CacheEntry entry := static_cast(CacheEntry, "pointer", L3CacheMemory.lookup(address));
+        entry.DataBlk := tbe.DataBlk;
+        entry.LastSender := src;
+        L3CacheMemory.setMRU(entry);
+      } else {
+        if (L3CacheMemory.cacheAvail(address) == false) {
+          // 空间不足则选择受害行并写回内存。
+          Addr victim := L3CacheMemory.cacheProbe(address);
+          CacheEntry victim_entry := static_cast(CacheEntry, "pointer",
+                                                 L3CacheMemory.lookup(victim));
+          enqueue(memQueue_out, MemoryMsg, to_memory_controller_latency) {
+            out_msg.addr := victim;
+            out_msg.Type := MemoryRequestType:MEMORY_WB;
+            out_msg.Sender := machineID;
+            out_msg.MessageSize := MessageSizeType:Writeback_Data;
+            out_msg.DataBlk := victim_entry.DataBlk;
+          }
+          L3CacheMemory.deallocate(victim);
+        }
+        assert(L3CacheMemory.cacheAvail(address));
+        // 分配新行并写入 TBE 中的最终数据。
+        CacheEntry entry := static_cast(CacheEntry, "pointer", L3CacheMemory.allocate(address, new CacheEntry));
+        entry.DataBlk := tbe.DataBlk;
+        entry.LastSender := src;
+      }
+    }
+  }
+
+  action(dt_deallocateTBE, "dt", desc="deallocate TBE Entry") {
+    TBEs.deallocate(address);
+    unset_tbe();
+  }
+
+  action(pt_popTriggerQueue, "pt", desc="pop trigger queue") {
+    triggerQueue_in.dequeue(clockEdge());
+  }
+
+  action(wada_wakeUpAllDependentsAddr, "wada", desc="Wake up any requests waiting for this address") {
+    DPRINTF(RubySlicc, "wada wakeup: 0x%x\n", address);
+    wakeUpAllBuffers(address);
+  }
+
+  action(pu_popUnblockQueue, "pu", desc="pop unblock queue") {
+    unblockNetwork_in.dequeue(clockEdge());
+  }
+
+  action(am_addRequestorToSharers, "am", desc="Add the Requestor to the sharer list") {
+    peek(requestNetwork_in, CPURequestMsg) {
+      getDirectoryEntry(address).Sharers.add(in_msg.Requestor);
+    }
+  }
+
+  action(cc_clearSharers, "\c", desc="Clear the sharers field") {
+    getDirectoryEntry(address).Sharers.clear();
+  }
+
+  action(r_removeSharer, "r", desc="remove the requestor from sharers") {
+    peek(requestNetwork_in, CPURequestMsg) {
+      getDirectoryEntry(address).Sharers.remove(in_msg.Requestor);
+    }
+  }
+
+  action(m_sendResponseM, "m", desc="send Modified response") {
+    if (tbe.wtData) {
+      enqueue(triggerQueue_out, TriggerMsg, 1) {
+        out_msg.addr := address;
+        out_msg.Type := TriggerType:UnblockWriteThrough;
+      }
+    }else{
+      enqueue(responseNetwork_out, ResponseMsg, response_latency) {
+        out_msg.addr := address;
+        out_msg.Type := CoherenceResponseType:NBSysResp;
+        if (tbe.L3Hit) {
+          out_msg.Sender := createMachineID(MachineType:L3Cache, intToID(0));
+        } else {
+          out_msg.Sender := machineID;
+        }
+        out_msg.Destination.add(tbe.OriginalRequestor);
+        out_msg.DataBlk := tbe.DataBlk;
+        out_msg.MessageSize := MessageSizeType:Response_Data;
+        out_msg.Dirty := tbe.Dirty;
+        out_msg.State := CoherenceState:Modified;
+        out_msg.CtoD := false;
+        out_msg.InitialRequestTime := tbe.InitialRequestTime;
+        out_msg.ForwardRequestTime := tbe.ForwardRequestTime;
+        out_msg.ProbeRequestStartTime := tbe.ProbeRequestStartTime;
+        out_msg.OriginalResponder := tbe.LastSender;
+        out_msg.isGLCSet := tbe.isGLCSet;
+        out_msg.isSLCSet := tbe.isSLCSet;
+	      if(tbe.atomicData){
+          out_msg.CURequestor := tbe.CURequestor;
+	      }
+        out_msg.L3Hit := tbe.L3Hit;
+        DPRINTF(RubySlicc, "%s\n", out_msg);
+      }
+      if (tbe.atomicData) {
+        enqueue(triggerQueue_out, TriggerMsg, 1) {
+          out_msg.addr := address;
+          out_msg.Type := TriggerType:UnblockWriteThrough;
+        }
+      }
+    }
+  }
+
+  action(c_clearOwner, "c", desc="Clear the owner field") {
+    getDirectoryEntry(address).Owner.clear();
+    getDirectoryEntry(address).gpuowner := false;
+  }
+
+  action(c_moveOwnerToSharer, "cc", desc="Move owner to sharers") {
+    getDirectoryEntry(address).Sharers.addNetDest(getDirectoryEntry(address).Owner);
+    getDirectoryEntry(address).Owner.clear();
+    getDirectoryEntry(address).gpuowner := false;
+  }
+
+  action(e_ownerIsRequestor, "e", desc="The owner is now the requestor") {
+    getDirectoryEntry(address).Owner.clear();
+    getDirectoryEntry(address).Owner.add(tbe.OriginalRequestor);
+    getDirectoryEntry(address).gpuowner := tbe.GPURequest;
+  }
+
+  action(y_writeProbeDataToTBE, "y", desc="write Probe Data to TBE") {
+    peek(responseNetwork_in, ResponseMsg) {
+      if (in_msg.Dirty) {
+        if (tbe.wtData) {
+          DataBlock tmp := in_msg.DataBlk;
+          tmp.copyPartial(tbe.DataBlk,tbe.writeMask);
+          tbe.DataBlk := tmp;
+          tbe.writeMask.fillMask();
+        } else if (tbe.Dirty) {
+          if(tbe.atomicData == false && tbe.wtData == false) {
+            assert(tbe.atomicDataReturn == false && tbe.atomicDataNoReturn == false);
+            DPRINTF(RubySlicc, "Got double data for %s from %s\n", address, in_msg.Sender);
+            assert(tbe.DataBlk == in_msg.DataBlk);  // in case of double data
+          }
+        } else {
+          tbe.DataBlk := in_msg.DataBlk;
+          tbe.Dirty := in_msg.Dirty;
+          tbe.LastSender := in_msg.Sender;
+        }
+      }
+      if (in_msg.Hit) {
+        tbe.Cached := true;
+      }
+    }
+  }
+
+  action(x_decrementAcks, "x", desc="decrement Acks pending") {
+    tbe.NumPendingAcks := tbe.NumPendingAcks - 1;
+    APPEND_TRANSITION_COMMENT(" Acks remaining: ");
+    APPEND_TRANSITION_COMMENT(tbe.NumPendingAcks);
+  }
+
+  action(o_checkForCompletion, "o", desc="check for ack completion") {
+    if (tbe.NumPendingAcks == 0) {
+      enqueue(triggerQueue_out, TriggerMsg, 1) {
+        out_msg.addr := address;
+        out_msg.Type := TriggerType:AcksComplete;
+      }
+    }
+    APPEND_TRANSITION_COMMENT(" Check: Acks remaining: ");
+    APPEND_TRANSITION_COMMENT(tbe.NumPendingAcks);
+  }
+
+  action(pr_popResponseQueue, "pr", desc="pop response queue") {
+    responseNetwork_in.dequeue(clockEdge());
+  }
+
+  action(cd_checkProbeDataDirty, "cd", desc="check Probe Data clean or not") {
+    peek(responseNetwork_in, ResponseMsg) {
+      if (in_msg.Dirty) {
+        enqueue(triggerQueue_out, TriggerMsg, 1) {
+          out_msg.addr := address;
+          out_msg.Type := TriggerType:ProbeDirty;
+        }
+      } else {
+        enqueue(triggerQueue_out, TriggerMsg, 1) {
+          out_msg.addr := address;
+          out_msg.Type := TriggerType:ProbeClean;
+        }
+      }
+    }
+  }
+
+  action(st_stallAndWaitRequest, "st", desc="Stall and wait on the address") {
+    stall_and_wait(requestNetwork_in, address);
+  }
+
+  action(w_sendResponseWBAck, "w", desc="send WB Ack") {
+      enqueue(responseNetwork_out, ResponseMsg, 1) {
+        out_msg.addr := address;
+        out_msg.Type := CoherenceResponseType:NBSysWBAck;
+        out_msg.Destination.add(tbe.OriginalRequestor);
+        out_msg.CURequestor := tbe.CURequestor;
+        out_msg.Sender := machineID;
+        out_msg.MessageSize := MessageSizeType:Writeback_Control;
+        out_msg.InitialRequestTime := tbe.InitialRequestTime;
+        out_msg.ForwardRequestTime := curCycle();
+        out_msg.ProbeRequestStartTime := curCycle();
+        out_msg.instSeqNum := tbe.instSeqNum;
+        out_msg.isGLCSet := tbe.isGLCSet;
+        out_msg.isSLCSet := tbe.isSLCSet;
+      }
+  }
+
+  action(d_writeDataToMemory, "d", desc="Write data to memory") {
+    peek(requestNetwork_in, CPURequestMsg) {
+      enqueue(memQueue_out, MemoryMsg, to_memory_controller_latency) {
+        out_msg.addr := address;
+        out_msg.Type := MemoryRequestType:MEMORY_WB;
+        out_msg.Sender := machineID;
+        out_msg.MessageSize := MessageSizeType:Writeback_Data;
+        out_msg.DataBlk := in_msg.DataBlk;
+      }
+      if (tbe.Dirty == false) {
+          // have to update the TBE, too, because of how this
+          // directory deals with functional writes
+        tbe.DataBlk := in_msg.DataBlk;
+      }
+    }
+  }
+
+  action(al_allocateL3Block, "al", desc="allocate the L3 block on WB") {
+    peek(requestNetwork_in, CPURequestMsg) {
+      if (L3CacheMemory.isTagPresent(address)) {
+        CacheEntry entry := static_cast(CacheEntry, "pointer", L3CacheMemory.lookup(address));
+        APPEND_TRANSITION_COMMENT(" al wrote data to L3 (hit) ");
+        entry.DataBlk := in_msg.DataBlk;
+        entry.LastSender := in_msg.Requestor;
+        assert(is_valid(tbe));
+        //The controller always allocates a TBE entry upon receipt of a request from L2 caches.
+        //L3Hit flag is used by the hit profiling action pr_profileL3HitMiss to determine hit or miss.
+        //A TBE entry is not deallocated until a request is fully serviced and profiled.
+        tbe.L3Hit := true;
+      } else {
+        if (L3CacheMemory.cacheAvail(address) == false) {
+          Addr victim := L3CacheMemory.cacheProbe(address);
+          CacheEntry victim_entry := static_cast(CacheEntry, "pointer",
+                                                 L3CacheMemory.lookup(victim));
+          enqueue(memQueue_out, MemoryMsg, to_memory_controller_latency) {
+            out_msg.addr := victim;
+            out_msg.Type := MemoryRequestType:MEMORY_WB;
+            out_msg.Sender := machineID;
+            out_msg.MessageSize := MessageSizeType:Writeback_Data;
+            out_msg.DataBlk := victim_entry.DataBlk;
+          }
+          L3CacheMemory.deallocate(victim);
+        }
+        assert(L3CacheMemory.cacheAvail(address));
+        CacheEntry entry := static_cast(CacheEntry, "pointer", L3CacheMemory.allocate(address, new CacheEntry));
+        APPEND_TRANSITION_COMMENT(" al wrote data to L3 ");
+        entry.DataBlk := in_msg.DataBlk;
+
+        entry.LastSender := in_msg.Requestor;
+      }
+    }
+  }
+
+  action(cs_checkSharerEmpty, "cs", desc="check if the sharer list empty") {
+    Entry entry := getDirectoryEntry(address);
+    if (entry.Sharers.isEmpty()) {
+      enqueue(triggerQueue_out, TriggerMsg, 1) {
+        out_msg.addr := address;
+        out_msg.Type := TriggerType:SharersEmpty;
+      }
+    } else {
+      enqueue(triggerQueue_out, TriggerMsg, 1) {
+        out_msg.addr := address;
+        out_msg.Type := TriggerType:SharersNotEmpty;
+      }
+    }
+  }
+
+  action(f_writeFlushDataToMemory, "f", desc="Write flush data to memory") {
+    peek(requestNetwork_in, CPURequestMsg) {
+      enqueue(memQueue_out, MemoryMsg, to_memory_controller_latency) {
+        out_msg.addr := address;
+        out_msg.Type := MemoryRequestType:MEMORY_WB;
+        out_msg.Sender := machineID;
+        out_msg.MessageSize := MessageSizeType:Writeback_Data;
+        out_msg.DataBlk := in_msg.DataBlk;
+      }
+      if (tbe.Dirty == false) {
+          // have to update the TBE, too, because of how this
+          // directory deals with functional writes
+        tbe.DataBlk := in_msg.DataBlk;
+      }
+    }
+  }
+
+  action(qdr_queueDmaRdReq, "qdr", desc="Read data from memory for DMA") {
+      if (L3CacheMemory.isTagPresent(address)) {
+        enqueue(L3TriggerQueue_out, TriggerMsg, l3_hit_latency) {
+          out_msg.addr := address;
+          out_msg.Type := TriggerType:L3Hit;
+        }
+        CacheEntry entry := static_cast(CacheEntry, "pointer", L3CacheMemory.lookup(address));
+
+        // tbe.DataBlk may have partial data (e.g., for DMA writes). Make sure
+        // not to clobber the data before merging it with the L3 cache data.
+        DataBlock tmpBlk := entry.DataBlk;
+        tmpBlk.copyPartial(tbe.DataBlk, tbe.writeMask);
+        tbe.DataBlk := tmpBlk;
+
+        tbe.L3Hit := true;
+        tbe.MemData := true;
+        L3CacheMemory.setMRU(entry);
+      } else {
+        enqueue(memQueue_out, MemoryMsg, to_memory_controller_latency) {
+          out_msg.addr := address;
+          out_msg.Type := MemoryRequestType:MEMORY_READ;
+          out_msg.Sender := machineID;
+          out_msg.MessageSize := MessageSizeType:Request_Control;
+        }
+      }
+  }
+
+  action(sd_stallAndWaitRequest, "sd", desc="Stall and wait on the address") {
+    stall_and_wait(dmaRequestQueue_in, address);
+  }
+
+  action(dd_sendResponseDmaData, "dd", desc="send DMA data response") {
+    enqueue(dmaResponseQueue_out, DMAResponseMsg, response_latency) {
+      out_msg.LineAddress := address;
+      out_msg.Type := DMAResponseType:DATA;
+      out_msg.Destination.add(tbe.OriginalRequestor);
+      out_msg.DataBlk := tbe.DataBlk;
+      out_msg.MessageSize := MessageSizeType:Response_Data;
+    }
+  }
+
+  action(atd_allocateTBEforDMA, "atd", desc="allocate TBE Entry for DMA") {
+    check_allocate(TBEs);
+    peek(dmaRequestQueue_in, DMARequestMsg) {
+      TBEs.allocate(address);
+      set_tbe(TBEs.lookup(address));
+      tbe.OriginalRequestor := in_msg.Requestor;
+      tbe.NumPendingAcks := 0;
+      tbe.Dirty := false;
+      // tbe.OriginalRequestType := CoherenceRequestType:NA;
+      // // tbe.GPURequest := false;
+      // tbe.LastSender := machineID;
+      tbe.Len := in_msg.Len;
+      if (in_msg.Type == DMARequestType:WRITE) {
+        tbe.wtData := true;
+        tbe.Dirty := true;
+        tbe.DataBlk := in_msg.DataBlk;
+        // DMAs can be partial cache line. This is indicated by a "Len" value
+        // which is non-zero. In this case make sure to set the writeMask
+        // appropriately. This can occur for either reads or writes.
+        if (in_msg.Len != 0) {
+          tbe.writeMask.setMask(addressOffset(in_msg.PhysicalAddress, address), in_msg.Len);
+        } else {
+          tbe.writeMask.fillMask();
+        }
+      }
+    }
+  }
+
+  action(da_sendResponseDmaAck, "da", desc="send DMA data response") {
+    enqueue(dmaResponseQueue_out, DMAResponseMsg, response_latency) {
+      out_msg.LineAddress := address;
+      out_msg.Type := DMAResponseType:ACK;
+      out_msg.Destination.add(tbe.OriginalRequestor);
+      out_msg.MessageSize := MessageSizeType:Response_Control;
+    }
+  }
+
+
+  action(pd_popDmaRequestQueue, "pd", desc="Pop DMA request queue") {
+    dmaRequestQueue_in.dequeue(clockEdge());
+  }
+
+
+  // TRANSITIONS
+  // I（无目录条目）收到 RdBlkS 共享读 miss：分配目录和 TBE，向 L3/内存发读请求，并将请求者加入 sharers，进入挂起等待数据状态 IS_M
+  transition(I, RdBlkS, IS_M) {L3TagArrayRead}{
+    allocDirEntry;
+    v_allocateTBE;
+    l_queueMemRdReq;
+    pr_profileL3HitMiss;
+    am_addRequestorToSharers;
+    p_popRequestQueue;
+  }
+
+  // IS_M 等待内存数据：MemData 返回后，把数据写入 TBE，发送 Shared 响应给核心，释放 TBE，弹出内存队列，进入 IS（等待核心解阻塞）
+  transition(IS_M, MemData, IS) {L3TagArrayWrite, L3DataArrayWrite}{
+    mt_writeMemDataToTBE;
+    s_sendResponseS;
+    ar_fillL3FromTBE;
+    dt_deallocateTBE;
+    pm_popMemQueue;
+  }
+
+  // IS_M 等待 L3：L3Hit 时直接用 L3 数据返回 Shared 响应，释放 TBE，并弹出 L3 Trigger，进入 IS（等待核心解阻塞）
+  transition(IS_M, L3Hit, IS) {L3TagArrayWrite, L3DataArrayWrite} {
+    s_sendResponseS;
+    ar_fillL3FromTBE;
+    dt_deallocateTBE;
+    ptl_popTriggerQueue;
+  }
+
+  // IS 收到 CoreUnblock：说明核心已消费完数据，状态稳定为 S
+  transition(IS, CoreUnblock, S) {
+    wada_wakeUpAllDependentsAddr;
+    pu_popUnblockQueue;
+  }
+
+  // I 收到 RdBlk 求：分配目录、TBE，向 L3/内存读，清空 sharers 并设置 owner 为请求者，进入 IE_M（等待数据）
+  transition(I, {RdBlk}, IE_M) {L3TagArrayRead, L3TagArrayWrite}{
+    allocDirEntry;
+    v_allocateTBE;
+    l_queueMemRdReq;
+    pr_profileL3HitMiss;
+    cc_clearSharers;
+    e_ownerIsRequestor;
+    p_popRequestQueue;
+  }
+
+  // I 收到 RdBlkM / Atomic 请求：分配目录和 TBE，发起 L3/内存读，清 sharers 并设置 owner 为请求者，进入 IO_M（等待数据）
+  transition(I, {RdBlkM, Atomic}, IO_M) {L3TagArrayRead, L3TagArrayWrite}{
+    allocDirEntry;
+    v_allocateTBE;
+    l_queueMemRdReq;
+    pr_profileL3HitMiss;
+    cc_clearSharers;
+    e_ownerIsRequestor;
+    p_popRequestQueue;
+  }
+
+  // I 收到 WriteThrough 写穿请求：分配目录和 TBE，先回写确认（WBAck），再对 L3/内存发读以拿到旧数据，清 sharers，设置 owner，进入 IO_M
+  transition(I, {WriteThrough}, IO_M) {L3TagArrayRead, L3TagArrayWrite}{
+    allocDirEntry;
+    v_allocateTBE;
+    w_sendResponseWBAck;
+    l_queueMemRdReq;
+    pr_profileL3HitMiss;
+    cc_clearSharers;
+    e_ownerIsRequestor;
+    p_popRequestQueue;
+  }
+
+  //todo
+
+  // IO_M 等待 MemData：拿到内存数据后写入 TBE，回写数据到内存，发送 M 响应，释放 TBE、弹出 MemQueue，进入 IO（等待 unblock）
+  transition(IO_M, MemData, IO) {L3TagArrayWrite, L3DataArrayWrite} {
+    mt_writeMemDataToTBE;
+    wd_writeBackData;
+    m_sendResponseM;
+    ar_fillL3FromTBE;
+    dt_deallocateTBE;
+    pm_popMemQueue;
+  }
+
+  // 同上
+  transition(IO_M, L3Hit, IO) {L3TagArrayWrite, L3DataArrayWrite} {
+    wd_writeBackData;
+    m_sendResponseM;
+    ar_fillL3FromTBE;
+    dt_deallocateTBE;
+    ptl_popTriggerQueue;
+  }
+
+  // IE_M 等待 MemData：拿到内存数据后写入 TBE，返回 ES 响应，释放 TBE，进入 IO
+  transition(IE_M, MemData, IO) {L3TagArrayWrite, L3DataArrayWrite} {
+    mt_writeMemDataToTBE;
+    wd_writeBackData;
+    es_sendResponseES;
+    ar_fillL3FromTBE;
+    dt_deallocateTBE;
+    pm_popMemQueue;
+  }
+
+  // 同上
+  transition(IE_M, L3Hit, IO) {L3TagArrayWrite, L3DataArrayWrite} {
+    wd_writeBackData;
+    es_sendResponseES;
+    ar_fillL3FromTBE;
+    dt_deallocateTBE;
+    ptl_popTriggerQueue;
+  }
+
+  // IO state 收到 CoreUnblock：写事务数据已被核心用完，唤醒后稳定进入 O
+  transition(IO, CoreUnblock, O) {
+    wada_wakeUpAllDependentsAddr;
+    pu_popUnblockQueue;
+  }
+
+  // IO state 收到 UnblockWriteThrough：WT 写路径下，用 trigger unblock，最终状态为 O
+  transition(IO, UnblockWriteThrough, O) {
+    wada_wakeUpAllDependentsAddr;
+    pt_popTriggerQueue;
+  }
+
+  // S 中再收到 RdBlk/RdBlkS：已有共享块又有新的共享读，分配 TBE，向 L3/内存读，把新请求者加入 sharers，进入 SS_M
+  transition(S, {RdBlk, RdBlkS}, SS_M) {L3TagArrayRead}{
+    v_allocateTBE;
+    l_queueMemRdReq;
+    pr_profileL3HitMiss;
+    am_addRequestorToSharers;
+    p_popRequestQueue;
+  }
+
+  // SS_M 等待 MemData：从内存/L3补数据，写 TBE，返回 S 响应，释放 TBE、弹出 MemQueue，状态为 SS（等待 unblock）
+  transition(SS_M, MemData, SS) {L3TagArrayWrite, L3DataArrayWrite} {
+    mt_writeMemDataToTBE;
+    s_sendResponseS;
+    ar_fillL3FromTBE;
+    dt_deallocateTBE;
+    pm_popMemQueue;
+  }
+
+  // 同上
+  transition(SS_M, L3Hit, SS) {L3TagArrayWrite, L3DataArrayWrite} {
+    s_sendResponseS;
+    ar_fillL3FromTBE;
+    dt_deallocateTBE;
+    ptl_popTriggerQueue;
+  }
+
+  // SS 收到 CoreUnblock：所有依赖 S 块的核心已解除阻塞，回到穩定共享狀態 S
+  transition(SS, CoreUnblock, S) {
+    wada_wakeUpAllDependentsAddr;
+    pu_popUnblockQueue;
+  }
+
+  // S 收到 RdBlkM/Atomic：共享變成獨占/修改，分配 TBE，向 L3/內存取數據，同時給其他 sharers 發 invalidation，清 sharers，設 owner 為請求者，進入 SO_PM（等待探測和數據）
+  transition(S, {RdBlkM, Atomic}, SO_PM)  {L3TagArrayRead, L3TagArrayWrite} {
+    v_allocateTBE;
+    l_queueMemRdReq;
+    pr_profileL3HitMiss;
+    ic_probeInvCore;
+    cc_clearSharers;
+    e_ownerIsRequestor;
+    p_popRequestQueue;
+  }
+
+  // S 收到 WriteThrough：共享寫穿，與上類似但先回 WBAck，同時發 invalidation、清 sharers，owner 設為請求者，進入 SO_PM
+  transition(S, {WriteThrough}, SO_PM)  {L3TagArrayRead, L3TagArrayWrite} {
+    v_allocateTBE;
+    w_sendResponseWBAck;
+    l_queueMemRdReq;
+    pr_profileL3HitMiss;
+    ic_probeInvCore;
+    cc_clearSharers;
+    e_ownerIsRequestor;
+    p_popRequestQueue;
+  }
+
+   // SO_PM 等待 MemData：先只接收內存數據寫入 TBE，暫不回應核心，進入 SO_P（還在等 Probe ack）
+  transition(SO_PM, MemData, SO_P) {
+    mt_writeMemDataToTBE;
+    pm_popMemQueue;
+  }
+
+  // 同上
+  transition(SO_PM, L3Hit, SO_P) {
+    ptl_popTriggerQueue;
+  }
+
+  // SO_PM 收到 ProbeAcksComplete：所有失效探測完成，進入 SO_M（仍在等內存或 L3 數據）
+  transition(SO_PM, ProbeAcksComplete, SO_M) {
+    sf_setForwardReqTime;
+    pt_popTriggerQueue;
+  }
+
+  // SO_P 收到 ProbeAcksComplete：此時數據和失效都已完成，寫回 L3，發 M 回應，釋放 TBE，進入 SO（Owner 持有）
+  transition(SO_P, ProbeAcksComplete, SO) {L3DataArrayWrite, L3TagArrayWrite} {
+    sf_setForwardReqTime;
+    wd_writeBackData;
+    m_sendResponseM;
+    ar_fillL3FromTBE;
+    dt_deallocateTBE;
+    pt_popTriggerQueue;
+  }
+
+  // SO_M 等待 MemData：MemData 到達後寫 TBE，再寫回、發 M 回應，釋放 TBE，進入 SO
+  transition(SO_M, MemData, SO) {L3DataArrayWrite, L3TagArrayWrite} {
+    mt_writeMemDataToTBE;
+    wd_writeBackData;
+    m_sendResponseM;
+    ar_fillL3FromTBE;
+    dt_deallocateTBE;
+    pm_popMemQueue;
+  }
+
+  // 同上
+  transition(SO_M, L3Hit, SO) {L3DataArrayWrite, L3TagArrayWrite} {
+    wd_writeBackData;
+    m_sendResponseM;
+    ar_fillL3FromTBE;
+    dt_deallocateTBE;
+    ptl_popTriggerQueue;
+  }
+
+  // SO 收到 CoreUnblock：升級寫結束，owner 狀態穩定。
+  transition(SO, CoreUnblock, O) {
+    wada_wakeUpAllDependentsAddr;
+    pu_popUnblockQueue;
+  }
+
+  // SO 收到 UnblockWriteThrough：升級寫結束，owner 狀態穩定。
+  transition(SO, UnblockWriteThrough, O) {
+    wada_wakeUpAllDependentsAddr;
+    pt_popTriggerQueue;
+  }
+
+  // O 狀態再收到 RdBlk/RdBlkS：Owner 接受新的共享讀，分配 TBE，從 owner 把數據轉發出去，將新請求者加入 sharers，進入 OO_P（等待 probe 結果）
+  transition(O, {RdBlk, RdBlkS}, OO_P){
+    v_allocateTBE;
+    sco_probeShrCoreDatatoOwner;
+    am_addRequestorToSharers;
+    p_popRequestQueue;
+  }
+
+  // OO_P 收到 FakeOwner 事件：owner 被「假 owner」替換，需要從內存/L3 補數據，清 owner，發起對 L3/內存的讀請求，進入 OS_M（等待數據）
+  transition(OO_P, {FakeOwner}, OS_M){
+    c_clearOwner;
+    l_queueMemRdReq;
+    pr_profileL3HitMiss;
+    pt_popTriggerQueue;
+  }
+
+  // OS_M 等待 MemData：數據來自內存，寫 TBE，返回 Shared 響應，釋放 TBE，進入 OS（owner 退化為 sharer）
+  transition(OS_M, MemData, OS) {L3TagArrayWrite, L3DataArrayWrite} {
+    mt_writeMemDataToTBE;
+    s_sendResponseS;
+    ar_fillL3FromTBE;
+    dt_deallocateTBE;
+    pm_popMemQueue;
+  }
+
+  // 同上
+  transition(OS_M, L3Hit, OS) {L3TagArrayWrite, L3DataArrayWrite} {
+    s_sendResponseS;
+    ar_fillL3FromTBE;
+    dt_deallocateTBE;
+    ptl_popTriggerQueue;
+  }
+  
+  // OO_P 收到 ProbeClean：owner 乾淨寫回，最終 OS（有共享者），釋放 TBE、彈出 probe queue
+  transition(OO_P, {ProbeClean}, OS) {L3TagArrayWrite, L3DataArrayWrite}{
+    s_sendResponseS;
+    ar_fillL3FromTBE;
+    dt_deallocateTBE;
+    pt_popTriggerQueue;
+  }
+
+  // OO_P 收到 ProbeDirty：owner 並保持 owner，釋放 TBE、彈出 probe queue，狀態 OO
+  transition(OO_P, {ProbeDirty}, OO) {L3TagArrayWrite, L3DataArrayWrite}{
+    s_sendResponseS;
+    ar_fillL3FromTBE;
+    dt_deallocateTBE;
+    pt_popTriggerQueue;
+  }
+
+  // ODR_P（Owner + DMA Read 中間）收到 ProbeClean：原 owner 乾淨，DMA 拿到數據（dd_sendResponseDmaData），owner 變 sharer，喚醒依賴、釋放 TBE，狀態變 S
+  transition(ODR_P, {ProbeClean}, S){
+    dd_sendResponseDmaData;
+    c_moveOwnerToSharer;
+    wada_wakeUpAllDependentsAddr;
+    dt_deallocateTBE;
+    pt_popTriggerQueue;
+  }
+
+  // ODR_P 收到 ProbeDirty：owner 把 dirty 數據提供給 DMA，但仍保持 owner，喚醒依賴、釋放 TBE，狀態回 O
+  transition(ODR_P, {ProbeDirty}, O){
+    dd_sendResponseDmaData;
+    wada_wakeUpAllDependentsAddr;
+    dt_deallocateTBE;
+    pt_popTriggerQueue;
+  }
+
+  transition(OS, CoreUnblock, S) {
+    wada_wakeUpAllDependentsAddr;
+    c_moveOwnerToSharer;
+    pu_popUnblockQueue;
+  }
+
+  transition(OO, CoreUnblock, O) {
+    wada_wakeUpAllDependentsAddr;
+    pu_popUnblockQueue;
+  }
+
+   // O 收到 RdBlkM/Atomic：Owner 被新的修改請求搶佔，分配 TBE、向 L3/內存取數據，
+   // 同時將 owner 降為 sharer、對其他 sharers 發 invalidate，清 sharers，設新 owner，進入 OM_PM
+  transition(O, {RdBlkM, Atomic}, OM_PM){
+    v_allocateTBE;
+    l_queueMemRdReq;
+    pr_profileL3HitMiss;
+    c_moveOwnerToSharer;
+    dc_probeInvCoreData;
+    cc_clearSharers;
+    e_ownerIsRequestor;
+    p_popRequestQueue;
+  }
+
+  transition(O, {WriteThrough}, OM_PM){
+    v_allocateTBE;
+    l_queueMemRdReq;
+    pr_profileL3HitMiss;
+    w_sendResponseWBAck;
+    c_moveOwnerToSharer;
+    dc_probeInvCoreData;
+    cc_clearSharers;
+    e_ownerIsRequestor;
+    p_popRequestQueue;
+  }
+
+  transition(O, {FwdAtomic}, O_FwdA){
+    v_allocateTBE;
+    sfa_sendForwardAtomic;
+    p_popRequestQueue;
+  }
+
+  transition(O, {FwdWriteThrough}, O_Fwd){
+    v_allocateTBE;
+    sfw_sendForwardWT;
+    w_sendResponseWBAck;
+    p_popRequestQueue;
+  }
+
+  transition(O_FwdA, Fwdack, O) {
+    m_sendResponseM;
+    dt_deallocateTBE;
+    wada_wakeUpAllDependentsAddr;
+    pr_popResponseQueue;
+  }
+
+  transition(O_Fwd, Fwdack, O) {
+    dt_deallocateTBE;
+    wada_wakeUpAllDependentsAddr;
+    pr_popResponseQueue;
+  }
+
+  transition(O_Fwd, Nack, OM_PM) {
+    l_queueMemRdReq;
+    pr_profileL3HitMiss;
+    c_moveOwnerToSharer;
+    dc_probeInvCoreData;
+    cc_clearSharers;
+    e_ownerIsRequestor;
+    pr_popResponseQueue;
+  }
+
+  // OM_PM 收到 ProbeAcksComplete：失效/數據 probe 結束，記錄 forward 時間，進入 OM_M（還等內存或 L3 數據）
+  transition(OM_PM, ProbeAcksComplete, OM_M) {L3DataArrayWrite, L3TagArrayWrite} {
+    sf_setForwardReqTime;
+    pt_popTriggerQueue;
+  }
+
+  // OM_PM 收到 MemData：先拿到內存數據寫入 TBE，進入 OM_P（仍等 probe 完成）
+  transition(OM_PM, MemData, OM_P) {
+    mt_writeMemDataToTBE;
+    pm_popMemQueue;
+  }
+
+  // 同上
+  transition(OM_PM, L3Hit, OM_P) {
+    ptl_popTriggerQueue;
+  }
+
+  // OM_P 收到 ProbeAcksComplete：數據+失效都就緒，寫回、發 M 回應，釋放 TBE，狀態 OM（等待 unblock）
+  transition(OM_P, ProbeAcksComplete, OM) {L3DataArrayWrite, L3TagArrayWrite} {
+    sf_setForwardReqTime;
+    wd_writeBackData;
+    m_sendResponseM;
+    ar_fillL3FromTBE;
+    dt_deallocateTBE;
+    pt_popTriggerQueue;
+  }
+
+  // OM_M 等待 MemData：MemData 到達後寫 TBE，寫回並發 M 回應，在 L3 分配塊，釋放 TBE，最終狀態 OM（owner + sharer 結構）
+  transition(OM_M, MemData, OM) {L3DataArrayWrite, L3TagArrayWrite} {
+    mt_writeMemDataToTBE;
+    wd_writeBackData;
+    m_sendResponseM;
+    ar_fillL3FromTBE;
+    dt_deallocateTBE;
+    pm_popMemQueue;
+  }
+
+  // 同上
+  transition(OM_M, L3Hit, OM) {L3DataArrayWrite, L3TagArrayWrite} {
+    wd_writeBackData;
+    m_sendResponseM;
+    ar_fillL3FromTBE;
+    dt_deallocateTBE;
+    ptl_popTriggerQueue;
+  }
+
+  transition(OM, CoreUnblock, O) {
+    wada_wakeUpAllDependentsAddr;
+    pu_popUnblockQueue;
+  }
+
+  transition(OM, UnblockWriteThrough, O) {
+    wada_wakeUpAllDependentsAddr;
+    pt_popTriggerQueue;
+  }
+
+  // S 收到 VicClean：L1/L2 要驅逐乾淨共享塊，分配 TBE，回 WBAck，寫回數據到內存，移除一個 sharer(如果 sharers 清空轉 I)，進入 S_V
+  transition(S, VicClean, S_V) {L3TagArrayRead, L3DataArrayWrite} {
+    v_allocateTBE;
+    w_sendResponseWBAck;
+    d_writeDataToMemory;
+    al_allocateL3Block;
+    pr_profileL3HitMiss;
+    r_removeSharer;
+    cs_checkSharerEmpty;
+    p_popRequestQueue;
+  }
+  
+  // S_V 收到 SharersNotEmpty：還有其他 sharer，釋放 TBE，回到 S
+  transition(S_V, SharersNotEmpty, S) {
+    wada_wakeUpAllDependentsAddr;
+    dt_deallocateTBE;
+    pt_popTriggerQueue;
+  }
+
+  // S_V 收到 SharersEmpty：最後一個 sharer 也驅逐，釋放 TBE，清 owner 並釋放目錄條目，狀態回 I
+  transition(S_V, SharersEmpty, I) {
+    wada_wakeUpAllDependentsAddr;
+    dt_deallocateTBE;
+    c_clearOwner;
+    deallocDirEntry;
+    pt_popTriggerQueue;
+  }
+
+  // O 收到 VicClean_Owner：owner 自己驅逐乾淨塊，寫回內存，清 sharers 和 owner，喚醒依賴，釋放 TBE 和目錄條目，狀態 I
+  transition(O, VicClean_Owner, I) {L3TagArrayRead, L3DataArrayWrite} {
+    v_allocateTBE;
+    w_sendResponseWBAck;
+    d_writeDataToMemory;
+    al_allocateL3Block;
+    pr_profileL3HitMiss;
+    cc_clearSharers;
+    c_clearOwner;
+    wada_wakeUpAllDependentsAddr;
+    dt_deallocateTBE;
+    deallocDirEntry;
+    p_popRequestQueue;
+  }
+
+  // O 收到 VicClean：其中一個 sharer 乾淨驅逐，寫回內存，移除 sharer，喚醒依賴，釋放 TBE，仍維持 O（還有其他 sharer 或 owner）
+  transition(O, VicClean, O) {L3TagArrayRead, L3DataArrayWrite} {
+    v_allocateTBE;
+    w_sendResponseWBAck;
+    d_writeDataToMemory;
+    al_allocateL3Block;
+    pr_profileL3HitMiss;
+    r_removeSharer;
+    wada_wakeUpAllDependentsAddr;
+    dt_deallocateTBE;
+    p_popRequestQueue;
+  }
+
+  // O 收到 VicDirty：驅逐的是帶有 dirty 的 sharer/owner，寫回內存，移除 sharer、清 owner，判斷 sharers 是否為空，進入 O_V
+  transition(O, VicDirty, O_V) {L3TagArrayRead, L3DataArrayWrite} {
+    v_allocateTBE;
+    w_sendResponseWBAck;
+    d_writeDataToMemory;
+    al_allocateL3Block;
+    pr_profileL3HitMiss;
+    r_removeSharer;
+    c_clearOwner;
+    cs_checkSharerEmpty;
+    p_popRequestQueue;
+  }
+  
+  transition(O_V, SharersNotEmpty, S) {
+    wada_wakeUpAllDependentsAddr;
+    dt_deallocateTBE;
+    pt_popTriggerQueue;
+  }
+
+  transition(O_V, SharersEmpty, I) {
+    wada_wakeUpAllDependentsAddr;
+    dt_deallocateTBE;
+    deallocDirEntry;
+    pt_popTriggerQueue;
+  }
+
+  transition(O, Flush, F) {L3TagArrayRead, L3TagArrayWrite} {
+    v_allocateTBE;
+    f_writeFlushDataToMemory;
+    w_sendResponseWBAck;
+    c_clearOwner;
+    cc_clearSharers;
+    p_popRequestQueue;
+  }
+
+  transition(S, Flush, F) {L3TagArrayRead, L3TagArrayWrite} {
+    v_allocateTBE;
+    w_sendResponseWBAck;
+    cc_clearSharers;
+    p_popRequestQueue;
+  }
+
+  transition(I, Flush, F) {L3TagArrayRead, L3TagArrayWrite} {
+    allocDirEntry;
+    v_allocateTBE;
+    w_sendResponseWBAck;
+    p_popRequestQueue;
+  }
+  
+  transition(F, WBAck, I) {
+    dt_deallocateTBE;
+    deallocDirEntry;
+    pm_popMemQueue;
+  }
+
+  // OO_P / ODR_P 收到 CPUPrbResp/CPUPrbRespWB：處理 CPU probe 響應，把 probe 數據寫入 TBE，檢查是否 dirty，彈出 probe 響應隊列
+  transition({OO_P, ODR_P}, {CPUPrbResp, CPUPrbRespWB}) {
+    sf_setForwardReqTime;
+    y_writeProbeDataToTBE;
+    cd_checkProbeDataDirty;
+    pr_popResponseQueue;
+  }
+  
+  transition({SO_P, SO_PM, OM_P, OM_PM, ODW_P, ODW_PM, SDW_P, SDW_PM}, CPUPrbResp) {
+    y_writeProbeDataToTBE;
+    x_decrementAcks;
+    o_checkForCompletion;
+    pr_popResponseQueue;
+  }
+
+  transition({SO_P, SO_PM, OM_P, OM_PM, ODW_P, ODW_PM, SDW_P, SDW_PM}, CPUPrbRespWB) {
+    y_writeProbeDataToTBE;
+    x_decrementAcks;
+    o_checkForCompletion;
+    pr_popResponseQueue;
+  }
+
+  transition(O, StaleWB, O) {L3TagArrayWrite} {
+    wada_wakeUpAllDependentsAddr;
+    pr_popResponseQueue;
+  }
+
+  transition(S, StaleWB, S) {L3TagArrayWrite} {
+    wada_wakeUpAllDependentsAddr;
+    pr_popResponseQueue;
+  }
+
+  transition(I, StaleWB, I) {L3TagArrayWrite} {
+    wada_wakeUpAllDependentsAddr;
+    pr_popResponseQueue;
+  }
+
+  transition(I, DmaRead, IDR_M) {L3TagArrayRead} {
+    allocDirEntry;
+    atd_allocateTBEforDMA;
+    qdr_queueDmaRdReq;
+    pr_profileL3HitMiss;
+    pd_popDmaRequestQueue;
+  }
+
+  transition(IDR_M, MemData, I) {
+    mt_writeMemDataToTBE;
+    dd_sendResponseDmaData;
+    wada_wakeUpAllDependentsAddr;
+    dt_deallocateTBE;
+    deallocDirEntry;
+    pm_popMemQueue;
+  }
+
+  transition(IDR_M, L3Hit, I) {
+    dd_sendResponseDmaData;
+    wada_wakeUpAllDependentsAddr;
+    dt_deallocateTBE;
+    deallocDirEntry;
+    ptl_popTriggerQueue;
+  }
+
+  transition(I, DmaWrite, IDW_M) {L3TagArrayRead} {
+    allocDirEntry;
+    atd_allocateTBEforDMA;
+    qdr_queueDmaRdReq;
+    pr_profileL3HitMiss;
+    pd_popDmaRequestQueue;
+  }
+
+  transition(IDW_M, MemData, I) {
+    mt_writeMemDataToTBE;
+    wd_writeBackData;
+    da_sendResponseDmaAck;
+    wada_wakeUpAllDependentsAddr;
+    dt_deallocateTBE;
+    deallocDirEntry;
+    pm_popMemQueue;
+  }
+
+  transition(IDW_M, L3Hit, I) {
+    wd_writeBackData;
+    da_sendResponseDmaAck;
+    wada_wakeUpAllDependentsAddr;
+    dt_deallocateTBE;
+    deallocDirEntry;
+    ptl_popTriggerQueue;
+  }
+
+  transition(S, DmaRead, SDR_M) {L3TagArrayRead} {
+    atd_allocateTBEforDMA;
+    qdr_queueDmaRdReq;
+    pr_profileL3HitMiss;
+    pd_popDmaRequestQueue;
+  }
+
+  transition(SDR_M, MemData, S) {
+    mt_writeMemDataToTBE;
+    dd_sendResponseDmaData;
+    wada_wakeUpAllDependentsAddr;
+    dt_deallocateTBE;
+    pm_popMemQueue;
+  }
+
+  transition(SDR_M, L3Hit, S) {
+    dd_sendResponseDmaData;
+    wada_wakeUpAllDependentsAddr;
+    dt_deallocateTBE;
+    ptl_popTriggerQueue;
+  }
+
+  transition(S, DmaWrite, SDW_PM){
+    atd_allocateTBEforDMA;
+    qdr_queueDmaRdReq;
+    pr_profileL3HitMiss;
+    c_moveOwnerToSharer;
+    icd_probeInvCoreDataForDMA;
+    pd_popDmaRequestQueue;
+  }
+
+  transition(SDW_PM, MemData, SDW_P) {
+    mt_writeMemDataToTBE;
+    pm_popMemQueue;
+  }
+
+  transition(SDW_PM, L3Hit, SDW_P) {
+    ptl_popTriggerQueue;
+  }
+
+  transition(SDW_PM, ProbeAcksComplete, SDW_M) {
+    pt_popTriggerQueue;
+  }
+
+  transition(SDW_M, MemData, I) {
+    mt_writeMemDataToTBE;
+    wd_writeBackData;
+    da_sendResponseDmaAck;
+    cc_clearSharers;
+    c_clearOwner;
+    deallocDirEntry;
+    wada_wakeUpAllDependentsAddr;
+    dt_deallocateTBE;
+    pm_popMemQueue;
+  }
+
+  transition(SDW_P, ProbeAcksComplete, I) {
+    wd_writeBackData;
+    da_sendResponseDmaAck;
+    cc_clearSharers;
+    c_clearOwner;
+    deallocDirEntry;
+    wada_wakeUpAllDependentsAddr;
+    dt_deallocateTBE;
+    pt_popTriggerQueue;
+  }
+
+  transition(O, DmaRead, ODR_P) {
+    atd_allocateTBEforDMA;
+    scod_probeShrCoreDatatoOwnerForDMA;
+    pd_popDmaRequestQueue;
+  }
+
+  transition(ODR_P, {FakeOwner}, ODR_M){
+    c_clearOwner;
+    qdr_queueDmaRdReq;
+    pr_profileL3HitMiss;
+    pt_popTriggerQueue;
+  }
+
+  transition(ODR_M, MemData, S) {
+    mt_writeMemDataToTBE;
+    dd_sendResponseDmaData;
+    wada_wakeUpAllDependentsAddr;
+    dt_deallocateTBE;
+    pm_popMemQueue;
+  }
+
+  transition(ODR_M, L3Hit, S) {
+    dd_sendResponseDmaData;
+    wada_wakeUpAllDependentsAddr;
+    dt_deallocateTBE;
+    ptl_popTriggerQueue;
+  }
+
+  transition(O, DmaWrite, ODW_PM){
+    atd_allocateTBEforDMA;
+    qdr_queueDmaRdReq;
+    pr_profileL3HitMiss;
+    c_moveOwnerToSharer;
+    icd_probeInvCoreDataForDMA;
+    pd_popDmaRequestQueue;
+  }
+
+  transition(ODW_PM, MemData, ODW_P) {
+    mt_writeMemDataToTBE;
+    pm_popMemQueue;
+  }
+
+  transition(ODW_PM, L3Hit, ODW_P) {
+    ptl_popTriggerQueue;
+  }
+
+  transition(ODW_PM, ProbeAcksComplete, ODW_M) {
+    pt_popTriggerQueue;
+  }
+
+  transition(ODW_M, MemData, I) {
+    mt_writeMemDataToTBE;
+    wd_writeBackData;
+    da_sendResponseDmaAck;
+    cc_clearSharers;
+    c_clearOwner;
+    deallocDirEntry;
+    wada_wakeUpAllDependentsAddr;
+    dt_deallocateTBE;
+    pm_popMemQueue;
+  }
+
+  transition(ODW_P, ProbeAcksComplete, I) {
+    wd_writeBackData;
+    da_sendResponseDmaAck;
+    cc_clearSharers;
+    c_clearOwner;
+    deallocDirEntry;
+    wada_wakeUpAllDependentsAddr;
+    dt_deallocateTBE;
+    pt_popTriggerQueue;
+  }
+
+  transition({IS, IS_M, IO, IO_M, SS, SS_M, SO, SO_PM, SO_P, SO_M, OO, OO_P, OS, OS_M, OM, OM_P, OM_PM, OM_M, S_V, O_V, IE_M, IDR_M, IDW_M, SDR_M, ODR_P, ODR_M, ODW_P, ODW_M, ODW_PM, SDW_P, SDW_M, SDW_PM, O_Fwd}, {RdBlkS, RdBlkM, RdBlk}) {
+    st_stallAndWaitRequest;
+  }
+
+  transition({IS, IS_M, IO, IO_M, SS, SS_M, SO, SO_PM, SO_P, SO_M, OO, OO_P, OS, OS_M, OM, OM_P, OM_PM, OM_M, S_V, O_V, IE_M, O_Fwd}, {Atomic, WriteThrough, FwdWriteThrough}) {
+    st_stallAndWaitRequest;
+  }//no DMA
+
+  transition({IS, IS_M, IO, IO_M, SS, SS_M, SO, SO_PM, SO_P, SO_M, OO, OO_P, OS, OS_M, OM, OM_P, OM_PM, OM_M, S_V, O_V, IE_M, IDR_M, IDW_M, SDR_M, ODR_P, ODR_M, ODW_P, ODW_M, ODW_PM, SDW_P, SDW_M, SDW_PM, O_Fwd}, {VicDirty, VicClean}) {
+    st_stallAndWaitRequest;
+  }//no BL2
+
+  transition({O, S, I, IS, IS_M, IO, IO_M, SS, SS_M, SO, SO_PM, SO_P, SO_M, OO, OO_P, OS, OS_M, OM, OM_P, OM_PM, OM_M, S_V, O_V, IE_M, IDR_M, IDW_M, SDR_M, ODR_P, ODR_M, ODW_P, ODW_M, ODW_PM, SDW_P, SDW_M, SDW_PM, O_Fwd}, WBAck) {
+    pm_popMemQueue;
+  }
+
+  transition({IS, IS_M, IO, IO_M, SS, SS_M, SO, SO_PM, SO_P, SO_M, OO, OO_P, OS, OS_M, OM, OM_P, OM_PM, OM_M, S_V, O_V, IE_M, IDR_M, IDW_M, SDR_M, ODR_P, ODR_M, ODW_P, ODW_M, ODW_PM, SDW_P, SDW_M, SDW_PM, O_Fwd}, {DmaRead, DmaReadWB, DmaWrite}){
+    sd_stallAndWaitRequest;
+  }
+}
