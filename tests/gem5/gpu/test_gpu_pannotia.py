@@ -49,16 +49,22 @@ dataset_links = {
     "1k_128k.gr": "https://storage.googleapis.com/dist.gem5.org/dist/develop/datasets/pannotia/bc/1k_128k.gr",
 }
 
+missing_binary = any(
+    not Path(f"{binary_path}/{name}").exists() for name in binary_links
+)
+missing_dataset = any(
+    not Path(f"{dataset_path}/{name}").exists() for name in dataset_links
+)
 
-if not os.path.isdir(resource_path):
-    os.makedirs(binary_path)
-    os.makedirs(dataset_path)
+if missing_binary or missing_dataset:
+    os.makedirs(binary_path, exist_ok=True)
+    os.makedirs(dataset_path, exist_ok=True)
 
-    for name in binary_links.keys():
+    for name in binary_links:
         if Path(f"{binary_path}/{name}").exists():
             continue
         urlretrieve(binary_links[name], f"{binary_path}/{name}")
-    for name in dataset_links.keys():
+    for name in dataset_links:
         if Path(f"{dataset_path}/{name}").exists():
             continue
         urlretrieve(dataset_links[name], f"{dataset_path}/{name}")
