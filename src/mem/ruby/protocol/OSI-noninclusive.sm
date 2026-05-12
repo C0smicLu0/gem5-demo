@@ -706,6 +706,7 @@ machine(MachineType:Directory, "AMD Baseline protocol")
       probe_dests := dir.Sharers;
 
       range.broadcast(MachineType:CorePair);
+      range.broadcast(MachineType:MESICorePair);
 
       if ((in_msg.Type != CoherenceRequestType:WriteThrough &&
            in_msg.Type != CoherenceRequestType:Atomic &&
@@ -756,6 +757,7 @@ machine(MachineType:Directory, "AMD Baseline protocol")
       probe_dests := dir.Sharers;
 
       range.broadcast(MachineType:CorePair);
+      range.broadcast(MachineType:MESICorePair);
 
       if ((in_msg.Type != CoherenceRequestType:WriteThrough &&
            in_msg.Type != CoherenceRequestType:Atomic &&

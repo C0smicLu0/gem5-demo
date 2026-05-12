@@ -3,6 +3,7 @@ include "MOESI_AMD_Base-msg.sm";
 include "OSI-noninclusive.sm";
 include "MOESI_AMD_Base-dma.sm";
 include "MOESI_AMD_Base-CorePair.sm";
+include "MESI_AMD_Base-MESICorePair.sm";
 include "GPU_VIPER-msg.sm";
 include "GPU_VIPER-TCP.sm";
 include "GPU_VIPER-SQC.sm";

@@ -101,40 +101,49 @@ class L2Cache(RubyCache):
         self.replacement_policy = TreePLRURP()
 
 
+def create_corepair_controller(cntrl, options, ruby_system, system):
+    cntrl.version = cntrl.versionCount()
+
+    cntrl.L1Icache = L1Cache()
+    cntrl.L1Icache.create(options.l1i_size, options.l1i_assoc, options)
+    cntrl.L1D0cache = L1Cache()
+    cntrl.L1D0cache.create(options.l1d_size, options.l1d_assoc, options)
+    cntrl.L1D1cache = L1Cache()
+    cntrl.L1D1cache.create(options.l1d_size, options.l1d_assoc, options)
+    cntrl.L2cache = L2Cache()
+    cntrl.L2cache.create(options.l2_size, options.l2_assoc, options)
+
+    cntrl.sequencer = RubySequencer(ruby_system=ruby_system)
+    cntrl.sequencer.version = cntrl.seqCount()
+    cntrl.sequencer.dcache = cntrl.L1D0cache
+    cntrl.sequencer.ruby_system = ruby_system
+    cntrl.sequencer.coreid = 0
+    cntrl.sequencer.is_cpu_sequencer = True
+
+    cntrl.sequencer1 = RubySequencer(ruby_system=ruby_system)
+    cntrl.sequencer1.version = cntrl.seqCount()
+    cntrl.sequencer1.dcache = cntrl.L1D1cache
+    cntrl.sequencer1.ruby_system = ruby_system
+    cntrl.sequencer1.coreid = 1
+    cntrl.sequencer1.is_cpu_sequencer = True
+
+    cntrl.issue_latency = options.cpu_to_dir_latency
+    cntrl.send_evictions = True if options.cpu_type == "X86O3CPU" else False
+
+    cntrl.ruby_system = ruby_system
+
+    if options.recycle_latency:
+        cntrl.recycle_latency = options.recycle_latency
+
+
 class CPCntrl(GPU_VIPER_CorePair_Controller, CntrlBase):
     def create(self, options, ruby_system, system):
-        self.version = self.versionCount()
+        create_corepair_controller(self, options, ruby_system, system)
 
-        self.L1Icache = L1Cache()
-        self.L1Icache.create(options.l1i_size, options.l1i_assoc, options)
-        self.L1D0cache = L1Cache()
-        self.L1D0cache.create(options.l1d_size, options.l1d_assoc, options)
-        self.L1D1cache = L1Cache()
-        self.L1D1cache.create(options.l1d_size, options.l1d_assoc, options)
-        self.L2cache = L2Cache()
-        self.L2cache.create(options.l2_size, options.l2_assoc, options)
 
-        self.sequencer = RubySequencer(ruby_system=ruby_system)
-        self.sequencer.version = self.seqCount()
-        self.sequencer.dcache = self.L1D0cache
-        self.sequencer.ruby_system = ruby_system
-        self.sequencer.coreid = 0
-        self.sequencer.is_cpu_sequencer = True
-
-        self.sequencer1 = RubySequencer(ruby_system=ruby_system)
-        self.sequencer1.version = self.seqCount()
-        self.sequencer1.dcache = self.L1D1cache
-        self.sequencer1.ruby_system = ruby_system
-        self.sequencer1.coreid = 1
-        self.sequencer1.is_cpu_sequencer = True
-
-        self.issue_latency = options.cpu_to_dir_latency
-        self.send_evictions = True if options.cpu_type == "X86O3CPU" else False
-
-        self.ruby_system = ruby_system
-
-        if options.recycle_latency:
-            self.recycle_latency = options.recycle_latency
+class MESICPCntrl(GPU_VIPER_MESICorePair_Controller, CntrlBase):
+    def create(self, options, ruby_system, system):
+        create_corepair_controller(self, options, ruby_system, system)
 
 
 class TCPCache(RubyCache):
@@ -423,6 +432,18 @@ class DirCntrl(GPU_VIPER_Directory_Controller, CntrlBase):
 
 
 def define_options(parser):
+    parser.add_argument(
+        "--num-moesi-cpus",
+        type=int,
+        default=None,
+        help="number of CPU cores using the MOESI CorePair protocol",
+    )
+    parser.add_argument(
+        "--num-mesi-cpus",
+        type=int,
+        default=None,
+        help="number of CPU cores using the MESI CorePair protocol",
+    )
     parser.add_argument("--num-subcaches", type=int, default=4)
     parser.add_argument("--l3-data-latency", type=int, default=20)
     parser.add_argument("--l3-tag-latency", type=int, default=15)
@@ -696,40 +717,71 @@ def construct_gpudirs(options, system, ruby_system, network):
     return dir_cntrl_nodes, mem_ctrls
 
 
+def connect_corepair_controller(cntrl, network):
+    cntrl.requestFromCore = MessageBuffer()
+    cntrl.requestFromCore.out_port = network.in_port
+
+    cntrl.responseFromCore = MessageBuffer()
+    cntrl.responseFromCore.out_port = network.in_port
+
+    cntrl.unblockFromCore = MessageBuffer()
+    cntrl.unblockFromCore.out_port = network.in_port
+
+    cntrl.probeToCore = MessageBuffer()
+    cntrl.probeToCore.in_port = network.out_port
+
+    cntrl.responseToCore = MessageBuffer()
+    cntrl.responseToCore.in_port = network.out_port
+
+    cntrl.mandatoryQueue = MessageBuffer()
+    cntrl.triggerQueue = MessageBuffer(ordered=True)
+
+
 def construct_corepairs(options, system, ruby_system, network):
     cpu_sequencers = []
     cp_cntrl_nodes = []
 
-    for i in range((options.num_cpus + 1) // 2):
+    num_moesi_cpus = getattr(options, "num_moesi_cpus", None)
+    num_mesi_cpus = getattr(options, "num_mesi_cpus", None)
+    if num_moesi_cpus is None and num_mesi_cpus is None:
+        num_moesi_cpus = options.num_cpus
+        num_mesi_cpus = 0
+    else:
+        num_moesi_cpus = num_moesi_cpus or 0
+        num_mesi_cpus = num_mesi_cpus or 0
+
+    if num_mesi_cpus and (num_moesi_cpus % 2 or num_mesi_cpus % 2):
+        fatal(
+            "Mixed MOESI/MESI CPU clusters require even "
+            "--num-moesi-cpus and --num-mesi-cpus values"
+        )
+
+    total_cpus = num_moesi_cpus + num_mesi_cpus
+    if total_cpus != options.num_cpus:
+        fatal(
+            "Expected options.num_cpus to equal "
+            "--num-moesi-cpus + --num-mesi-cpus"
+        )
+
+    for i in range((num_moesi_cpus + 1) // 2):
         cp_cntrl = CPCntrl()
         cp_cntrl.create(options, ruby_system, system)
 
         exec("ruby_system.cp_cntrl%d = cp_cntrl" % i)
-        #
-        # Add controllers and sequencers to the appropriate lists
-        #
         cpu_sequencers.extend([cp_cntrl.sequencer, cp_cntrl.sequencer1])
-
-        # Connect the CP controllers and the network
-        cp_cntrl.requestFromCore = MessageBuffer()
-        cp_cntrl.requestFromCore.out_port = network.in_port
-
-        cp_cntrl.responseFromCore = MessageBuffer()
-        cp_cntrl.responseFromCore.out_port = network.in_port
-
-        cp_cntrl.unblockFromCore = MessageBuffer()
-        cp_cntrl.unblockFromCore.out_port = network.in_port
-
-        cp_cntrl.probeToCore = MessageBuffer()
-        cp_cntrl.probeToCore.in_port = network.out_port
-
-        cp_cntrl.responseToCore = MessageBuffer()
-        cp_cntrl.responseToCore.in_port = network.out_port
-
-        cp_cntrl.mandatoryQueue = MessageBuffer()
-        cp_cntrl.triggerQueue = MessageBuffer(ordered=True)
-
+        connect_corepair_controller(cp_cntrl, network)
         cp_cntrl_nodes.append(cp_cntrl)
+
+    for i in range(num_mesi_cpus // 2):
+        mesi_cp_cntrl = MESICPCntrl()
+        mesi_cp_cntrl.create(options, ruby_system, system)
+
+        exec("ruby_system.mesi_cp_cntrl%d = mesi_cp_cntrl" % i)
+        cpu_sequencers.extend(
+            [mesi_cp_cntrl.sequencer, mesi_cp_cntrl.sequencer1]
+        )
+        connect_corepair_controller(mesi_cp_cntrl, network)
+        cp_cntrl_nodes.append(mesi_cp_cntrl)
 
     return (cpu_sequencers, cp_cntrl_nodes)
 
