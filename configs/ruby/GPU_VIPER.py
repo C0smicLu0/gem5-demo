@@ -146,6 +146,11 @@ class MESICPCntrl(GPU_VIPER_MESICorePair_Controller, CntrlBase):
         create_corepair_controller(self, options, ruby_system, system)
 
 
+class MESIFCPCntrl(GPU_VIPER_MESIFCorePair_Controller, CntrlBase):
+    def create(self, options, ruby_system, system):
+        create_corepair_controller(self, options, ruby_system, system)
+
+
 class TCPCache(RubyCache):
     size = "16KiB"
     assoc = 16
@@ -443,6 +448,12 @@ def define_options(parser):
         type=int,
         default=None,
         help="number of CPU cores using the MESI CorePair protocol",
+    )
+    parser.add_argument(
+        "--num-mesif-cpus",
+        type=int,
+        default=None,
+        help="number of CPU cores using the MESIF CorePair protocol",
     )
     parser.add_argument("--num-subcaches", type=int, default=4)
     parser.add_argument("--l3-data-latency", type=int, default=20)
@@ -743,24 +754,33 @@ def construct_corepairs(options, system, ruby_system, network):
 
     num_moesi_cpus = getattr(options, "num_moesi_cpus", None)
     num_mesi_cpus = getattr(options, "num_mesi_cpus", None)
-    if num_moesi_cpus is None and num_mesi_cpus is None:
+    num_mesif_cpus = getattr(options, "num_mesif_cpus", None)
+    if (
+        num_moesi_cpus is None
+        and num_mesi_cpus is None
+        and num_mesif_cpus is None
+    ):
         num_moesi_cpus = options.num_cpus
         num_mesi_cpus = 0
+        num_mesif_cpus = 0
     else:
         num_moesi_cpus = num_moesi_cpus or 0
         num_mesi_cpus = num_mesi_cpus or 0
+        num_mesif_cpus = num_mesif_cpus or 0
 
-    if num_mesi_cpus and (num_moesi_cpus % 2 or num_mesi_cpus % 2):
+    if (num_mesi_cpus or num_mesif_cpus) and (
+        num_moesi_cpus % 2 or num_mesi_cpus % 2 or num_mesif_cpus % 2
+    ):
         fatal(
-            "Mixed MOESI/MESI CPU clusters require even "
-            "--num-moesi-cpus and --num-mesi-cpus values"
+            "Mixed MOESI/MESI/MESIF CPU clusters require even "
+            "--num-moesi-cpus, --num-mesi-cpus, and --num-mesif-cpus values"
         )
 
-    total_cpus = num_moesi_cpus + num_mesi_cpus
+    total_cpus = num_moesi_cpus + num_mesi_cpus + num_mesif_cpus
     if total_cpus != options.num_cpus:
         fatal(
             "Expected options.num_cpus to equal "
-            "--num-moesi-cpus + --num-mesi-cpus"
+            "--num-moesi-cpus + --num-mesi-cpus + --num-mesif-cpus"
         )
 
     for i in range((num_moesi_cpus + 1) // 2):
@@ -782,6 +802,17 @@ def construct_corepairs(options, system, ruby_system, network):
         )
         connect_corepair_controller(mesi_cp_cntrl, network)
         cp_cntrl_nodes.append(mesi_cp_cntrl)
+
+    for i in range(num_mesif_cpus // 2):
+        mesif_cp_cntrl = MESIFCPCntrl()
+        mesif_cp_cntrl.create(options, ruby_system, system)
+
+        exec("ruby_system.mesif_cp_cntrl%d = mesif_cp_cntrl" % i)
+        cpu_sequencers.extend(
+            [mesif_cp_cntrl.sequencer, mesif_cp_cntrl.sequencer1]
+        )
+        connect_corepair_controller(mesif_cp_cntrl, network)
+        cp_cntrl_nodes.append(mesif_cp_cntrl)
 
     return (cpu_sequencers, cp_cntrl_nodes)
 

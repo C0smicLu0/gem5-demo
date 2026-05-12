@@ -445,18 +445,34 @@ GPUTLBOptions.tlb_options(parser)
 
 args = parser.parse_args()
 
-if hasattr(args, "num_moesi_cpus") and hasattr(args, "num_mesi_cpus"):
+if (
+    hasattr(args, "num_moesi_cpus")
+    and hasattr(args, "num_mesi_cpus")
+    and hasattr(args, "num_mesif_cpus")
+):
     moesi_cpus = args.num_moesi_cpus
     mesi_cpus = args.num_mesi_cpus
-    if moesi_cpus is None and mesi_cpus is None:
+    mesif_cpus = args.num_mesif_cpus
+    if moesi_cpus is None and mesi_cpus is None and mesif_cpus is None:
         args.num_moesi_cpus = args.num_cpus
         args.num_mesi_cpus = 0
+        args.num_mesif_cpus = 0
     else:
         args.num_moesi_cpus = moesi_cpus or 0
         args.num_mesi_cpus = mesi_cpus or 0
-        if args.num_moesi_cpus < 0 or args.num_mesi_cpus < 0:
-            fatal("--num-moesi-cpus and --num-mesi-cpus must be non-negative")
-        args.num_cpus = args.num_moesi_cpus + args.num_mesi_cpus
+        args.num_mesif_cpus = mesif_cpus or 0
+        if (
+            args.num_moesi_cpus < 0
+            or args.num_mesi_cpus < 0
+            or args.num_mesif_cpus < 0
+        ):
+            fatal(
+                "--num-moesi-cpus, --num-mesi-cpus, and "
+                "--num-mesif-cpus must be non-negative"
+            )
+        args.num_cpus = (
+            args.num_moesi_cpus + args.num_mesi_cpus + args.num_mesif_cpus
+        )
         if args.num_cpus < 1:
             fatal("At least one CPU is required")
 

@@ -277,6 +277,7 @@ enumeration(MachineType, desc="...", default="MachineType_NULL") {
     L2Cache_wCC, desc="L2 Cache Mach to track cache-to-cache transfer (used for miss latency profile)";
     CorePair,    desc="Cache Mach (2 cores, Private L1Ds, Shared L1I & L2)";
     MESICorePair, desc="MESI Cache Mach (2 cores, Private L1Ds, Shared L1I & L2)";
+    MESIFCorePair, desc="MESIF Cache Mach (2 cores, Private L1Ds, Shared L1I & L2)";
     TCP,         desc="GPU L1 Data Cache (Texture Cache per Pipe)";
     TCC,         desc="GPU L2 Shared Cache (Texture Cache per Channel)";
     TCCdir,      desc="Directory at the GPU L2 Cache (TCC)";

@@ -1,9 +1,10 @@
 protocol "GPU_VIPER";
 include "MOESI_AMD_Base-msg.sm";
-include "OSI-noninclusive.sm";
+include "MOESI_AMD_Base-dir.sm";
 include "MOESI_AMD_Base-dma.sm";
 include "MOESI_AMD_Base-CorePair.sm";
 include "MESI_AMD_Base-MESICorePair.sm";
+include "MESIF_AMD_Base-MESIFCorePair.sm";
 include "GPU_VIPER-msg.sm";
 include "GPU_VIPER-TCP.sm";
 include "GPU_VIPER-SQC.sm";
