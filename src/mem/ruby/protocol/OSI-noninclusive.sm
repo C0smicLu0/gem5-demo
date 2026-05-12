@@ -443,10 +443,10 @@ machine(MachineType:Directory, "AMD Baseline protocol")
         CacheEntry entry := static_cast(CacheEntry, "pointer", L3CacheMemory.lookup(in_msg.addr));
         if (in_msg.Type == CoherenceRequestType:RdBlk) {
           trigger(Event:Read, in_msg.addr, entry, tbe);
-        } else if (in_msg.Type == CoherenceRequestType:RdBlkS || in_msg.Type == CoherenceRequestType:GetS) {
+        } else if (in_msg.Type == CoherenceRequestType:RdBlkS || in_msg.Type == CoherenceRequestType:GETS) {
           trigger(Event:ReadS, in_msg.addr, entry, tbe);
-        } else if (in_msg.Type == CoherenceRequestType:RdBlkM) {
-          trigger(Event:ReadM, in_msg.addr, entry, tbe);
+        } else if (in_msg.Type == CoherenceRequestType:RdBlkM || in_msg.Type == CoherenceRequestType:GETX) {
+          trigger(Event:ReadEx, in_msg.addr, entry, tbe);
         } else if (in_msg.Type == CoherenceRequestType:WriteThrough) {
           trigger(Event:WriteThrough, in_msg.addr, entry, tbe);
         } else if (in_msg.Type == CoherenceRequestType:Atomic  ||
@@ -1425,8 +1425,8 @@ machine(MachineType:Directory, "AMD Baseline protocol")
     p_popRequestQueue;
   }
 
-  // I 收到 ReadM / Atomic 请求：分配目录和 TBE，发起 L3/内存读，清 sharers 并设置 owner 为请求者，进入 IO_M（等待数据）
-  transition(I, {ReadM, Atomic}, IO_M) {L3TagArrayRead, L3TagArrayWrite}{
+  // I 收到 ReadEx / Atomic 请求：分配目录和 TBE，发起 L3/内存读，清 sharers 并设置 owner 为请求者，进入 IO_M（等待数据）
+  transition(I, {ReadEx, Atomic}, IO_M) {L3TagArrayRead, L3TagArrayWrite}{
     allocDirEntry;
     v_allocateTBE;
     l_queueMemRdReq;
@@ -1530,8 +1530,8 @@ machine(MachineType:Directory, "AMD Baseline protocol")
     pu_popUnblockQueue;
   }
 
-  // S 收到 ReadM/Atomic：共享變成獨占/修改，分配 TBE，向 L3/內存取數據，同時給其他 sharers 發 invalidation，清 sharers，設 owner 為請求者，進入 SO_PM（等待探測和數據）
-  transition(S, {ReadM, Atomic}, SO_PM)  {L3TagArrayRead, L3TagArrayWrite} {
+  // S 收到 ReadEx/Atomic：共享變成獨占/修改，分配 TBE，向 L3/內存取數據，同時給其他 sharers 發 invalidation，清 sharers，設 owner 為請求者，進入 SO_PM（等待探測和數據）
+  transition(S, {ReadEx, Atomic}, SO_PM)  {L3TagArrayRead, L3TagArrayWrite} {
     v_allocateTBE;
     l_queueMemRdReq;
     pr_profileL3HitMiss;
@@ -1688,9 +1688,9 @@ machine(MachineType:Directory, "AMD Baseline protocol")
     pu_popUnblockQueue;
   }
 
-   // O 收到 ReadM/Atomic：Owner 被新的修改請求搶佔，分配 TBE、向 L3/內存取數據，
+   // O 收到 ReadEx/Atomic：Owner 被新的修改請求搶佔，分配 TBE、向 L3/內存取數據，
    // 同時將 owner 降為 sharer、對其他 sharers 發 invalidate，清 sharers，設新 owner，進入 OM_PM
-  transition(O, {ReadM, Atomic}, OM_PM){
+  transition(O, {ReadEx, Atomic}, OM_PM){
     v_allocateTBE;
     l_queueMemRdReq;
     pr_profileL3HitMiss;
@@ -2124,7 +2124,7 @@ machine(MachineType:Directory, "AMD Baseline protocol")
     pt_popTriggerQueue;
   }
 
-  transition({IS, IS_M, IO, IO_M, SS, SS_M, SO, SO_PM, SO_P, SO_M, OO, OO_P, OS, OS_M, OM, OM_P, OM_PM, OM_M, S_V, O_V, IE_M, IDR_M, IDW_M, SDR_M, ODR_P, ODR_M, ODW_P, ODW_M, ODW_PM, SDW_P, SDW_M, SDW_PM}, {ReadS, ReadM, Read}) {
+  transition({IS, IS_M, IO, IO_M, SS, SS_M, SO, SO_PM, SO_P, SO_M, OO, OO_P, OS, OS_M, OM, OM_P, OM_PM, OM_M, S_V, O_V, IE_M, IDR_M, IDW_M, SDR_M, ODR_P, ODR_M, ODW_P, ODW_M, ODW_PM, SDW_P, SDW_M, SDW_PM}, {ReadS, ReadEx, Read}) {
     st_stallAndWaitRequest;
   }
 
