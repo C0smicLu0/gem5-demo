@@ -50,19 +50,21 @@ if [ "$1" = "quick" ]; then
 fi
 
 if [ "$1" = "all" ]; then
-    docker run --rm -it \
-    -u $(id -u):$(id -g) \
-    -v "${GEM5_DEMO_ROOT}:/gem5-demo" \
-    "${PANNOTIA_VOLUME[@]}" \
-    -w /gem5-demo/tests \
-    ghcr.io/gem5/gcn-gpu:v25-1 \
-    ./main.py run \
-      --skip-build \
-      --isa VEGA_X86 \
-      --variant opt \
-      --host gcn_gpu \
-      --length quick,long,very-long \
-      gem5/gpu
+    for length in quick long very-long; do
+        docker run --rm -it \
+        -u $(id -u):$(id -g) \
+        -v "${GEM5_DEMO_ROOT}:/gem5-demo" \
+        "${PANNOTIA_VOLUME[@]}" \
+        -w /gem5-demo/tests \
+        ghcr.io/gem5/gcn-gpu:v25-1 \
+        ./main.py run \
+          --skip-build \
+          --isa VEGA_X86 \
+          --variant opt \
+          --host gcn_gpu \
+          --length "${length}" \
+          gem5/gpu
+    done
 fi
 
 if [ "$1" = "long" ]; then
