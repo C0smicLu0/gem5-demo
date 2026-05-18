@@ -41,9 +41,13 @@
 
 #include "mem/ruby/system/Sequencer.hh"
 
+#include <filesystem>
+#include <fstream>
+
 #include "arch/x86/ldstflags.hh"
 #include "base/compiler.hh"
 #include "base/logging.hh"
+#include "base/output.hh"
 #include "base/str.hh"
 #include "cpu/testers/rubytest/RubyTester.hh"
 #include "debug/LLSC.hh"
@@ -147,10 +151,85 @@ Sequencer::Sequencer(const Params &p)
         }
     }
 
+    seqLatTypeAgg.resize(RubyRequestType_NUM);
+    seqSetupLatOutput();
 }
 
 Sequencer::~Sequencer()
 {
+}
+
+std::string
+Sequencer::seqSafeName(const std::string &name) const
+{
+    std::string safe = name;
+    for (char &c : safe) {
+        if (c == '.' || c == '/' || c == ' ') {
+            c = '_';
+        }
+    }
+    return safe;
+}
+
+void
+Sequencer::seqSetupLatOutput()
+{
+    if (m_seq_lat_dump_registered) {
+        return;
+    }
+    statistics::registerDumpCallback([this]() { seqDumpLatOutput(); });
+    m_seq_lat_dump_registered = true;
+}
+
+void
+Sequencer::seqDumpLatOutput()
+{
+    const std::filesystem::path out_dir = simout.resolve("lat_run_out");
+    std::error_code ec;
+    std::filesystem::create_directories(out_dir, ec);
+    if (ec) {
+        return;
+    }
+
+    const std::string filename = "seq_lat_stats_" + seqSafeName(name()) + ".txt";
+    std::ofstream fout(out_dir / filename, std::ios::out | std::ios::app);
+    if (!fout.is_open()) {
+        return;
+    }
+
+    const double avg = seqLatTotalAgg.samples ?
+        static_cast<double>(seqLatTotalAgg.sum) / seqLatTotalAgg.samples : 0.0;
+    fout << "object: " << name() << "\n";
+    fout << "[GLOBAL]\n";
+    fout << "  accesses: " << seqLatTotalAgg.samples << "\n";
+    fout << "  total_latency: " << seqLatTotalAgg.sum << "\n";
+    fout << "  average_latency: " << avg << "\n";
+    fout << "  min_latency: " << seqLatTotalAgg.min << "\n";
+    fout << "  max_latency: " << seqLatTotalAgg.max << "\n";
+    fout << "  over_100: " << seqLatTotalAgg.over_100 << "\n";
+    fout << "  over_500: " << seqLatTotalAgg.over_500 << "\n";
+    fout << "  over_1000: " << seqLatTotalAgg.over_1000 << "\n";
+    fout << "  over_5000: " << seqLatTotalAgg.over_5000 << "\n";
+    fout << "[BY_TYPE]\n";
+    for (int i = 0; i < RubyRequestType_NUM; ++i) {
+        const auto &st = seqLatTypeAgg[i];
+        if (!st.samples) {
+            continue;
+        }
+        const double tavg = static_cast<double>(st.sum) / st.samples;
+        fout << "  type=" << RubyRequestType_to_string(static_cast<RubyRequestType>(i))
+             << " accesses=" << st.samples
+             << " total_latency=" << st.sum
+             << " avg_latency=" << tavg
+             << " min_latency=" << st.min
+             << " max_latency=" << st.max
+             << " over_100=" << st.over_100
+             << " over_500=" << st.over_500
+             << " over_1000=" << st.over_1000
+             << " over_5000=" << st.over_5000
+             << "\n";
+    }
+    fout << "----\n";
 }
 
 void
@@ -305,6 +384,11 @@ void Sequencer::resetStats()
 
         m_IncompleteTimes[i] = 0;
     }
+
+    seqLatTotalAgg = SeqLatAgg();
+    for (auto &st : seqLatTypeAgg) {
+        st = SeqLatAgg();
+    }
 }
 
 // Insert the request in the request table. Return RequestStatus_Aliased
@@ -413,6 +497,36 @@ Sequencer::recordMissLatency(SequencerRequest* srequest, bool llscSuccess,
     DPRINTFR(ProtocolTrace, "%15s %3s %10s%20s %6s>%-6s %s %d cycles\n",
              curTick(), m_version, "Seq", llscSuccess ? "Done" : "SC_Failed",
              "", "", printAddress(srequest->pkt->getAddr()), total_lat);
+
+    const uint64_t lat = static_cast<uint64_t>(total_lat);
+    seqLatTotalAgg.samples++;
+    seqLatTotalAgg.sum += lat;
+    if (seqLatTotalAgg.samples == 1) {
+        seqLatTotalAgg.min = lat;
+        seqLatTotalAgg.max = lat;
+    } else {
+        if (lat < seqLatTotalAgg.min) seqLatTotalAgg.min = lat;
+        if (lat > seqLatTotalAgg.max) seqLatTotalAgg.max = lat;
+    }
+    if (lat > 100) seqLatTotalAgg.over_100++;
+    if (lat > 500) seqLatTotalAgg.over_500++;
+    if (lat > 1000) seqLatTotalAgg.over_1000++;
+    if (lat > 5000) seqLatTotalAgg.over_5000++;
+
+    auto &typeAgg = seqLatTypeAgg[static_cast<int>(type)];
+    typeAgg.samples++;
+    typeAgg.sum += lat;
+    if (typeAgg.samples == 1) {
+        typeAgg.min = lat;
+        typeAgg.max = lat;
+    } else {
+        if (lat < typeAgg.min) typeAgg.min = lat;
+        if (lat > typeAgg.max) typeAgg.max = lat;
+    }
+    if (lat > 100) typeAgg.over_100++;
+    if (lat > 500) typeAgg.over_500++;
+    if (lat > 1000) typeAgg.over_1000++;
+    if (lat > 5000) typeAgg.over_5000++;
 
     m_latencyHist.sample(total_lat);
     m_typeLatencyHist[type]->sample(total_lat);

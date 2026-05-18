@@ -1765,7 +1765,7 @@ machine(MachineType:CorePair, "CP-like Core Coherence")
     p_popMandatoryQueue;
   }
 
-  transition({Ms, M0, M1, O}, Ifetch0_L1miss, MO_S0) {L1ITagArrayRead,  L2TagArrayRead} {
+  transition({Ms, M0, M1, O}, Ifetch0_L1miss, MO_S0) {L1ITagArrayRead,  L2TagArrayRead, L2DataArrayRead} {
     l2m_profileMiss;  // permissions miss
     l1im_profileMiss;
     ai_allocateL1I;
@@ -1776,7 +1776,7 @@ machine(MachineType:CorePair, "CP-like Core Coherence")
     p_popMandatoryQueue;
   }
 
-  transition({Ms, M0, M1, O}, Ifetch1_L1miss, MO_S1) {L1ITagArrayRead L2TagArrayRead } {
+  transition({Ms, M0, M1, O}, Ifetch1_L1miss, MO_S1) {L1ITagArrayRead, L2TagArrayRead, L2DataArrayRead} {
     l2m_profileMiss;  // permissions miss
     l10m_profileMiss;
     ai_allocateL1I;
@@ -2096,7 +2096,7 @@ machine(MachineType:CorePair, "CP-like Core Coherence")
     ii_invIcache;
   }
 
-  transition({Ms, M0, M1, O}, L2_Repl, MO_I) {L2TagArrayRead, L2TagArrayWrite, L1D0TagArrayRead, L1D1TagArrayRead} {
+  transition({Ms, M0, M1, O}, L2_Repl, MO_I) {L2TagArrayRead, L2TagArrayWrite, L1D0TagArrayRead, L1D1TagArrayRead, L2DataArrayRead} {
     forward_eviction_to_cpu0;
     forward_eviction_to_cpu1;
     t_allocateTBE;
@@ -2628,7 +2628,7 @@ machine(MachineType:CorePair, "CP-like Core Coherence")
     pp_popProbeQueue;
   }
 
-  transition(MO_I, {PrbInvData, PrbInvDataDemand}, I_C) {} {
+  transition(MO_I, {PrbInvData, PrbInvDataDemand}, I_C) {L2DataArrayRead} {
     pdt_sendProbeResponseDataFromTBE;
     ib_invBothClusters;
     ii_invIcache;
@@ -2655,13 +2655,13 @@ machine(MachineType:CorePair, "CP-like Core Coherence")
     pp_popProbeQueue;
   }
 
-  transition(MO_I, {PrbShrData, PrbShrDataDemand}, MO_I) {} {
+  transition(MO_I, {PrbShrData, PrbShrDataDemand}, MO_I) {L2DataArrayRead} {
     pdt_sendProbeResponseDataFromTBE;
     s_setSharedFlip;
     pp_popProbeQueue;
   }
 
-  transition(MO_S0, {PrbInvData, PrbInvDataDemand}, S0_C) {L2TagArrayWrite} {
+  transition(MO_S0, {PrbInvData, PrbInvDataDemand}, S0_C) {L2TagArrayWrite, L2DataArrayRead} {
     forward_eviction_to_cpu0;
     forward_eviction_to_cpu1;
     pdt_sendProbeResponseDataFromTBE;
@@ -2672,7 +2672,7 @@ machine(MachineType:CorePair, "CP-like Core Coherence")
     pp_popProbeQueue;
   }
 
-  transition(MO_S1, {PrbInvData, PrbInvDataDemand}, S1_C) {} {
+  transition(MO_S1, {PrbInvData, PrbInvDataDemand}, S1_C) {L2DataArrayRead} {
     forward_eviction_to_cpu0;
     forward_eviction_to_cpu1;
     pdt_sendProbeResponseDataFromTBE;
@@ -2683,7 +2683,7 @@ machine(MachineType:CorePair, "CP-like Core Coherence")
     pp_popProbeQueue;
   }
 
-  transition(MO_S0, PrbInv, S0_C) {L2TagArrayWrite} {
+  transition(MO_S0, PrbInv, S0_C) {L2TagArrayWrite, L2DataArrayRead} {
     forward_eviction_to_cpu0;
     forward_eviction_to_cpu1;
     pi_sendProbeResponseInv;
@@ -2694,7 +2694,7 @@ machine(MachineType:CorePair, "CP-like Core Coherence")
     pp_popProbeQueue;
   }
 
-  transition(MO_S1, PrbInv, S1_C) {L2TagArrayWrite} {
+  transition(MO_S1, PrbInv, S1_C) {L2TagArrayWrite, L2DataArrayRead} {
     forward_eviction_to_cpu0;
     forward_eviction_to_cpu1;
     pi_sendProbeResponseInv;
@@ -2705,7 +2705,7 @@ machine(MachineType:CorePair, "CP-like Core Coherence")
     pp_popProbeQueue;
   }
 
-  transition({MO_S0, MO_S1}, {PrbShrData, PrbShrDataDemand}) {} {
+  transition({MO_S0, MO_S1}, {PrbShrData, PrbShrDataDemand}) {L2DataArrayRead} {
     pdt_sendProbeResponseDataFromTBE;
     s_setSharedFlip;
     pp_popProbeQueue;
@@ -2851,7 +2851,7 @@ machine(MachineType:CorePair, "CP-like Core Coherence")
     pp_popProbeQueue;
   }
 
-  transition(O_M1, {PrbInvData, PrbInvDataDemand}, I_M1) {} {
+  transition(O_M1, {PrbInvData, PrbInvDataDemand}, I_M1) {L2DataArrayRead} {
     forward_eviction_to_cpu0;
     forward_eviction_to_cpu1;
     pdm_sendProbeResponseDataMs;

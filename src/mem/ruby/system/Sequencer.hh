@@ -43,7 +43,9 @@
 
 #include <iostream>
 #include <list>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "cpu/testers/rubytest/RubyTester.hh"
 #include "mem/ruby/common/Address.hh"
@@ -210,6 +212,9 @@ class Sequencer : public RubyPort
     { return m_IncompleteTimes[t]; }
 
   protected:
+    void seqSetupLatOutput();
+    void seqDumpLatOutput();
+    std::string seqSafeName(const std::string &name) const;
     void issueRequest(PacketPtr pkt, RubyRequestType type);
     virtual void hitCallback(SequencerRequest* srequest, DataBlock& data,
                              bool llscSuccess,
@@ -314,6 +319,20 @@ class Sequencer : public RubyPort
     std::vector<statistics::Histogram *> m_ForwardToFirstResponseDelayHist;
     std::vector<statistics::Histogram *> m_FirstResponseToCompletionDelayHist;
     std::vector<statistics::Counter> m_IncompleteTimes;
+    struct SeqLatAgg
+    {
+        uint64_t samples = 0;
+        uint64_t sum = 0;
+        uint64_t min = 0;
+        uint64_t max = 0;
+        uint64_t over_100 = 0;
+        uint64_t over_500 = 0;
+        uint64_t over_1000 = 0;
+        uint64_t over_5000 = 0;
+    };
+    SeqLatAgg seqLatTotalAgg;
+    std::vector<SeqLatAgg> seqLatTypeAgg;
+    bool m_seq_lat_dump_registered = false;
 
     EventFunctionWrapper deadlockCheckEvent;
 
