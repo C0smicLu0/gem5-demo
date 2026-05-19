@@ -12,10 +12,10 @@ usage() {
 Usage:
   gem5_workload_runner.sh list
   gem5_workload_runner.sh discover
-  gem5_workload_runner.sh run <workload> [run_tag]
+  gem5_workload_runner.sh run <workload> [run_tag] [extra config args...]
   gem5_workload_runner.sh analyze <workload> <run_tag>
   gem5_workload_runner.sh check <workload> <run_tag> [low high]
-  gem5_workload_runner.sh all <workload> [run_tag] [low high]
+  gem5_workload_runner.sh all <workload> [run_tag] [low high] [extra config args...]
 
 Notes:
   - run_tag defaults to current time: YYYYMMDD-HHMMSS
@@ -207,13 +207,54 @@ build_run_dir() {
 run_test() {
   local workload="$1"
   local run_tag="$2"
+  local extra_config_args="${3:-}"
   local run_dir
   run_dir="$(build_run_dir "$workload" "$run_tag")"
 
   local gem5_opt_args config_args workload_args
+  local global_config_args workload_config_args
   gem5_opt_args="$(get_json "cfg['workloads']['${workload}'].get('gem5_opt_args', cfg.get('gem5_opt_args', ''))")"
-  config_args="$(get_json "cfg['workloads']['${workload}'].get('config_args', cfg.get('config_args', ''))")"
+  global_config_args="$(get_json "cfg.get('config_args', '')")"
+  workload_config_args="$(get_json "cfg['workloads']['${workload}'].get('config_args', '')")"
+  config_args="$(echo "${global_config_args} ${workload_config_args}" | xargs)"
   workload_args="$(get_json "cfg['workloads']['${workload}'].get('workload_args', '')")"
+  if [[ -n "$extra_config_args" ]]; then
+    # Override semantics for short options like "-u 8" / "-n 4":
+    # remove existing -u/-n from JSON config_args, then append user args.
+    read -r -a base_arr <<< "$config_args"
+    read -r -a extra_arr <<< "$extra_config_args"
+
+    local rm_u=0 rm_n=0
+    local i
+    for ((i=0; i<${#extra_arr[@]}; i++)); do
+      case "${extra_arr[$i]}" in
+        -u|--num-compute-units) rm_u=1 ;;
+        -n|--num-cpus) rm_n=1 ;;
+      esac
+    done
+
+    local merged=()
+    for ((i=0; i<${#base_arr[@]}; i++)); do
+      local tok="${base_arr[$i]}"
+      if (( rm_u )) && [[ "$tok" =~ ^-u[0-9]+$ ]]; then
+        continue
+      fi
+      if (( rm_n )) && [[ "$tok" =~ ^-n[0-9]+$ ]]; then
+        continue
+      fi
+      if (( rm_u )) && [[ "$tok" == "-u" || "$tok" == "--num-compute-units" ]]; then
+        ((i++))
+        continue
+      fi
+      if (( rm_n )) && [[ "$tok" == "-n" || "$tok" == "--num-cpus" ]]; then
+        ((i++))
+        continue
+      fi
+      merged+=("$tok")
+    done
+    merged+=("${extra_arr[@]}")
+    config_args="${merged[*]}"
+  fi
 
   echo "run_dir=${run_dir}"
   "$GEM5_TEST" test \
@@ -263,15 +304,19 @@ case "$cmd" in
     fi
     run_tag="${3:-$(date +%Y%m%d-%H%M%S)}"
     if [[ "$cmd" == "run" ]]; then
-      run_test "$workload" "$run_tag"
+      extra_config_args="${*:4}"
+      run_test "$workload" "$run_tag" "$extra_config_args"
     elif [[ "$cmd" == "analyze" ]]; then
       run_analyze "$workload" "$run_tag"
     elif [[ "$cmd" == "check" ]]; then
       run_check "$workload" "$run_tag" "${4:-100}" "${5:-150}"
     else
-      run_test "$workload" "$run_tag"
+      low="${4:-100}"
+      high="${5:-150}"
+      extra_config_args="${*:6}"
+      run_test "$workload" "$run_tag" "$extra_config_args"
       run_analyze "$workload" "$run_tag"
-      run_check "$workload" "$run_tag" "${4:-100}" "${5:-150}"
+      run_check "$workload" "$run_tag" "$low" "$high"
     fi
     ;;
   *)

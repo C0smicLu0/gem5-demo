@@ -1,24 +1,21 @@
 {
   "base_run_root": "tests/testing-results",
   "gem5_opt_args": "-re --silent-redirect",
-  "config_args": "--reg-alloc-policy=dynamic --l1d_size=512B --l1i_size=512B --l1d_assoc=2 --l1i_assoc=2 --l2_size=1KiB --l2_assoc=2 --l2-latency=35 --cpu-to-dir-latency=180 --cpu-l2-to-l1i-latency=12 --cpu-l2-to-l1d-latency=16 --cpu-l1-tag-access-latency=6 --cpu-l1-data-access-latency=10 --cpu-l1-tag-array-banks=1 --cpu-l1-data-array-banks=1 --cpu-l1-resource-stalls --recycle-latency=12 --l3-data-latency=20 --l3-tag-latency=16 --num-tbes=256 --num-subcaches=4 --network=garnet --router-latency=6 --link-latency=6 -n3 -u237",
+  "config_args": "--reg-alloc-policy=dynamic --l1d_size=512B --l1i_size=512B --l1d_assoc=2 --l1i_assoc=2 --l2_size=1KiB --l2_assoc=2 --l2-latency=35 --cpu-to-dir-latency=180 --recycle-latency=12 --l3-data-latency=20 --l3-tag-latency=16 --num-tbes=256 --num-subcaches=4 --network=garnet --router-latency=6 --link-latency=6 -n3 -u237",
   "workloads": {
     "square": {
       "workload_args": "--download-resource square-gpu-test --download-dir /gem5/tests/gem5/resources -c /gem5/tests/gem5/resources/square-gpu-test"
     },
     "sleepMutex": {
-      "config_args": "--reg-alloc-policy=dynamic -n3",
       "workload_args": "--download-resource allSyncPrims-1kernel --download-dir /gem5/tests/gem5/resources -c /gem5/tests/gem5/resources/allSyncPrims-1kernel --options 'sleepMutex 10 16 4'"
     },
     "lfTreeBarrUniq": {
-      "config_args": "--reg-alloc-policy=dynamic -n3",
       "workload_args": "--download-resource allSyncPrims-1kernel --download-dir /gem5/tests/gem5/resources -c /gem5/tests/gem5/resources/allSyncPrims-1kernel --options 'lfTreeBarrUniq 10 16 4'"
     },
     "hacc": {
       "workload_args": "--download-resource hacc-force-tree --download-dir /gem5/tests/gem5/resources -c /gem5/tests/gem5/resources/hacc-force-tree --options '0.5 0.1 64 0.1 1 N 12 rcb'"
     },
     "lulesh": {
-      "config_args": "--reg-alloc-policy=dynamic -n3",
       "workload_args": "--download-resource lulesh --download-dir /gem5/tests/gem5/resources --mem-size=8GiB --dgpu --gfx-version gfx900 -c /gem5/tests/gem5/resources/lulesh --options '0.01 2'"
     },
     "pannotia-bc-1k-128k": {
@@ -34,75 +31,57 @@
       "workload_args": "--mem-size=8GiB -c /gem5/tests/gem5/resources/gpu-pannotia/pannotia-bins/mis_hip.gem5 --options '/gem5/tests/gem5/resources/gpu-pannotia/pannotia-datasets/1k_128k.gr 0'"
     },
     "rodinia-btree": {
-      "config_args": "--reg-alloc-policy=dynamic --mem-size=8GiB -n4 -u4",
       "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/b+tree.out --options 'file /gem5/tests/gem5/resources/rodinia_hip/data/b+tree/mil.txt command /gem5/tests/gem5/resources/rodinia_hip/data/b+tree/command.txt'"
     },
     "rodinia-bfs": {
-      "config_args": "--reg-alloc-policy=dynamic --mem-size=8GiB -n4 -u4",
       "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/bfs.out --options '/gem5/tests/gem5/resources/rodinia_hip/data/bfs/graph65536.txt'"
     },
     "rodinia-dwt2d": {
-      "config_args": "--reg-alloc-policy=dynamic --mem-size=8GiB -n4 -u4",
       "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/dwt2d --options '/gem5/tests/gem5/resources/rodinia_hip/data/dwt2d/192.bmp -d 192x192 -f -5 -l 3'"
     },
     "rodinia-gaussian": {
-      "config_args": "--reg-alloc-policy=dynamic --mem-size=8GiB -n4 -u4",
       "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/gaussian --options '-f /gem5/tests/gem5/resources/rodinia_hip/data/gaussian/matrix4.txt'"
     },
     "rodinia-hotspot": {
-      "config_args": "--reg-alloc-policy=dynamic --mem-size=8GiB -n4 -u4",
       "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/hotspot --options '512 2 2 /gem5/tests/gem5/resources/rodinia_hip/data/hotspot/temp_512 /gem5/tests/gem5/resources/rodinia_hip/data/hotspot/power_512 output.out'"
     },
     "rodinia-lavaMD": {
-      "config_args": "--reg-alloc-policy=dynamic --mem-size=8GiB -n4 -u4",
       "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/lavaMD --options '-boxes1d 10'"
     },
     "rodinia-nw": {
-      "config_args": "--reg-alloc-policy=dynamic --mem-size=8GiB -n4 -u4",
       "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/needle --options '2048 10'"
     },
     "rodinia-particlefilter": {
-      "config_args": "--reg-alloc-policy=dynamic --mem-size=8GiB -n4 -u4",
       "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/particlefilter_float --options '-x 128 -y 128 -z 10 -np 1000'"
     },
     "rodinia-pathfinder": {
-      "config_args": "--reg-alloc-policy=dynamic --mem-size=8GiB -n4 -u4",
       "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/pathfinder --options '100000 100 20'"
     },
     "rodinia-btree-10k": {
-      "config_args": "--reg-alloc-policy=dynamic --mem-size=8GiB -n4 -u4",
       "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/b+tree.out --options 'file /gem5/tests/gem5/resources/rodinia_hip/data/b+tree/mil_10k.txt command /gem5/tests/gem5/resources/rodinia_hip/data/b+tree/command_10k.txt'"
     },
     "rodinia-bfs-16k": {
-      "config_args": "--reg-alloc-policy=dynamic --mem-size=8GiB -n4 -u4",
       "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/bfs.out --options '/gem5/tests/gem5/resources/rodinia_hip/data/bfs/graph16k.txt'"
     },
     "rodinia-bfs-32k": {
-      "config_args": "--reg-alloc-policy=dynamic --mem-size=8GiB -n4 -u4",
       "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/bfs.out --options '/gem5/tests/gem5/resources/rodinia_hip/data/bfs/graph32k.txt'"
     },
     "rodinia-bfs-1MW_6": {
-      "config_args": "--reg-alloc-policy=dynamic --mem-size=8GiB -n4 -u4",
       "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/bfs.out --options '/gem5/tests/gem5/resources/rodinia_hip/data/bfs/graph1MW_6.txt'"
     },
     "rodinia-gaussian-16": {
-      "config_args": "--reg-alloc-policy=dynamic --mem-size=8GiB -n4 -u4",
       "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/gaussian --options '-f /gem5/tests/gem5/resources/rodinia_hip/data/gaussian/matrix16.txt'"
     },
     "rodinia-gaussian-208": {
-      "config_args": "--reg-alloc-policy=dynamic --mem-size=8GiB -n4 -u4",
       "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/gaussian --options '-f /gem5/tests/gem5/resources/rodinia_hip/data/gaussian/matrix208.txt'"
     },
     "rodinia-gaussian-1024": {
-      "config_args": "--reg-alloc-policy=dynamic --mem-size=8GiB -n4 -u4",
       "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/gaussian --options '-f /gem5/tests/gem5/resources/rodinia_hip/data/gaussian/matrix1024.txt'"
     },
     "rodinia-hotspot-64": {
-      "config_args": "--reg-alloc-policy=dynamic --mem-size=8GiB -n4 -u4",
       "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/hotspot --options '64 2 2 /gem5/tests/gem5/resources/rodinia_hip/data/hotspot/temp_64 /gem5/tests/gem5/resources/rodinia_hip/data/hotspot/power_64 output.out'"
     },
     "rodinia-hotspot-1024": {
-      "config_args": "--reg-alloc-policy=dynamic --mem-size=8GiB -n4 -u4",
       "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/hotspot --options '1024 2 2 /gem5/tests/gem5/resources/rodinia_hip/data/hotspot/temp_1024 /gem5/tests/gem5/resources/rodinia_hip/data/hotspot/power_1024 output.out'"
     }
   }
