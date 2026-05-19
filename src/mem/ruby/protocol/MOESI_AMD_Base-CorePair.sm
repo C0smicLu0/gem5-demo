@@ -38,8 +38,7 @@ machine(MachineType:CorePair, "CP-like Core Coherence")
    CacheMemory * L2cache;     // func mem logic looks in this CacheMemory
    bool send_evictions := "False";
    Cycles issue_latency := 5;  // time to send data down to NB
-   Cycles l2_to_l1i_latency := 18;
-   Cycles l2_to_l1d_latency := 18;
+   Cycles l2_hit_latency := 18;
 
   // BEGIN Core Buffers
 
@@ -1048,7 +1047,7 @@ machine(MachineType:CorePair, "CP-like Core Coherence")
   }
 
   action(fi_L2ToL1, "fi", desc="L2 to L1 inst fill") {
-    enqueue(triggerQueue_out, TriggerMsg, l2_to_l1i_latency) {
+    enqueue(triggerQueue_out, TriggerMsg, l2_hit_latency) {
       out_msg.addr := address;
       out_msg.Type := TriggerType:L2_to_L1;
       out_msg.Dest := CacheId:L1I;
@@ -1056,7 +1055,7 @@ machine(MachineType:CorePair, "CP-like Core Coherence")
   }
 
   action(f0_L2ToL1, "f0", desc="L2 to L1 data fill") {
-    enqueue(triggerQueue_out, TriggerMsg, l2_to_l1d_latency) {
+    enqueue(triggerQueue_out, TriggerMsg, l2_hit_latency) {
       out_msg.addr := address;
       out_msg.Type := TriggerType:L2_to_L1;
       out_msg.Dest := CacheId:L1D0;
@@ -1064,7 +1063,7 @@ machine(MachineType:CorePair, "CP-like Core Coherence")
   }
 
   action(f1_L2ToL1, "f1", desc="L2 to L1 data fill") {
-    enqueue(triggerQueue_out, TriggerMsg, l2_to_l1d_latency) {
+    enqueue(triggerQueue_out, TriggerMsg, l2_hit_latency) {
       out_msg.addr := address;
       out_msg.Type := TriggerType:L2_to_L1;
       out_msg.Dest := CacheId:L1D1;
