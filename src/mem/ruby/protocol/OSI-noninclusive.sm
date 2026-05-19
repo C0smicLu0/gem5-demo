@@ -2132,7 +2132,7 @@ machine(MachineType:Directory, "AMD Baseline protocol")
     st_stallAndWaitRequest;
   }//no DMA
 
-  transition({IS, IS_M, IO, IO_M, SS, SS_M, SO, SO_PM, SO_P, SO_M, OO, OO_P, OS, OS_M, OM, OM_P, OM_PM, OM_M, S_V, O_V, IE_M, IDR_M, IDW_M, SDR_M, ODR_P, ODR_M, ODW_P, ODW_M, ODW_PM, SDW_P, SDW_M, SDW_PM}, {Writeback, Evict}) {
+  transition({IS, IS_M, IO, IO_M, SS, SS_M, SO, SO_PM, SO_P, SO_M, OO, OO_P, OS, OS_M, OM, OM_P, OM_PM, OM_M, S_V, O_V, IE_M, IDR_M, IDW_M, SDR_M, ODR_P, ODR_M, ODW_P, ODW_M, ODW_PM, SDW_P, SDW_M, SDW_PM}, {Writeback, Evict, Evict_owner, Evict_forwarder}) {
     st_stallAndWaitRequest;
   }//no BL2
 
