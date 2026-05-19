@@ -86,6 +86,11 @@ class L1Cache(RubyCache):
     def create(self, size, assoc, options):
         self.size = MemorySize(size)
         self.assoc = assoc
+        self.dataArrayBanks = options.cpu_l1_data_array_banks
+        self.tagArrayBanks = options.cpu_l1_tag_array_banks
+        self.dataAccessLatency = options.cpu_l1_data_access_latency
+        self.tagAccessLatency = options.cpu_l1_tag_access_latency
+        self.resourceStalls = options.cpu_l1_resource_stalls
         self.replacement_policy = TreePLRURP()
 
 
@@ -113,6 +118,7 @@ class CPCntrl(GPU_VIPER_CorePair_Controller, CntrlBase):
         self.L1D1cache.create(options.l1d_size, options.l1d_assoc, options)
         self.L2cache = L2Cache()
         self.L2cache.create(options.l2_size, options.l2_assoc, options)
+        self.l2_hit_latency = options.l2_hit_latency
 
         self.sequencer = RubySequencer(ruby_system=ruby_system)
         self.sequencer.version = self.seqCount()
@@ -428,6 +434,16 @@ def define_options(parser):
     parser.add_argument("--l3-tag-latency", type=int, default=15)
     parser.add_argument("--cpu-to-dir-latency", type=int, default=120)
     parser.add_argument("--gpu-to-dir-latency", type=int, default=120)
+    parser.add_argument("--cpu-l1-tag-access-latency", type=int, default=1)
+    parser.add_argument("--cpu-l1-data-access-latency", type=int, default=1)
+    parser.add_argument("--cpu-l1-tag-array-banks", type=int, default=2)
+    parser.add_argument("--cpu-l1-data-array-banks", type=int, default=2)
+    parser.add_argument(
+        "--cpu-l1-resource-stalls",
+        action="store_true",
+        default=False,
+        help="Enable CPU L1 tag/data array bank resource stalls",
+    )
     parser.add_argument(
         "--no-resource-stalls", action="store_false", default=True
     )
@@ -437,6 +453,12 @@ def define_options(parser):
     parser.add_argument("--use-L3-on-WT", action="store_true", default=False)
     parser.add_argument("--num-tbes", type=int, default=256)
     parser.add_argument("--l2-latency", type=int, default=50)  # load to use
+    parser.add_argument(
+        "--l2-hit-latency",
+        type=int,
+        default=18,
+        help="L2 hit trigger latency to L1 fills",
+    )
     parser.add_argument(
         "--num-tccs",
         type=int,

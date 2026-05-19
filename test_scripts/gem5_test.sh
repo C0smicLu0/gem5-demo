@@ -8,7 +8,7 @@ cd "${REPO_ROOT}"
 set -e
 
 DEFAULT_GEM5_OPT_ARGS="-re --silent-redirect"
-DEFAULT_CONFIG_ARGS="--reg-alloc-policy=dynamic --l1d_size=512B --l1i_size=512B --l1d_assoc=2 --l1i_assoc=2 --l2_size=1KiB --l2_assoc=2 --l2-latency=35 --cpu-to-dir-latency=180 --cpu-l2-to-l1i-latency=12 --cpu-l2-to-l1d-latency=16 --cpu-l1-tag-access-latency=6 --cpu-l1-data-access-latency=10 --cpu-l1-tag-array-banks=1 --cpu-l1-data-array-banks=1 --cpu-l1-resource-stalls --recycle-latency=12 --l3-data-latency=20 --l3-tag-latency=16 --num-tbes=256 --num-subcaches=4 --network=garnet --router-latency=6 --link-latency=6 -n3 -u237"
+DEFAULT_CONFIG_ARGS="--reg-alloc-policy=dynamic --l1d_size=512B --l1i_size=512B --l1d_assoc=2 --l1i_assoc=2 --l2_size=1KiB --l2_assoc=2 --l2-latency=50 --l2-hit-latency=18 --cpu-to-dir-latency=120 --recycle-latency=10 --l3-data-latency=20 --l3-tag-latency=15 --num-tbes=256 --num-subcaches=4 --network=garnet --router-latency=1 --link-latency=1 -n3 -u237"
 DEFAULT_WORKLOAD_ARGS="--download-resource square-gpu-test --download-resource-version 1.0.0 --download-dir /gem5/tests/gem5/resources -c /gem5/tests/gem5/resources/square-gpu-test-1.0.0"
 
 resolve_path() {

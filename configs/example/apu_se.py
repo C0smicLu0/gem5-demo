@@ -72,7 +72,7 @@ parser.add_argument(
     "-u",
     "--num-compute-units",
     type=int,
-    default=16,
+    default=4,
     help="number of GPU compute units",
 ),
 parser.add_argument(
@@ -431,11 +431,27 @@ parser.add_argument(
 )
 
 parser.add_argument(
+    "--download-resource-version",
+    type=str,
+    default=None,
+    required=False,
+    help="Specify version of resource to download",
+)
+parser.add_argument(
     "--download-dir",
     type=str,
     default=None,
     required=False,
     help="Download resources to this directory",
+)
+
+parser.add_argument(
+    "--ruby-message-buffer-max-dequeue-rate",
+    type=int,
+    default=0,
+    help="Global Ruby MessageBuffer max_dequeue_rate override. "
+    "0 keeps protocol defaults; >0 limits dequeues per cycle for all Ruby "
+    "MessageBuffer instances.",
 )
 
 Ruby.define_options(parser)
@@ -449,6 +465,7 @@ args = parser.parse_args()
 if args.download_resource:
     resources = obtain_resource(
         resource_id=args.download_resource,
+        resource_version=args.download_resource_version,
         resource_directory=args.download_dir,
     )
 
@@ -894,6 +911,14 @@ Ruby.create_system(args, None, system, None, dma_list, None)
 system.ruby.clk_domain = SrcClockDomain(
     clock=args.ruby_clock, voltage_domain=system.voltage_domain
 )
+
+if args.ruby_message_buffer_max_dequeue_rate > 0:
+    for ruby_obj in system.ruby.descendants():
+        if hasattr(ruby_obj, "max_dequeue_rate"):
+            ruby_obj.max_dequeue_rate = (
+                args.ruby_message_buffer_max_dequeue_rate
+            )
+
 gpu_cmd_proc.pio = system.piobus.mem_side_ports
 gpu_hsapp.pio = system.piobus.mem_side_ports
 
