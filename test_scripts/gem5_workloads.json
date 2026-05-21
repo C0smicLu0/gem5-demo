@@ -1,13 +1,21 @@
 {
   "base_run_root": "tests/testing-results",
   "gem5_opt_args": "-re --silent-redirect",
-  "config_args": "--reg-alloc-policy=dynamic --l1d_size=512B --l1i_size=512B --l1d_assoc=2 --l1i_assoc=2 --l2_size=1KiB --l2_assoc=2 --l2-latency=50 --l2-hit-latency=18 --cpu-to-dir-latency=120 --recycle-latency=10 --l3-data-latency=20 --l3-tag-latency=15 --num-tbes=256 --num-subcaches=4 --network=garnet --router-latency=1 --link-latency=1 -n3 -u237",
+  "config_args": "--reg-alloc-policy=dynamic",
   "config_profiles": {
-    "args1": "-n16 -u224",
-    "args2": "-n32 -u208",
-    "args3": "-n48 -u192",
-    "args4": "-n64 -u176",
-    "args5": "-n80 -u160"
+    "pressure": {
+      "default": "",
+      "mild": "--l1d_size=16KiB --l1i_size=16KiB --l2_size=256KiB --l2-latency=20 --l2-hit-latency=12 --cpu-to-dir-latency=80 --recycle-latency=8 --l3-data-latency=16 --l3-tag-latency=12 --router-latency=1 --link-latency=1",
+      "aggressive": "--l1d_size=512B --l1i_size=512B --l2_size=1KiB --l2-latency=50 --l2-hit-latency=18 --cpu-to-dir-latency=120 --recycle-latency=10 --l3-data-latency=20 --l3-tag-latency=15 --router-latency=1 --link-latency=1"
+    },
+    "cores": {
+      "args0": "-n3 -u240",
+      "args1": "-n16 -u224",
+      "args2": "-n32 -u208",
+      "args3": "-n48 -u192",
+      "args4": "-n64 -u176",
+      "args5": "-n80 -u160"
+    }
   },
   "workloads": {
     "square": {
@@ -41,31 +49,31 @@
       "workload_args": "--mem-size=8GiB -c /gem5/tests/gem5/resources/gpu-pannotia/pannotia-bins/mis_hip.gem5 --options '/gem5/tests/gem5/resources/gpu-pannotia/pannotia-datasets/1k_128k.gr 0'"
     },
     "rodinia-btree": {
-      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/b+tree.out --options 'file /gem5/tests/gem5/resources/rodinia_hip/data/b+tree/mil.txt command /gem5/tests/gem5/resources/rodinia_hip/data/b+tree/command.txt'"
+      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin_mod/b+tree.out --options 'file /gem5/tests/gem5/resources/rodinia_hip/data/b+tree/mil.txt command /gem5/tests/gem5/resources/rodinia_hip/data/b+tree/command.txt'"
     },
     "rodinia-bfs": {
-      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/bfs.out --options '/gem5/tests/gem5/resources/rodinia_hip/data/bfs/graph65536.txt'"
+      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin_mod/bfs.out --options '/gem5/tests/gem5/resources/rodinia_hip/data/bfs/graph65536.txt'"
     },
     "rodinia-dwt2d": {
-      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/dwt2d --options '/gem5/tests/gem5/resources/rodinia_hip/data/dwt2d/192.bmp -d 192x192 -f -5 -l 3'"
+      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin_mod/dwt2d --options '/gem5/tests/gem5/resources/rodinia_hip/data/dwt2d/192.bmp -d 192x192 -f -5 -l 3'"
     },
     "rodinia-gaussian": {
-      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/gaussian --options '-f /gem5/tests/gem5/resources/rodinia_hip/data/gaussian/matrix4.txt'"
+      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin_mod/gaussian --options '-f /gem5/tests/gem5/resources/rodinia_hip/data/gaussian/matrix4.txt'"
     },
     "rodinia-hotspot": {
-      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/hotspot --options '512 2 2 /gem5/tests/gem5/resources/rodinia_hip/data/hotspot/temp_512 /gem5/tests/gem5/resources/rodinia_hip/data/hotspot/power_512 output.out'"
+      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin_mod/hotspot --options '512 2 2 /gem5/tests/gem5/resources/rodinia_hip/data/hotspot/temp_512 /gem5/tests/gem5/resources/rodinia_hip/data/hotspot/power_512 output.out'"
     },
     "rodinia-lavaMD": {
-      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/lavaMD --options '-boxes1d 10'"
+      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin_mod/lavaMD --options '-boxes1d 10'"
     },
     "rodinia-nw": {
-      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/needle --options '2048 10'"
+      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin_mod/needle --options '2048 10'"
     },
     "rodinia-particlefilter": {
-      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/particlefilter_float --options '-x 128 -y 128 -z 10 -np 1000'"
+      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin_mod/particlefilter_float --options '-x 128 -y 128 -z 10 -np 1000'"
     },
     "rodinia-pathfinder": {
-      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/pathfinder --options '100000 100 20'"
+      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin_mod/pathfinder --options '100000 100 20'"
     }
   }
 }

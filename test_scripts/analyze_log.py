@@ -355,47 +355,64 @@ class FunctionalTestAnalyzer:
         return evidence
 
     def _analyze_resource_instantiation(self):
-        ini_exists = os.path.exists(self.files["config_ini"])
-        json_exists = os.path.exists(self.files["config_json"])
-        if not ini_exists and not json_exists:
-            return self._mk_result(self.STATUS_UNKNOWN, [], "缺少 config.ini/config.json，无法离线确认资源实例化")
+        stats_path = self.files["stats"]
+        if not os.path.exists(stats_path):
+            return self._mk_result(self.STATUS_UNKNOWN, [], "缺少 stats.txt，无法按 IPC 规则确认资源实例化")
+        self.read_files.append(stats_path)
+        text = read_text_file(stats_path)
 
-        found = set()
+        # e.g., system.cpu0.ipc 0.12345 / system.ruby.cu15.ipc 0.23456
+        ipc_re = re.compile(r"^\s*([\w\.\-]+)\.ipc\s+([^\s]+)", re.IGNORECASE)
+        cpu_ipc = {}
+        cu_ipc = {}
+        bad = []
         evidence = []
-        if ini_exists:
-            cfg = configparser.ConfigParser()
-            try:
-                cfg.read(self.files["config_ini"])
-                self.read_files.append(self.files["config_ini"])
-                for sec in cfg.sections():
-                    sec_low = sec.lower()
-                    for hint in self.CONFIG_OBJECT_HINTS:
-                        if hint in sec_low:
-                            found.add(hint)
-                            if len(evidence) < 6:
-                                evidence.append(f"config.ini: section [{sec}]")
-            except configparser.Error as exc:
-                evidence.append(f"config.ini parse error: {exc}")
 
-        if json_exists:
+        for line in text.splitlines():
+            m = ipc_re.match(line)
+            if not m:
+                continue
+            name = m.group(1)
+            raw = m.group(2)
+            low_name = name.lower()
+            low_raw = raw.lower()
             try:
-                self.read_files.append(self.files["config_json"])
-                with open(self.files["config_json"], "r", errors="ignore") as f:
-                    cfgj = json.load(f)
-                as_text = json.dumps(cfgj).lower()
-                for hint in self.CONFIG_OBJECT_HINTS:
-                    if hint in as_text:
-                        found.add(hint)
-                        if len(evidence) < 6:
-                            evidence.append(f"config.json: found token '{hint}'")
-            except (json.JSONDecodeError, OSError) as exc:
-                evidence.append(f"config.json parse error: {exc}")
+                val = float(raw)
+            except ValueError:
+                val = float("nan")
 
-        if "cpu" not in found and "gpu" not in found:
-            return self._mk_result(self.STATUS_FAIL, evidence, "未发现关键 CPU/GPU 资源迹象")
-        if found:
-            return self._mk_result(self.STATUS_PASS, evidence, f"检测到资源对象迹象: {sorted(found)}")
-        return self._mk_result(self.STATUS_UNKNOWN, evidence, "配置存在但缺少可识别资源对象证据")
+            is_cpu = re.search(r"\bcpu\d+\b", low_name) is not None
+            is_cu = re.search(r"\bcu\d+\b", low_name) is not None
+            if not (is_cpu or is_cu):
+                continue
+
+            if is_cpu:
+                cpu_ipc[name] = raw
+            if is_cu:
+                cu_ipc[name] = raw
+
+            if low_raw == "nan" or val != val or val == 0.0:
+                bad.append(f"{name}.ipc={raw}")
+            if len(evidence) < 8:
+                evidence.append(f"stats.txt: {name}.ipc={raw}")
+
+        total = len(cpu_ipc) + len(cu_ipc)
+        if total == 0:
+            return self._mk_result(self.STATUS_UNKNOWN, [], "stats.txt 未检测到 cpu*/cu* 的 ipc 项")
+        if bad:
+            ev = bad[:8]
+            return self._mk_result(self.STATUS_FAIL, ev, f"存在 cpu/cu 的 ipc 为 0 或 NaN（cpu={len(cpu_ipc)}, cu={len(cu_ipc)}, total={total}）")
+        if total < 240:
+            return self._mk_result(
+                self.STATUS_FAIL,
+                evidence[:8],
+                f"cpu+cu 的 ipc 项数量不足 240（cpu={len(cpu_ipc)}, cu={len(cu_ipc)}, total={total}）",
+            )
+        return self._mk_result(
+            self.STATUS_PASS,
+            evidence[:8],
+            f"所有 cpu/cu ipc 均非 0/NaN 且数量达标（cpu={len(cpu_ipc)}, cu={len(cu_ipc)}, total={total}）",
+        )
 
     def _analyze_system_init(self):
         all_text = self._combined_text(["simout", "simerr"])
