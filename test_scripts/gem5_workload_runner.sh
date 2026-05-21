@@ -11,10 +11,10 @@ usage() {
   cat <<'EOF'
 Usage:
   gem5_workload_runner.sh list
-  gem5_workload_runner.sh run <workload> [run_tag] [--profile <name>]
+  gem5_workload_runner.sh run <workload> [run_tag] [--profile <name> ...]
   gem5_workload_runner.sh analyze <workload> <run_tag>
   gem5_workload_runner.sh check <workload> <run_tag> [low high]
-  gem5_workload_runner.sh all <workload> [run_tag] [low high] [--profile <name>]
+  gem5_workload_runner.sh all <workload> [run_tag] [low high] [--profile <name> ...]
 
 Notes:
   - run_tag defaults to current time: YYYYMMDD-HHMMSS
@@ -60,8 +60,8 @@ sys.exit(0 if name in cfg.get("workloads", {}) else 1)
 PY
 }
 
-# 检查某个 profile 是否对指定的 workload 有效
-profile_exists() {
+# 解析 profile（支持一层 key 和嵌套路径，如 pressure.mild / cores.args1）
+profile_values() {
   local workload="$1"
   local profile="$2"
   python3 - "$CONFIG_FILE" "$workload" "$profile" <<'PY'
@@ -71,9 +71,26 @@ import sys
 cfg = json.load(open(sys.argv[1], "r"))
 workload = sys.argv[2]
 profile = sys.argv[3]
-global_profiles = cfg.get("config_profiles", {})
-workload_profiles = cfg.get("workloads", {}).get(workload, {}).get("config_profiles", {})
-sys.exit(0 if profile in global_profiles or profile in workload_profiles else 1)
+
+def lookup(d, key):
+    if not isinstance(d, dict):
+        return None
+    if key in d:
+        return d[key]
+    cur = d
+    for p in key.split("."):
+        if isinstance(cur, dict) and p in cur:
+            cur = cur[p]
+        else:
+            return None
+    return cur
+
+g = lookup(cfg.get("config_profiles", {}), profile)
+w = lookup(cfg.get("workloads", {}).get(workload, {}).get("config_profiles", {}), profile)
+if g is None and w is None:
+    sys.exit(1)
+print("" if g is None else str(g))
+print("" if w is None else str(w))
 PY
 }
 
@@ -202,10 +219,10 @@ build_run_dir() {
 }
 
 run_test() {
-  # config_args 优先级：global < workload < profile（profile 最高）
+  # config_args 采用拼接语义：global + workload + profiles（按输入顺序）
   local workload="$1"
   local run_tag="$2"
-  local selected_profile="${3:-}"
+  local selected_profiles="${3:-}"
   local run_dir
   run_dir="$(build_run_dir "$workload" "$run_tag")"
 
@@ -217,26 +234,28 @@ run_test() {
   workload_config_args="$(get_json "cfg['workloads']['${workload}'].get('config_args', '')")"
   global_profile_args=""
   workload_profile_args=""
-  if [[ -n "$selected_profile" ]]; then
-    if ! profile_exists "$workload" "$selected_profile"; then
-      echo "unknown profile: $selected_profile"
-      return 1
-    fi
-    global_profile_args="$(get_json "cfg.get('config_profiles', {}).get('${selected_profile}', '')")"
-    workload_profile_args="$(get_json "cfg['workloads']['${workload}'].get('config_profiles', {}).get('${selected_profile}', '')")"
-  fi
   config_args="$(join_trim "${global_config_args}" "${workload_config_args}")"
-  local profile_args
-  profile_args="$(join_trim "${global_profile_args}" "${workload_profile_args}")"
-  if [[ -n "$profile_args" ]]; then
-    # Profiles should override existing -u/-n from base config.
-    config_args="$(merge_config_with_overrides "$config_args" "$profile_args")"
+  if [[ -n "$selected_profiles" ]]; then
+    read -r -a prof_arr <<< "$selected_profiles"
+    local p
+    for p in "${prof_arr[@]}"; do
+      local vals g_line w_line
+      if ! vals="$(profile_values "$workload" "$p")"; then
+        echo "unknown profile: $p"
+        return 1
+      fi
+      g_line="$(echo "$vals" | sed -n '1p')"
+      w_line="$(echo "$vals" | sed -n '2p')"
+      global_profile_args="$(join_trim "${global_profile_args}" "${g_line}")"
+      workload_profile_args="$(join_trim "${workload_profile_args}" "${w_line}")"
+    done
   fi
+  config_args="$(join_trim "${config_args}" "${global_profile_args}" "${workload_profile_args}")"
   workload_args="$(get_json "cfg['workloads']['${workload}'].get('workload_args', '')")"
 
   echo "run_dir=${run_dir}"
-  if [[ -n "$selected_profile" ]]; then
-    echo "profile=${selected_profile}"
+  if [[ -n "$selected_profiles" ]]; then
+    echo "profile=${selected_profiles}"
   fi
   "$GEM5_TEST" test \
     --run-dir "$run_dir" \
@@ -285,19 +304,25 @@ case "$cmd" in
     run_tag="${3:-$(date +%Y%m%d-%H%M%S)}"
     if [[ "$cmd" == "run" ]]; then
       # run: 仅执行测试
-      profile=""
+      profile_tokens=()
       if (( $# >= 4 )); then
-        if [[ "${4:-}" != "--profile" ]] || (( $# != 5 )); then
-          echo "usage: $0 run <workload> [run_tag] [--profile <name>]"
-          exit 1
-        fi
-        profile="${5:-}"
-        if [[ -z "$profile" ]]; then
-          echo "missing value for --profile"
-          exit 1
-        fi
+        rem=("${@:4}")
+        i=0
+        while (( i < ${#rem[@]} )); do
+          if [[ "${rem[$i]}" != "--profile" ]]; then
+            echo "usage: $0 run <workload> [run_tag] [--profile <name> ...]"
+            exit 1
+          fi
+          i=$((i + 1))
+          if (( i >= ${#rem[@]} )); then
+            echo "missing value for --profile"
+            exit 1
+          fi
+          profile_tokens+=("${rem[$i]}")
+          i=$((i + 1))
+        done
       fi
-      run_test "$workload" "$run_tag" "$profile"
+      run_test "$workload" "$run_tag" "${profile_tokens[*]}"
     elif [[ "$cmd" == "analyze" ]]; then
       # analyze: 仅执行离线分析
       run_analyze "$workload" "$run_tag"
@@ -308,19 +333,25 @@ case "$cmd" in
       # all: 顺序执行 run -> analyze -> check
       low="${4:-100}"
       high="${5:-150}"
-      profile=""
+      profile_tokens=()
       if (( $# >= 6 )); then
-        if [[ "${6:-}" != "--profile" ]] || (( $# != 7 )); then
-          echo "usage: $0 all <workload> [run_tag] [low high] [--profile <name>]"
-          exit 1
-        fi
-        profile="${7:-}"
-        if [[ -z "$profile" ]]; then
-          echo "missing value for --profile"
-          exit 1
-        fi
+        rem=("${@:6}")
+        i=0
+        while (( i < ${#rem[@]} )); do
+          if [[ "${rem[$i]}" != "--profile" ]]; then
+            echo "usage: $0 all <workload> [run_tag] [low high] [--profile <name> ...]"
+            exit 1
+          fi
+          i=$((i + 1))
+          if (( i >= ${#rem[@]} )); then
+            echo "missing value for --profile"
+            exit 1
+          fi
+          profile_tokens+=("${rem[$i]}")
+          i=$((i + 1))
+        done
       fi
-      run_test "$workload" "$run_tag" "$profile"
+      run_test "$workload" "$run_tag" "${profile_tokens[*]}"
       run_analyze "$workload" "$run_tag"
       run_check "$workload" "$run_tag" "$low" "$high"
     fi
