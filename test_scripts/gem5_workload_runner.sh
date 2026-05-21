@@ -11,11 +11,10 @@ usage() {
   cat <<'EOF'
 Usage:
   gem5_workload_runner.sh list
-  gem5_workload_runner.sh discover
-  gem5_workload_runner.sh run <workload> [run_tag] [extra config args...]
+  gem5_workload_runner.sh run <workload> [run_tag] [--profile <name>]
   gem5_workload_runner.sh analyze <workload> <run_tag>
   gem5_workload_runner.sh check <workload> <run_tag> [low high]
-  gem5_workload_runner.sh all <workload> [run_tag] [low high] [extra config args...]
+  gem5_workload_runner.sh all <workload> [run_tag] [low high] [--profile <name>]
 
 Notes:
   - run_tag defaults to current time: YYYYMMDD-HHMMSS
@@ -31,6 +30,7 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
   exit 1
 fi
 
+# 从 JSON 中读取表达式结果，统一作为脚本配置入口
 get_json() {
   local py_expr="$1"
   python3 - "$CONFIG_FILE" "$py_expr" <<'PY'
@@ -49,6 +49,7 @@ else:
 PY
 }
 
+# 检查给定的 workload 名称是否存在于 JSON 的 workloads 对象中
 workload_exists() {
   local name="$1"
   python3 - "$CONFIG_FILE" "$name" <<'PY'
@@ -57,6 +58,90 @@ cfg = json.load(open(sys.argv[1], "r"))
 name = sys.argv[2]
 sys.exit(0 if name in cfg.get("workloads", {}) else 1)
 PY
+}
+
+# 检查某个 profile 是否对指定的 workload 有效
+profile_exists() {
+  local workload="$1"
+  local profile="$2"
+  python3 - "$CONFIG_FILE" "$workload" "$profile" <<'PY'
+import json
+import sys
+
+cfg = json.load(open(sys.argv[1], "r"))
+workload = sys.argv[2]
+profile = sys.argv[3]
+global_profiles = cfg.get("config_profiles", {})
+workload_profiles = cfg.get("workloads", {}).get(workload, {}).get("config_profiles", {})
+sys.exit(0 if profile in global_profiles or profile in workload_profiles else 1)
+PY
+}
+
+join_trim() {
+  # 把多个片段拼接为单行参数串，并去掉多余空白
+  echo "$*" | xargs
+}
+
+option_overridden() {
+  # 判断某个 token 是否属于会被覆盖的关键选项（当前只处理 -u/-n 两组）
+  local opt="$1"
+  local tok="$2"
+  case "$opt" in
+    u)
+      [[ "$tok" == "-u" || "$tok" == --num-compute-units || "$tok" =~ ^-u[0-9]+$ || "$tok" == --num-compute-units=* ]]
+      ;;
+    n)
+      [[ "$tok" == "-n" || "$tok" == --num-cpus || "$tok" =~ ^-n[0-9]+$ || "$tok" == --num-cpus=* ]]
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+merge_config_with_overrides() {
+  # 按“override 覆盖 base”合并参数串：
+  # 当 override 中出现 -u/-n 时，先从 base 删除对应旧值，再追加 override。
+  local base="$1"
+  local override="$2"
+  if [[ -z "$override" ]]; then
+    echo "$base"
+    return 0
+  fi
+
+  read -r -a base_arr <<< "$base"
+  read -r -a override_arr <<< "$override"
+  local rm_u=0 rm_n=0
+  local i
+
+  for ((i=0; i<${#override_arr[@]}; i++)); do
+    if option_overridden "u" "${override_arr[$i]}"; then
+      rm_u=1
+    fi
+    if option_overridden "n" "${override_arr[$i]}"; then
+      rm_n=1
+    fi
+  done
+
+  local merged=()
+  for ((i=0; i<${#base_arr[@]}; i++)); do
+    local tok="${base_arr[$i]}"
+    if (( rm_u )) && option_overridden "u" "$tok"; then
+      if [[ "$tok" == "-u" || "$tok" == --num-compute-units ]]; then
+        ((i++))
+      fi
+      continue
+    fi
+    if (( rm_n )) && option_overridden "n" "$tok"; then
+      if [[ "$tok" == "-n" || "$tok" == --num-cpus ]]; then
+        ((i++))
+      fi
+      continue
+    fi
+    merged+=("$tok")
+  done
+  merged+=("${override_arr[@]}")
+  echo "${merged[*]}"
 }
 
 list_workloads() {
@@ -104,96 +189,8 @@ for key, title in ordered:
 PY
 }
 
-discover_workloads() {
-  python3 - "$CONFIG_FILE" "$REPO_ROOT" <<'PY'
-import json
-import os
-import pathlib
-import sys
-
-cfg = json.load(open(sys.argv[1], "r"))
-repo_root = pathlib.Path(sys.argv[2])
-resources = repo_root / "tests" / "gem5" / "resources"
-configured = set((cfg.get("workloads") or {}).keys())
-isatty = sys.stdout.isatty()
-
-def c(s, code):
-    if not isatty:
-        return s
-    return f"\033[{code}m{s}\033[0m"
-
-def status_tag(name):
-    return c("[configured]", "1;32") if name in configured else c("[new]", "1;33")
-
-if not resources.exists():
-    print(f"resources dir not found: {resources}")
-    sys.exit(1)
-
-core = []
-pannotia = []
-rodinia = []
-other = []
-
-# Common offline workloads.
-for name in ["square", "sleepMutex", "lfTreeBarrUniq", "hacc", "lulesh"]:
-    core.append(name)
-
-# Pannotia bins.
-pbin = resources / "gpu-pannotia" / "pannotia-bins"
-if pbin.exists():
-    for f in sorted(pbin.glob("*.gem5")):
-        pannotia.append(f"pannotia-auto:{f.stem}")
-
-# Rodinia binaries.
-rbin = resources / "rodinia_hip" / "bin"
-if rbin.exists():
-    skip = {"run.sh", "filelist.txt", "output.txt", "result.txt"}
-    for f in sorted(rbin.iterdir()):
-        if not f.is_file():
-            continue
-        if f.name in skip:
-            continue
-        if f.suffix in {".txt"}:
-            continue
-        rodinia.append(f"rodinia-auto:{f.name}")
-
-# Any other top-level resource directories.
-known_top = {"gpu-pannotia", "rodinia_hip", "square-gpu-test", "allSyncPrims-1kernel", "hacc-force-tree", "lulesh"}
-for d in sorted(resources.iterdir()):
-    if not d.is_dir():
-        continue
-    if d.name in known_top:
-        continue
-    other.append(f"resource-dir:{d.name}")
-
-print(c("Discovered Heterogeneous Programs", "1;36"))
-print(c("=" * 72, "36"))
-print(f"resources: {resources}")
-print(f"configured workloads in json: {len(configured)}")
-
-def print_group(title, items):
-    if not items:
-        return
-    print("")
-    print(c(f"[{title}] ({len(items)})", "1;34"))
-    for i, name in enumerate(items, start=1):
-        mapped = name
-        # Best-effort map for status: auto-discovered names do not always map 1:1.
-        probe = name
-        if name.startswith("rodinia-auto:"):
-            probe = "rodinia-" + name.split(":", 1)[1].replace("+tree.out", "btree").replace("bfs.out", "bfs").replace("needle", "nw").replace("particlefilter_float", "particlefilter")
-        elif name.startswith("pannotia-auto:"):
-            probe = "pannotia-" + name.split(":", 1)[1]
-        print(f"  {i:>2}. {mapped:<36} {status_tag(probe)}")
-
-print_group("Core (known)", core)
-print_group("Pannotia (from bins)", pannotia)
-print_group("Rodinia (from bin)", rodinia)
-print_group("Other Resource Dirs", other)
-PY
-}
-
 build_run_dir() {
+  # 统一生成每次运行目录：<base_run_root>/<workload>-<run_tag>
   local workload="$1"
   local run_tag="$2"
   local root
@@ -205,58 +202,42 @@ build_run_dir() {
 }
 
 run_test() {
+  # config_args 优先级：global < workload < profile（profile 最高）
   local workload="$1"
   local run_tag="$2"
-  local extra_config_args="${3:-}"
+  local selected_profile="${3:-}"
   local run_dir
   run_dir="$(build_run_dir "$workload" "$run_tag")"
 
   local gem5_opt_args config_args workload_args
   local global_config_args workload_config_args
+  local global_profile_args workload_profile_args
   gem5_opt_args="$(get_json "cfg['workloads']['${workload}'].get('gem5_opt_args', cfg.get('gem5_opt_args', ''))")"
   global_config_args="$(get_json "cfg.get('config_args', '')")"
   workload_config_args="$(get_json "cfg['workloads']['${workload}'].get('config_args', '')")"
-  config_args="$(echo "${global_config_args} ${workload_config_args}" | xargs)"
-  workload_args="$(get_json "cfg['workloads']['${workload}'].get('workload_args', '')")"
-  if [[ -n "$extra_config_args" ]]; then
-    # Override semantics for short options like "-u 8" / "-n 4":
-    # remove existing -u/-n from JSON config_args, then append user args.
-    read -r -a base_arr <<< "$config_args"
-    read -r -a extra_arr <<< "$extra_config_args"
-
-    local rm_u=0 rm_n=0
-    local i
-    for ((i=0; i<${#extra_arr[@]}; i++)); do
-      case "${extra_arr[$i]}" in
-        -u|--num-compute-units) rm_u=1 ;;
-        -n|--num-cpus) rm_n=1 ;;
-      esac
-    done
-
-    local merged=()
-    for ((i=0; i<${#base_arr[@]}; i++)); do
-      local tok="${base_arr[$i]}"
-      if (( rm_u )) && [[ "$tok" =~ ^-u[0-9]+$ ]]; then
-        continue
-      fi
-      if (( rm_n )) && [[ "$tok" =~ ^-n[0-9]+$ ]]; then
-        continue
-      fi
-      if (( rm_u )) && [[ "$tok" == "-u" || "$tok" == "--num-compute-units" ]]; then
-        ((i++))
-        continue
-      fi
-      if (( rm_n )) && [[ "$tok" == "-n" || "$tok" == "--num-cpus" ]]; then
-        ((i++))
-        continue
-      fi
-      merged+=("$tok")
-    done
-    merged+=("${extra_arr[@]}")
-    config_args="${merged[*]}"
+  global_profile_args=""
+  workload_profile_args=""
+  if [[ -n "$selected_profile" ]]; then
+    if ! profile_exists "$workload" "$selected_profile"; then
+      echo "unknown profile: $selected_profile"
+      return 1
+    fi
+    global_profile_args="$(get_json "cfg.get('config_profiles', {}).get('${selected_profile}', '')")"
+    workload_profile_args="$(get_json "cfg['workloads']['${workload}'].get('config_profiles', {}).get('${selected_profile}', '')")"
   fi
+  config_args="$(join_trim "${global_config_args}" "${workload_config_args}")"
+  local profile_args
+  profile_args="$(join_trim "${global_profile_args}" "${workload_profile_args}")"
+  if [[ -n "$profile_args" ]]; then
+    # Profiles should override existing -u/-n from base config.
+    config_args="$(merge_config_with_overrides "$config_args" "$profile_args")"
+  fi
+  workload_args="$(get_json "cfg['workloads']['${workload}'].get('workload_args', '')")"
 
   echo "run_dir=${run_dir}"
+  if [[ -n "$selected_profile" ]]; then
+    echo "profile=${selected_profile}"
+  fi
   "$GEM5_TEST" test \
     --run-dir "$run_dir" \
     --gem5-opt-args "$gem5_opt_args" \
@@ -265,6 +246,7 @@ run_test() {
 }
 
 run_analyze() {
+  # analyze/check 复用同一 run_dir 规则，确保与 run/all 对齐
   local workload="$1"
   local run_tag="$2"
   local run_dir
@@ -287,10 +269,8 @@ case "$cmd" in
   list)
     list_workloads
     ;;
-  discover)
-    discover_workloads
-    ;;
   run|analyze|check|all)
+    # 统一入口校验：workload 必填且必须在 JSON 中存在
     workload="${2:-}"
     if [[ -z "$workload" ]]; then
       usage
@@ -304,17 +284,43 @@ case "$cmd" in
     fi
     run_tag="${3:-$(date +%Y%m%d-%H%M%S)}"
     if [[ "$cmd" == "run" ]]; then
-      extra_config_args="${*:4}"
-      run_test "$workload" "$run_tag" "$extra_config_args"
+      # run: 仅执行测试
+      profile=""
+      if (( $# >= 4 )); then
+        if [[ "${4:-}" != "--profile" ]] || (( $# != 5 )); then
+          echo "usage: $0 run <workload> [run_tag] [--profile <name>]"
+          exit 1
+        fi
+        profile="${5:-}"
+        if [[ -z "$profile" ]]; then
+          echo "missing value for --profile"
+          exit 1
+        fi
+      fi
+      run_test "$workload" "$run_tag" "$profile"
     elif [[ "$cmd" == "analyze" ]]; then
+      # analyze: 仅执行离线分析
       run_analyze "$workload" "$run_tag"
     elif [[ "$cmd" == "check" ]]; then
+      # check: 仅做阈值检查（可自定义 low/high）
       run_check "$workload" "$run_tag" "${4:-100}" "${5:-150}"
     else
+      # all: 顺序执行 run -> analyze -> check
       low="${4:-100}"
       high="${5:-150}"
-      extra_config_args="${*:6}"
-      run_test "$workload" "$run_tag" "$extra_config_args"
+      profile=""
+      if (( $# >= 6 )); then
+        if [[ "${6:-}" != "--profile" ]] || (( $# != 7 )); then
+          echo "usage: $0 all <workload> [run_tag] [low high] [--profile <name>]"
+          exit 1
+        fi
+        profile="${7:-}"
+        if [[ -z "$profile" ]]; then
+          echo "missing value for --profile"
+          exit 1
+        fi
+      fi
+      run_test "$workload" "$run_tag" "$profile"
       run_analyze "$workload" "$run_tag"
       run_check "$workload" "$run_tag" "$low" "$high"
     fi

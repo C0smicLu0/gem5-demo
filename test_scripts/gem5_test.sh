@@ -24,6 +24,22 @@ resolve_path() {
   fi
 }
 
+extract_run_dir() {
+  local run_dir=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --run-dir) run_dir="$2"; shift 2 ;;
+      --gem5-opt-bin|--config-py|--gem5-opt-args|--config-args|--workload-args) shift 2 ;;
+      *) echo "unknown arg: $1"; return 1 ;;
+    esac
+  done
+  if [ -z "$run_dir" ]; then
+    echo "usage: $0 test --run-dir <abs_run_dir> [--gem5-opt-bin ...] [--config-py ...] [--gem5-opt-args \"...\"] [--config-args \"...\"] [--workload-args \"...\"]"
+    return 1
+  fi
+  resolve_path "$run_dir"
+}
+
 build_run_cmd() {
   local run_dir=""
   local gem5_opt_bin="/gem5/build/VEGA_X86/gem5.opt"
@@ -70,13 +86,7 @@ EOF
 run_test() {
   build_run_cmd "$@"
   local run_dir=""
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --run-dir) run_dir="$2"; shift 2 ;;
-      --gem5-opt-bin|--config-py|--gem5-opt-args|--config-args|--workload-args) shift 2 ;;
-      *) echo "unknown arg: $1"; return 1 ;;
-    esac
-  done
+  run_dir="$(extract_run_dir "$@")"
   set +e
   bash "${run_dir}/run_cmd.sh"
   local run_rc=$?
@@ -170,31 +180,31 @@ else
   docker_run_args+=("-i")
 fi
 
-if [ "$1" = "list" ]; then
-  docker run "${docker_run_args[@]}" \
-    -u $(id -u):$(id -g) \
-    -v "$PWD:/gem5" \
-    -w /gem5/tests \
-    ghcr.io/gem5/gcn-gpu:v25-1 \
-    ./main.py list --tests \
-      --isa VEGA_X86 \
-      --variant opt \
-      --host gcn_gpu \
-      gem5/gpu
-fi
-
-if [ "$1" = "test" ]; then
-  shift
-  run_test "$@"
-  exit $?
-fi
-
-if [ "$1" = "analyze" ]; then
-  run_analyze "$2"
-  exit $?
-fi
-
-if [ "$1" = "check" ]; then
-  run_check "$2" "$3" "$4"
-  exit $?
-fi
+case "${1:-}" in
+  list)
+    docker run "${docker_run_args[@]}" \
+      -u $(id -u):$(id -g) \
+      -v "$PWD:/gem5" \
+      -w /gem5/tests \
+      ghcr.io/gem5/gcn-gpu:v25-1 \
+      ./main.py list --tests \
+        --isa VEGA_X86 \
+        --variant opt \
+        --host gcn_gpu \
+        gem5/gpu
+    ;;
+  test)
+    shift
+    run_test "$@"
+    ;;
+  analyze)
+    run_analyze "${2:-}"
+    ;;
+  check)
+    run_check "${2:-}" "${3:-}" "${4:-}"
+    ;;
+  *)
+    echo "usage: $0 {list|test|analyze|check} ..."
+    exit 1
+    ;;
+esac

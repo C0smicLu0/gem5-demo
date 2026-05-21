@@ -2,6 +2,7 @@
 
 import argparse
 import configparser
+from collections import defaultdict
 import glob
 import io
 import json
@@ -10,7 +11,6 @@ import re
 import sys
 from contextlib import redirect_stdout
 from datetime import datetime
-from collections import defaultdict
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 ENABLE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
@@ -43,6 +43,11 @@ def status_text(status):
 
 def fmt_int(v):
     return f"{int(v):,}"
+
+
+def read_text_file(path):
+    with open(path, "r", errors="ignore") as f:
+        return f.read()
 
 
 class LatRunOutAnalyzer:
@@ -93,7 +98,7 @@ class LatRunOutAnalyzer:
         if not self.files:
             return False
         for path in self.files:
-            text = open(path, "r", errors="ignore").read()
+            text = read_text_file(path)
             for line in self._last_block_lines(text):
                 if not line.strip().startswith("type="):
                     continue
@@ -211,7 +216,7 @@ class CacheMissRateAnalyzer:
     def process(self):
         if not os.path.exists(self.stats_file):
             return False
-        text = open(self.stats_file, "r", errors="ignore").read()
+        text = read_text_file(self.stats_file)
         dump = self._last_dump_text(text)
         if not dump:
             return False
@@ -325,7 +330,10 @@ class FunctionalTestAnalyzer:
         if not os.path.exists(path):
             return ""
         self.read_files.append(path)
-        return open(path, "r", errors="ignore").read()
+        return read_text_file(path)
+
+    def _combined_text(self, keys):
+        return "\n".join(self._read_if_exists(key) for key in keys)
 
     @staticmethod
     def _mk_result(status, evidence, notes):
@@ -372,7 +380,8 @@ class FunctionalTestAnalyzer:
         if json_exists:
             try:
                 self.read_files.append(self.files["config_json"])
-                cfgj = json.load(open(self.files["config_json"], "r", errors="ignore"))
+                with open(self.files["config_json"], "r", errors="ignore") as f:
+                    cfgj = json.load(f)
                 as_text = json.dumps(cfgj).lower()
                 for hint in self.CONFIG_OBJECT_HINTS:
                     if hint in as_text:
@@ -389,7 +398,7 @@ class FunctionalTestAnalyzer:
         return self._mk_result(self.STATUS_UNKNOWN, evidence, "配置存在但缺少可识别资源对象证据")
 
     def _analyze_system_init(self):
-        all_text = "\n".join([self._read_if_exists("simout"), self._read_if_exists("simerr")])
+        all_text = self._combined_text(["simout", "simerr"])
         fail_ev = self._find_pattern_evidence(all_text, self.INIT_FAIL_PATTERNS, "simout/simerr")
         if fail_ev:
             return self._mk_result(self.STATUS_FAIL, fail_ev, "检测到初始化失败关键词")
@@ -399,7 +408,7 @@ class FunctionalTestAnalyzer:
         return self._mk_result(self.STATUS_UNKNOWN, [], "缺少初始化成功或失败的明确证据")
 
     def _analyze_function_execution(self):
-        all_text = "\n".join([self._read_if_exists("simout"), self._read_if_exists("simerr")])
+        all_text = self._combined_text(["simout", "simerr"])
         crash_ev = self._find_pattern_evidence(all_text, self.CRITICAL_PATTERNS + ["aborted", "killed", "traceback"], "simout/simerr")
         if crash_ev:
             return self._mk_result(self.STATUS_FAIL, crash_ev, "检测到中断/崩溃迹象")
@@ -409,7 +418,7 @@ class FunctionalTestAnalyzer:
         return self._mk_result(self.STATUS_UNKNOWN, [], "未发现明确退出状态")
 
     def _analyze_result_validation(self):
-        all_text = "\n".join([self._read_if_exists("simout"), self._read_if_exists("simerr")])
+        all_text = self._combined_text(["simout", "simerr"])
         fail_ev = self._find_pattern_evidence(all_text, self.RESULT_FAIL_PATTERNS, "simout/simerr")
         if fail_ev:
             return self._mk_result(self.STATUS_FAIL, fail_ev, "检测到 correctness/error 失败信号")
@@ -419,7 +428,7 @@ class FunctionalTestAnalyzer:
         return self._mk_result(self.STATUS_UNKNOWN, [], "无统一 correctness 文本，保持 UNKNOWN")
 
     def _analyze_exception_check(self):
-        all_text = "\n".join([self._read_if_exists("simout"), self._read_if_exists("simerr"), self._read_if_exists("stats")])
+        all_text = self._combined_text(["simout", "simerr", "stats"])
         hit_ev = self._find_pattern_evidence(all_text, self.CRITICAL_PATTERNS, "simout/simerr/stats")
         if hit_ev:
             return self._mk_result(self.STATUS_FAIL, hit_ev, "命中严重异常关键字")

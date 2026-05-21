@@ -2,6 +2,13 @@
   "base_run_root": "tests/testing-results",
   "gem5_opt_args": "-re --silent-redirect",
   "config_args": "--reg-alloc-policy=dynamic --l1d_size=512B --l1i_size=512B --l1d_assoc=2 --l1i_assoc=2 --l2_size=1KiB --l2_assoc=2 --l2-latency=50 --l2-hit-latency=18 --cpu-to-dir-latency=120 --recycle-latency=10 --l3-data-latency=20 --l3-tag-latency=15 --num-tbes=256 --num-subcaches=4 --network=garnet --router-latency=1 --link-latency=1 -n3 -u237",
+  "config_profiles": {
+    "args1": "-n16 -u224",
+    "args2": "-n32 -u208",
+    "args3": "-n48 -u192",
+    "args4": "-n64 -u176",
+    "args5": "-n80 -u160"
+  },
   "workloads": {
     "square": {
       "workload_args": "--download-resource square-gpu-test --download-dir /gem5/tests/gem5/resources -c /gem5/tests/gem5/resources/square-gpu-test"
@@ -20,6 +27,9 @@
     },
     "pannotia-bc-1k-128k": {
       "workload_args": "--mem-size=8GB -c /gem5/tests/gem5/resources/gpu-pannotia/pannotia-bins/bc.gem5 --options /gem5/tests/gem5/resources/gpu-pannotia/pannotia-datasets/1k_128k.gr"
+    },
+    "pannotia-bc-mod-1k-128k": {
+      "workload_args": "--mem-size=8GB -c /gem5/tests/gem5/gpu/pannotia_modified_src/pannotia/bc/bin/bc.gem5 --options /gem5/tests/gem5/resources/gpu-pannotia/pannotia-datasets/1k_128k.gr"
     },
     "pannotia-color-maxmin-1k-128k": {
       "workload_args": "--mem-size=8GB -c /gem5/tests/gem5/resources/gpu-pannotia/pannotia-bins/color_maxmin.gem5 --options '/gem5/tests/gem5/resources/gpu-pannotia/pannotia-datasets/1k_128k.gr 0'"
@@ -56,33 +66,6 @@
     },
     "rodinia-pathfinder": {
       "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/pathfinder --options '100000 100 20'"
-    },
-    "rodinia-btree-10k": {
-      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/b+tree.out --options 'file /gem5/tests/gem5/resources/rodinia_hip/data/b+tree/mil_10k.txt command /gem5/tests/gem5/resources/rodinia_hip/data/b+tree/command_10k.txt'"
-    },
-    "rodinia-bfs-16k": {
-      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/bfs.out --options '/gem5/tests/gem5/resources/rodinia_hip/data/bfs/graph16k.txt'"
-    },
-    "rodinia-bfs-32k": {
-      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/bfs.out --options '/gem5/tests/gem5/resources/rodinia_hip/data/bfs/graph32k.txt'"
-    },
-    "rodinia-bfs-1MW_6": {
-      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/bfs.out --options '/gem5/tests/gem5/resources/rodinia_hip/data/bfs/graph1MW_6.txt'"
-    },
-    "rodinia-gaussian-16": {
-      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/gaussian --options '-f /gem5/tests/gem5/resources/rodinia_hip/data/gaussian/matrix16.txt'"
-    },
-    "rodinia-gaussian-208": {
-      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/gaussian --options '-f /gem5/tests/gem5/resources/rodinia_hip/data/gaussian/matrix208.txt'"
-    },
-    "rodinia-gaussian-1024": {
-      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/gaussian --options '-f /gem5/tests/gem5/resources/rodinia_hip/data/gaussian/matrix1024.txt'"
-    },
-    "rodinia-hotspot-64": {
-      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/hotspot --options '64 2 2 /gem5/tests/gem5/resources/rodinia_hip/data/hotspot/temp_64 /gem5/tests/gem5/resources/rodinia_hip/data/hotspot/power_64 output.out'"
-    },
-    "rodinia-hotspot-1024": {
-      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin/hotspot --options '1024 2 2 /gem5/tests/gem5/resources/rodinia_hip/data/hotspot/temp_1024 /gem5/tests/gem5/resources/rodinia_hip/data/hotspot/power_1024 output.out'"
     }
   }
 }

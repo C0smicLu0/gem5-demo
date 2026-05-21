@@ -25,6 +25,7 @@ echo "workdir in docker: ${WORKDIR_IN_DOCKER}"
 
 docker run -it --rm \
     --name "${CONTAINER_NAME}" \
+    -u "$(id -u):$(id -g)" \
     -v "${GEM5_ROOT}:${WORKDIR_IN_DOCKER}" \
     -w "${WORKDIR_IN_DOCKER}" \
     "${DOCKER_IMAGE}" \
