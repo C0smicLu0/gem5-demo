@@ -95,6 +95,7 @@ machine(MachineType:Directory, "AMD Baseline protocol")
     Evict_owner,        desc="...";
     Evict_forwarder,    desc="...";
     Writeback,          desc="...";
+    Writeback_notOwner, desc="...";
 
     StaleWB,         desc="Notification that WB has been superceded by a probe";
 
@@ -456,9 +457,12 @@ machine(MachineType:Directory, "AMD Baseline protocol")
         } else if (in_msg.Type == CoherenceRequestType:VicDirty || in_msg.Type == CoherenceRequestType:PUTX) {
           if (getDirectoryEntry(in_msg.addr).VicDirtyIgnore.isElement(in_msg.Requestor)) {
             DPRINTF(RubySlicc, "Dropping Writeback for address %s\n", in_msg.addr);
-          } else {
+          } if (getDirectoryEntry(in_msg.addr).Owner.isElement(in_msg.Requestor)) {
             DPRINTF(RubySlicc, "Got Writeback from %s on %s\n", in_msg.Requestor, in_msg.addr);
             trigger(Event:Writeback, in_msg.addr, entry, tbe);
+          } else {
+            DPRINTF(RubySlicc, "Got Writeback_notOwner from %s on %s\n", in_msg.Requestor, in_msg.addr);
+            trigger(Event:Writeback_notOwner, in_msg.addr, entry, tbe);
           }
         } else if (in_msg.Type == CoherenceRequestType:VicClean || in_msg.Type == CoherenceRequestType:PUTS) {
           if (getDirectoryEntry(in_msg.addr).VicDirtyIgnore.isElement(in_msg.Requestor)) {
@@ -466,7 +470,7 @@ machine(MachineType:Directory, "AMD Baseline protocol")
           } else {
             if (getDirectoryEntry(in_msg.addr).Owner.isElement(in_msg.Requestor)) {
               if (in_msg.isExclusive) {
-                DPRINTF(RubySlicc, "Got Evict_Owner from %s on %s\n", in_msg.Requestor, in_msg.addr);
+                DPRINTF(RubySlicc, "Got Evict_owner from %s on %s\n", in_msg.Requestor, in_msg.addr);
                 trigger(Event:Evict_owner, in_msg.addr, entry, tbe);
               } else {
                 DPRINTF(RubySlicc, "Got Evict_forwarder from %s on %s\n", in_msg.Requestor, in_msg.addr);
@@ -1798,7 +1802,7 @@ machine(MachineType:Directory, "AMD Baseline protocol")
     pt_popTriggerQueue;
   }
 
-  // O 收到 Evict_Owner：说明此时 owner 处于 E 状态，owner 自己驅逐乾淨塊，寫回內存，清 sharers 和 owner，喚醒依賴，釋放 TBE 和目錄條目，狀態 I 
+  // O 收到 Evict_owner：说明此时 owner 处于 E 状态，owner 自己驅逐乾淨塊，寫回內存，清 sharers 和 owner，喚醒依賴，釋放 TBE 和目錄條目，狀態 I 
   transition(O, Evict_owner, I) {L3TagArrayRead, L3DataArrayWrite} {
     v_allocateTBE;
     w_sendResponseWBAck;
@@ -1850,6 +1854,18 @@ machine(MachineType:Directory, "AMD Baseline protocol")
     r_removeSharer;
     c_clearOwner;
     cs_checkSharerEmpty;
+    p_popRequestQueue;
+  }
+
+  transition(O, Writeback_notOwner, O) {L3TagArrayRead, L3DataArrayWrite} {
+    v_allocateTBE;
+    w_sendResponseWBAck;
+    d_writeDataToMemory;
+    al_allocateL3Block;
+    pr_profileL3HitMiss;
+    r_removeSharer;
+    wada_wakeUpAllDependentsAddr;
+    dt_deallocateTBE;
     p_popRequestQueue;
   }
   
@@ -2132,7 +2148,7 @@ machine(MachineType:Directory, "AMD Baseline protocol")
     st_stallAndWaitRequest;
   }//no DMA
 
-  transition({IS, IS_M, IO, IO_M, SS, SS_M, SO, SO_PM, SO_P, SO_M, OO, OO_P, OS, OS_M, OM, OM_P, OM_PM, OM_M, S_V, O_V, IE_M, IDR_M, IDW_M, SDR_M, ODR_P, ODR_M, ODW_P, ODW_M, ODW_PM, SDW_P, SDW_M, SDW_PM}, {Writeback, Evict, Evict_owner, Evict_forwarder}) {
+  transition({IS, IS_M, IO, IO_M, SS, SS_M, SO, SO_PM, SO_P, SO_M, OO, OO_P, OS, OS_M, OM, OM_P, OM_PM, OM_M, S_V, O_V, IE_M, IDR_M, IDW_M, SDR_M, ODR_P, ODR_M, ODW_P, ODW_M, ODW_PM, SDW_P, SDW_M, SDW_PM}, {Writeback, Writeback_notOwner, Evict, Evict_owner, Evict_forwarder}) {
     st_stallAndWaitRequest;
   }//no BL2
 
