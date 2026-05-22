@@ -1,6 +1,6 @@
 {
   "base_run_root": "tests/testing-results",
-  "gem5_opt_args": "-re --silent-redirect",
+  "gem5_opt_args": "-re",
   "config_args": "--reg-alloc-policy=dynamic",
   "config_profiles": {
     "pressure": {

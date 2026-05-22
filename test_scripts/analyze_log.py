@@ -279,19 +279,6 @@ class CacheMissRateAnalyzer:
         else:
             print(color("优先统计（m_demand_misses / m_demand_accesses）: 无", "33"))
 
-        if self.generic_derived_miss_rates:
-            print(color("兜底统计（misses/accesses）", "1;34"))
-            for name in sorted(self.generic_derived_miss_rates):
-                print(f"  • {name:<60} {self.generic_derived_miss_rates[name]:>8.4f}%")
-        else:
-            print(color("兜底统计（misses/accesses）: 无", "33"))
-
-        if self.direct_miss_rates:
-            print(color("参考（stats 原生 miss_rate）", "1;34"))
-            for name in sorted(self.direct_miss_rates):
-                print(f"  • {name:<60} {self.direct_miss_rates[name]:>8.4f}%")
-        else:
-            print(color("参考（stats 原生 miss_rate）: 无", "33"))
 
     def build_summary_data(self):
         return {
@@ -366,6 +353,8 @@ class FunctionalTestAnalyzer:
         cpu_ipc = {}
         cu_ipc = {}
         bad = []
+        bad_cpu = []
+        bad_cu = []
         evidence = []
 
         for line in text.splitlines():
@@ -381,8 +370,12 @@ class FunctionalTestAnalyzer:
             except ValueError:
                 val = float("nan")
 
-            is_cpu = re.search(r"\bcpu\d+\b", low_name) is not None
-            is_cu = re.search(r"\bcu\d+\b", low_name) is not None
+            # CPU core IPC: ...cpu<num>.ipc (exclude ...cpu<num>.CUs<num>.ipc)
+            cpu_m = re.search(r"\bcpu(\d+)$", low_name)
+            # CU IPC in current stats naming: ...CUs<num>.ipc
+            cu_m = re.search(r"\bcus(\d+)$", low_name)
+            is_cpu = cpu_m is not None
+            is_cu = cu_m is not None
             if not (is_cpu or is_cu):
                 continue
 
@@ -391,8 +384,14 @@ class FunctionalTestAnalyzer:
             if is_cu:
                 cu_ipc[name] = raw
 
-            if low_raw == "nan" or val != val or val == 0.0:
-                bad.append(f"{name}.ipc={raw}")
+            is_bad = (low_raw == "nan" or val != val or val == 0.0)
+            if is_bad:
+                item = f"{name}.ipc={raw}"
+                bad.append(item)
+                if is_cpu:
+                    bad_cpu.append((int(cpu_m.group(1)), item))
+                if is_cu:
+                    bad_cu.append((int(cu_m.group(1)), item))
             if len(evidence) < 8:
                 evidence.append(f"stats.txt: {name}.ipc={raw}")
 
@@ -400,8 +399,24 @@ class FunctionalTestAnalyzer:
         if total == 0:
             return self._mk_result(self.STATUS_UNKNOWN, [], "stats.txt 未检测到 cpu*/cu* 的 ipc 项")
         if bad:
-            ev = bad[:8]
-            return self._mk_result(self.STATUS_FAIL, ev, f"存在 cpu/cu 的 ipc 为 0 或 NaN（cpu={len(cpu_ipc)}, cu={len(cu_ipc)}, total={total}）")
+            first_bad_cpu = min(bad_cpu, key=lambda x: x[0])[1] if bad_cpu else "none"
+            first_bad_cu = min(bad_cu, key=lambda x: x[0])[1] if bad_cu else "none"
+            ev = [
+                f"first_bad_cpu: {first_bad_cpu}",
+                f"first_bad_cu: {first_bad_cu}",
+                f"bad_cpu_count={len(bad_cpu)}",
+                f"bad_cu_count={len(bad_cu)}",
+            ]
+            ev.extend(bad[:4])
+            return self._mk_result(
+                self.STATUS_FAIL,
+                ev,
+                (
+                    "存在 cpu/cu 的 ipc 为 0 或 NaN "
+                    f"（cpu={len(cpu_ipc)}, cu={len(cu_ipc)}, total={total}, "
+                    f"bad_cpu={len(bad_cpu)}, bad_cu={len(bad_cu)}）"
+                ),
+            )
         if total < 240:
             return self._mk_result(
                 self.STATUS_FAIL,

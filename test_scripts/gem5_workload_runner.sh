@@ -99,6 +99,79 @@ join_trim() {
   echo "$*" | xargs
 }
 
+extract_num_cpus_from_config_args() {
+  local cfg="$1"
+  read -r -a arr <<< "$cfg"
+  local i tok
+  for ((i=0; i<${#arr[@]}; i++)); do
+    tok="${arr[$i]}"
+    if [[ "$tok" == "-n" || "$tok" == "--num-cpus" ]]; then
+      if (( i + 1 < ${#arr[@]} )); then
+        echo "${arr[$((i+1))]}"
+        return 0
+      fi
+    elif [[ "$tok" =~ ^-n[0-9]+$ ]]; then
+      echo "${tok#-n}"
+      return 0
+    elif [[ "$tok" == --num-cpus=* ]]; then
+      echo "${tok#--num-cpus=}"
+      return 0
+    fi
+  done
+  echo ""
+}
+
+inject_mt_threads_into_workload_args() {
+  local workload_args="$1"
+  local num_cpus="$2"
+  if [[ -z "$num_cpus" ]]; then
+    echo "$workload_args"
+    return 0
+  fi
+
+  python3 - "$workload_args" "$num_cpus" <<'PY2'
+import shlex
+import sys
+
+workload_args = sys.argv[1]
+num_cpus = sys.argv[2]
+
+if not workload_args.strip():
+    print(workload_args)
+    sys.exit(0)
+
+tokens = shlex.split(workload_args)
+
+def rewrite_options(opt_str: str) -> str:
+    opt_tokens = shlex.split(opt_str)
+    out = []
+    i = 0
+    while i < len(opt_tokens):
+        t = opt_tokens[i]
+        if t == "--mt-cpu-threads":
+            i += 2 if i + 1 < len(opt_tokens) else 1
+            continue
+        if t.startswith("--mt-cpu-threads="):
+            i += 1
+            continue
+        out.append(t)
+        i += 1
+    out += ["--mt-cpu-threads", num_cpus]
+    return shlex.join(out)
+
+if "--options" in tokens:
+    idx = tokens.index("--options")
+    if idx + 1 < len(tokens):
+        tokens[idx + 1] = rewrite_options(tokens[idx + 1])
+    else:
+        tokens += ["--mt-cpu-threads", num_cpus]
+else:
+    tokens += ["--options", shlex.join(["--mt-cpu-threads", num_cpus])]
+
+print(shlex.join(tokens))
+PY2
+}
+
 option_overridden() {
   # 判断某个 token 是否属于会被覆盖的关键选项（当前只处理 -u/-n 两组）
   local opt="$1"
@@ -253,9 +326,19 @@ run_test() {
   config_args="$(join_trim "${config_args}" "${global_profile_args}" "${workload_profile_args}")"
   workload_args="$(get_json "cfg['workloads']['${workload}'].get('workload_args', '')")"
 
+  local cfg_num_cpus
+  cfg_num_cpus="$(extract_num_cpus_from_config_args "$config_args")"
+  if [[ "$workload" == rodinia-* && -n "$cfg_num_cpus" ]]; then
+    workload_args="$(inject_mt_threads_into_workload_args "$workload_args" "$cfg_num_cpus")"
+  fi
+
   echo "run_dir=${run_dir}"
   if [[ -n "$selected_profiles" ]]; then
     echo "profile=${selected_profiles}"
+  fi
+  echo "workload_args=${workload_args}"
+  if [[ "$workload" == rodinia-* ]]; then
+    echo "forwarded_mt_threads=${cfg_num_cpus:-unset} (as --mt-cpu-threads in --options)"
   fi
   "$GEM5_TEST" test \
     --run-dir "$run_dir" \
