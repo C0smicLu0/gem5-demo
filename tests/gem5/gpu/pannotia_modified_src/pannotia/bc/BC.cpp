@@ -454,23 +454,11 @@ int main(int argc, char **argv)
     };
     int max_source_chunks = ceil_div(max_sources, options.source_chunk);
     int active_workers = use_cpu ? std::min(cpu_workers, max_source_chunks) : 0;
-    int cpu_initial_chunks = 0;
-    if (use_cpu && use_gpu) {
-        int total_weight = cpu_workers + options.gpu_cus;
-        cpu_initial_chunks =
-            (max_source_chunks * cpu_workers + total_weight / 2) /
-            total_weight;
-        if (max_source_chunks > 1) {
-            cpu_initial_chunks =
-                std::max(1, std::min(cpu_initial_chunks,
-                                     max_source_chunks - 1));
-        }
-    } else if (use_cpu) {
-        cpu_initial_chunks = max_source_chunks;
-    }
-    int cpu_initial_sources =
-        std::min(max_sources, cpu_initial_chunks * options.source_chunk);
-    int gpu_initial_begin = cpu_initial_sources;
+    // Keep CPU initial assignments conservative. Each active worker starts
+    // with one chunk and the shared queue redistributes the remaining sources.
+    int cpu_initial_end = use_cpu ?
+        std::min(max_sources, active_workers * options.source_chunk) : 0;
+    int gpu_initial_begin = cpu_initial_end;
     int gpu_initial_sources = use_gpu ?
         std::min(max_sources - gpu_initial_begin,
                  options.gpu_cus * options.source_chunk) : 0;

@@ -1,0 +1,15 @@
+# Build outputs
+halo-finder/src/hip/
+halo-finder/src/*.o
+halo-finder/src/*.a
+halo-finder/src/log.txt
+
+# Runtime outputs
+m5out*/
+stats.txt
+config.ini
+config.json
+config.dot
+config.dot.*
+citations.bib
+*.log

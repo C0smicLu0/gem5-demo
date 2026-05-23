@@ -11,10 +11,10 @@ usage() {
   cat <<'EOF'
 Usage:
   gem5_workload_runner.sh list
-  gem5_workload_runner.sh run <workload> [run_tag] [--profile <name> ...]
+  gem5_workload_runner.sh run <workload> [run_tag] [--profile <name> ...] [--debug-flags <csv>] [--debug-start <tick>]
   gem5_workload_runner.sh analyze <workload> <run_tag>
   gem5_workload_runner.sh check <workload> <run_tag> [low high]
-  gem5_workload_runner.sh all <workload> [run_tag] [low high] [--profile <name> ...]
+  gem5_workload_runner.sh all <workload> [run_tag] [low high] [--profile <name> ...] [--debug-flags <csv>] [--debug-start <tick>]
 
 Notes:
   - run_tag defaults to current time: YYYYMMDD-HHMMSS
@@ -22,6 +22,15 @@ Notes:
   - analyze reads <run_dir>/lat_run_out/seq_lat_stats_*.txt
   - check prints PASS/FAIL/UNKNOWN for ldst_mean and functional_tests (non-fatal)
   - Edit JSON only; avoid hardcoding args in commands.
+
+Run/all options:
+  --profile <name>     Apply a config profile from the JSON config.
+  --debug-flags <csv>  Append gem5 --debug-flags=<csv>.
+
+Modified Square/Pannotia workloads derive their workload resource options from
+the merged gem5 config args. The final -n/--num-cpus becomes
+--cpu-workers max(0, N - 3); the final -u/--num-compute-units becomes
+--gpu-cus N.
 EOF
 }
 
@@ -234,6 +243,150 @@ merge_config_with_overrides() {
   echo "${merged[*]}"
 }
 
+resource_aware_workload() {
+  case "$1" in
+    square|sleepMutex|lfTreeBarrUniq|hacc|pannotia-bc-*|pannotia-color-max-*|pannotia-color-maxmin-*|pannotia-mis-hip-*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+append_options_tokens() {
+  # Re-quote workload_args after appending to the gem5 --options payload.
+  # Square has no original --options. Pannotia already has dataset arguments.
+  local workload_args="$1"
+  shift
+  python3 - "$workload_args" "$@" <<'PY'
+import shlex
+import sys
+
+args = shlex.split(sys.argv[1])
+extra = sys.argv[2:]
+try:
+    opt = args.index("--options")
+except ValueError:
+    args.extend(["--options", " ".join(extra)])
+else:
+    if opt + 1 >= len(args):
+        raise SystemExit("workload_args has --options without a value")
+    args[opt + 1] = " ".join([args[opt + 1], *extra])
+
+print(shlex.join(args))
+PY
+}
+
+extract_config_resource() {
+  # Return the final -n/-u style value from merged config args. Profiles and
+  # workload config overrides have already been applied by this point.
+  local resource="$1"
+  local config_args="$2"
+  python3 - "$resource" "$config_args" <<'PY'
+import shlex
+import sys
+
+resource = sys.argv[1]
+args = shlex.split(sys.argv[2])
+if resource == "cpus":
+    short = "-n"
+    long = "--num-cpus"
+elif resource == "gpu_cus":
+    short = "-u"
+    long = "--num-compute-units"
+else:
+    raise SystemExit(f"unknown config resource: {resource}")
+
+value = None
+index = 0
+while index < len(args):
+    token = args[index]
+    if token in {short, long}:
+        index += 1
+        if index >= len(args):
+            raise SystemExit(f"{token} requires a value")
+        value = args[index]
+    elif token.startswith(f"{long}="):
+        value = token.split("=", 1)[1]
+    elif token.startswith(short) and token != short:
+        value = token[len(short):]
+    index += 1
+
+if value is None:
+    raise SystemExit(f"merged config args are missing {short}/{long}")
+if not value.isdigit() or int(value) <= 0:
+    raise SystemExit(f"invalid {short}/{long} value in merged config args: {value}")
+print(value)
+PY
+}
+
+add_resource_workload_args() {
+  local workload="$1"
+  local workload_args="$2"
+  local cpus="$3"
+  local gpu_cus="$4"
+  local cpu_workers
+
+  if ! resource_aware_workload "$workload"; then
+    echo "$workload_args"
+    return 0
+  fi
+
+  if [[ -z "$cpus" || -z "$gpu_cus" ]]; then
+    echo "modified workload '$workload' requires -n and -u in merged config args" >&2
+    return 1
+  fi
+
+  cpu_workers=$(( cpus > 3 ? cpus - 3 : 0 ))
+  append_options_tokens "$workload_args" \
+    --cpu-workers "$cpu_workers" --gpu-cus "$gpu_cus"
+}
+
+PROFILE=""
+DEBUG_FLAGS=""
+DEBUG_START=""
+
+parse_run_options() {
+  PROFILE=""
+  DEBUG_FLAGS=""
+  DEBUG_START=""
+
+  while (($#)); do
+    case "$1" in
+      --profile)
+        shift
+        [[ $# -gt 0 && -n "${1:-}" ]] || {
+          echo "missing value for --profile" >&2
+          return 1
+        }
+        PROFILE="$(join_trim "$PROFILE" "$1")"
+        ;;
+      --debug-flags)
+        shift
+        [[ $# -gt 0 && -n "${1:-}" ]] || {
+          echo "missing value for --debug-flags" >&2
+          return 1
+        }
+        DEBUG_FLAGS="$1"
+        ;;
+      --debug-start)
+        shift
+        [[ $# -gt 0 && -n "${1:-}" ]] || {
+          echo "missing value for --debug-start" >&2
+          return 1
+        }
+        DEBUG_START="$1"
+        ;;
+      *)
+        echo "unknown run option: $1" >&2
+        return 1
+        ;;
+    esac
+    shift
+  done
+}
+
 list_workloads() {
   python3 - "$CONFIG_FILE" <<'PY'
 import json, sys
@@ -303,6 +456,12 @@ run_test() {
   local global_config_args workload_config_args
   local global_profile_args workload_profile_args
   gem5_opt_args="$(get_json "cfg['workloads']['${workload}'].get('gem5_opt_args', cfg.get('gem5_opt_args', ''))")"
+  if [[ -n "$DEBUG_FLAGS" ]]; then
+    gem5_opt_args="$(join_trim "$gem5_opt_args" "--debug-flags=${DEBUG_FLAGS}")"
+  fi
+  if [[ -n "$DEBUG_START" ]]; then
+    gem5_opt_args="$(join_trim "$gem5_opt_args" "--debug-start=${DEBUG_START}")"
+  fi
   global_config_args="$(get_json "cfg.get('config_args', '')")"
   workload_config_args="$(get_json "cfg['workloads']['${workload}'].get('config_args', '')")"
   global_profile_args=""
@@ -325,6 +484,14 @@ run_test() {
   fi
   config_args="$(join_trim "${config_args}" "${global_profile_args}" "${workload_profile_args}")"
   workload_args="$(get_json "cfg['workloads']['${workload}'].get('workload_args', '')")"
+  local resource_cpus=""
+  local resource_gpu_cus=""
+  if resource_aware_workload "$workload"; then
+    resource_cpus="$(extract_config_resource cpus "$config_args")"
+    resource_gpu_cus="$(extract_config_resource gpu_cus "$config_args")"
+    workload_args="$(add_resource_workload_args "$workload" "$workload_args" \
+      "$resource_cpus" "$resource_gpu_cus")"
+  fi
 
   local cfg_num_cpus
   cfg_num_cpus="$(extract_num_cpus_from_config_args "$config_args")"
@@ -339,6 +506,9 @@ run_test() {
   echo "workload_args=${workload_args}"
   if [[ "$workload" == rodinia-* ]]; then
     echo "forwarded_mt_threads=${cfg_num_cpus:-unset} (as --mt-cpu-threads in --options)"
+  fi
+  if [[ -n "$resource_cpus" || -n "$resource_gpu_cus" ]]; then
+    echo "resources=cpus:${resource_cpus} gpu_cus:${resource_gpu_cus} (from config_args)"
   fi
   "$GEM5_TEST" test \
     --run-dir "$run_dir" \
@@ -384,57 +554,41 @@ case "$cmd" in
       list_workloads
       exit 1
     fi
-    run_tag="${3:-$(date +%Y%m%d-%H%M%S)}"
     if [[ "$cmd" == "run" ]]; then
       # run: 仅执行测试
-      profile_tokens=()
-      if (( $# >= 4 )); then
-        rem=("${@:4}")
-        i=0
-        while (( i < ${#rem[@]} )); do
-          if [[ "${rem[$i]}" != "--profile" ]]; then
-            echo "usage: $0 run <workload> [run_tag] [--profile <name> ...]"
-            exit 1
-          fi
-          i=$((i + 1))
-          if (( i >= ${#rem[@]} )); then
-            echo "missing value for --profile"
-            exit 1
-          fi
-          profile_tokens+=("${rem[$i]}")
-          i=$((i + 1))
-        done
+      shift 2
+      run_tag="$(date +%Y%m%d-%H%M%S)"
+      if (($#)) && [[ "$1" != --* ]]; then
+        run_tag="$1"
+        shift
       fi
-      run_test "$workload" "$run_tag" "${profile_tokens[*]}"
+      parse_run_options "$@"
+      run_test "$workload" "$run_tag" "$PROFILE"
     elif [[ "$cmd" == "analyze" ]]; then
       # analyze: 仅执行离线分析
+      run_tag="${3:-$(date +%Y%m%d-%H%M%S)}"
       run_analyze "$workload" "$run_tag"
     elif [[ "$cmd" == "check" ]]; then
       # check: 仅做阈值检查（可自定义 low/high）
+      run_tag="${3:-$(date +%Y%m%d-%H%M%S)}"
       run_check "$workload" "$run_tag" "${4:-100}" "${5:-150}"
     else
       # all: 顺序执行 run -> analyze -> check
-      low="${4:-100}"
-      high="${5:-150}"
-      profile_tokens=()
-      if (( $# >= 6 )); then
-        rem=("${@:6}")
-        i=0
-        while (( i < ${#rem[@]} )); do
-          if [[ "${rem[$i]}" != "--profile" ]]; then
-            echo "usage: $0 all <workload> [run_tag] [low high] [--profile <name> ...]"
-            exit 1
-          fi
-          i=$((i + 1))
-          if (( i >= ${#rem[@]} )); then
-            echo "missing value for --profile"
-            exit 1
-          fi
-          profile_tokens+=("${rem[$i]}")
-          i=$((i + 1))
-        done
+      shift 2
+      run_tag="$(date +%Y%m%d-%H%M%S)"
+      low=100
+      high=150
+      if (($#)) && [[ "$1" != --* ]]; then
+        run_tag="$1"
+        shift
       fi
-      run_test "$workload" "$run_tag" "${profile_tokens[*]}"
+      if (($# >= 2)) && [[ "$1" != --* && "$2" != --* ]]; then
+        low="$1"
+        high="$2"
+        shift 2
+      fi
+      parse_run_options "$@"
+      run_test "$workload" "$run_tag" "$PROFILE"
       run_analyze "$workload" "$run_tag"
       run_check "$workload" "$run_tag" "$low" "$high"
     fi

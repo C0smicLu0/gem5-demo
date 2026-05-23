@@ -207,7 +207,7 @@ mis2(int *row, int *col, int *node_value, int *s_array, int *c_array,
             }
 
             // Set the status to inactive
-            c_array[tid] = -2;
+            cu_array[tid] = -2;
 
             // Mark all the neighbors inactive
             for (int edge = start; edge < end; edge++) {
@@ -240,7 +240,7 @@ mis2_range(int *row, int *col, int *node_value, int *s_array, int *c_array,
                 end = num_edges;
             }
 
-            c_array[tid] = -2;
+            cu_array[tid] = -2;
 
             for (int edge = start; edge < end; edge++) {
                 if (c_array[col[edge]] == -1) {

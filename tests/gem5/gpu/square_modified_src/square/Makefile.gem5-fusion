@@ -1,0 +1,24 @@
+HIP_PATH ?= /opt/rocm/hip
+HIPCC = $(HIP_PATH)/bin/hipcc
+CXXFLAGS += -pthread
+
+# Needed for m5ops.
+GEM5_ROOT ?= ../../../../..
+CFLAGS += -I$(GEM5_ROOT)/include
+LDFLAGS += -L$(GEM5_ROOT)/util/m5/build/x86/out -lm5 -pthread
+
+BIN_DIR ?= ./bin
+EXECUTABLE = square-gpu-test
+
+all: $(BIN_DIR)/$(EXECUTABLE)
+
+$(BIN_DIR)/$(EXECUTABLE): square.cpp $(BIN_DIR)
+	$(HIPCC) -O3 --amdgpu-target=gfx900,gfx902 $(CXXFLAGS) square.cpp -DGEM5_FUSION -o $(BIN_DIR)/$(EXECUTABLE) $(CFLAGS) $(LDFLAGS)
+
+$(BIN_DIR):
+	mkdir -p $(BIN_DIR)
+
+clean:
+	rm -rf $(BIN_DIR)
+
+.PHONY: all clean

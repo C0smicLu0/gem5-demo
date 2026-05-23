@@ -13,7 +13,7 @@
 struct PannotiaOptions
 {
     int cpu_workers = -1;
-    int gpu_cus = 16;
+    int gpu_cus = -1;
     bool cpu_only = false;
     bool gpu_only = false;
     bool debug_log = false;
@@ -127,42 +127,6 @@ static int *managed_int_array(size_t count, const char *name)
     return (int *)checked_hip_malloc_managed(count * sizeof(int), name);
 }
 
-static void convert_csr_to_managed(csr_array *csr, int num_nodes,
-                                   int num_edges)
-{
-    int *row = managed_int_array(num_nodes + 1, "csr row_array");
-    int *col = managed_int_array(num_edges, "csr col_array");
-    int *data = managed_int_array(num_edges, "csr data_array");
-    int *col_cnt = nullptr;
-    if (csr->col_cnt) {
-        col_cnt = managed_int_array(num_nodes, "csr col_cnt");
-    }
-
-    for (int i = 0; i < num_nodes + 1; ++i) {
-        row[i] = csr->row_array[i];
-    }
-    for (int i = 0; i < num_edges; ++i) {
-        col[i] = csr->col_array[i];
-        data[i] = csr->data_array[i];
-    }
-    if (col_cnt) {
-        for (int i = 0; i < num_nodes; ++i) {
-            col_cnt[i] = csr->col_cnt[i];
-        }
-    }
-
-    free(csr->row_array);
-    free(csr->col_array);
-    free(csr->data_array);
-    if (csr->col_cnt) {
-        free(csr->col_cnt);
-    }
-    csr->row_array = row;
-    csr->col_array = col;
-    csr->data_array = data;
-    csr->col_cnt = col_cnt;
-}
-
 static void free_managed_csr(csr_array *csr)
 {
     if (csr->row_array) {
@@ -188,6 +152,21 @@ static int resolve_cpu_workers(const PannotiaOptions &options)
         workers = 0;
     }
     return workers;
+}
+
+static int detect_gpu_cus(int fallback)
+{
+    hipDeviceProp_t prop;
+    hipError_t err = hipGetDeviceProperties(&prop, 0);
+    if (err == hipSuccess && prop.multiProcessorCount > 0) {
+        return prop.multiProcessorCount;
+    }
+    return fallback;
+}
+
+static int resolve_gpu_cus(const PannotiaOptions &options)
+{
+    return options.gpu_cus > 0 ? options.gpu_cus : detect_gpu_cus(16);
 }
 
 static int compute_gpu_range_end(int num_nodes, bool use_gpu,

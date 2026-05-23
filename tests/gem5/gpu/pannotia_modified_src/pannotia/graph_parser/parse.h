@@ -56,6 +56,7 @@
 \************************************************************************************/
 
 #include <stdlib.h>
+#include "hip/hip_runtime.h"
 
 typedef struct csr_arrays_t {
     int *row_array;
@@ -65,19 +66,19 @@ typedef struct csr_arrays_t {
 
     void freeArrays() {
         if (row_array) {
-            free(row_array);
+            hipFree(row_array);
             row_array = NULL;
         }
         if (col_array) {
-            free(col_array);
+            hipFree(col_array);
             col_array = NULL;
         }
         if (data_array) {
-            free(data_array);
+            hipFree(data_array);
             data_array = NULL;
         }
         if (col_cnt) {
-            free(col_cnt);
+            hipFree(col_cnt);
             col_cnt = NULL;
         }
     }

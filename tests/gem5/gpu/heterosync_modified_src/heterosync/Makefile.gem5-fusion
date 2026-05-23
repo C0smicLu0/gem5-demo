@@ -1,0 +1,27 @@
+EXECUTABLE := allSyncPrims-1kernel
+HIP_PATH ?= /opt/rocm/hip
+HIPCC := $(HIP_PATH)/bin/hipcc
+
+GEM5_ROOT ?= ../../../../..
+CXXFLAGS += -pthread
+CFLAGS += -I$(GEM5_ROOT)/include
+LDFLAGS += -L$(GEM5_ROOT)/util/m5/build/x86/out -lm5 -pthread
+
+SRC_DIR := src
+SRC := $(wildcard $(SRC_DIR)/*.hip.cpp)
+BIN_DIR ?= bin
+
+all: $(BIN_DIR)/$(EXECUTABLE)
+
+$(BIN_DIR)/$(EXECUTABLE): $(SRC) | $(BIN_DIR)
+	$(HIPCC) -DGFX9 -DGEM5_FUSION -Wno-unused-result \
+		--amdgpu-target=gfx900,gfx902 $(CXXFLAGS) $(SRC) \
+		-o $@ $(CFLAGS) $(LDFLAGS)
+
+$(BIN_DIR):
+	mkdir -p $@
+
+clean:
+	rm -rf $(BIN_DIR)
+
+.PHONY: all clean

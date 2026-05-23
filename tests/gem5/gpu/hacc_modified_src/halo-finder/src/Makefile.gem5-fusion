@@ -1,0 +1,25 @@
+HIP_PATH ?= /opt/rocm/hip
+HIPCC := $(HIP_PATH)/bin/hipcc
+GEM5_ROOT ?= ../../../../../..
+
+HACC_OBJDIR ?= hip
+HACC_MPI_CC ?= $(HIPCC)
+HACC_MPI_CXX ?= $(HIPCC)
+
+HACC_MPI_CFLAGS += --amdgpu-target=gfx900,gfx902 -pthread -fopenmp \
+	-DUSE_SERIAL_COSMO -DGEM5_FUSION -I$(GEM5_ROOT)/include \
+	-I/usr/lib/openmpi/include
+HACC_MPI_CXXFLAGS += --amdgpu-target=gfx900,gfx902 -pthread -fopenmp \
+	-DUSE_SERIAL_COSMO -DGEM5_FUSION -I$(GEM5_ROOT)/include \
+	-I/usr/lib/openmpi/include
+HACC_MPI_LDFLAGS += -L$(GEM5_ROOT)/util/m5/build/x86/out -lm5 \
+	-lm -lrt -pthread -fopenmp -L/usr/lib/openmpi/lib -lmpi -lmpi_cxx
+
+include Makefile
+
+fusion: $(OBJDIR)/ForceTreeTest
+
+clean::
+	rm -rf $(OBJDIR)
+
+.PHONY: fusion

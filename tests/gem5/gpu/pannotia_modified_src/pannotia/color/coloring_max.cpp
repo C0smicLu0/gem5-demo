@@ -89,8 +89,6 @@ int main(int argc, char **argv)
         fprintf(stderr, "reserve for future\n");
         exit(1);
     }
-    convert_csr_to_managed(csr, num_nodes, num_edges);
-
     int *node_value = managed_int_array(num_nodes, "node_value");
     int *color = managed_int_array(num_nodes, "color");
     int *max_array = managed_int_array(num_nodes, "max_array");
@@ -111,8 +109,9 @@ int main(int argc, char **argv)
     }
 
     int active_workers = use_cpu ? std::min(cpu_workers, num_nodes) : 0;
+    int gpu_cus = resolve_gpu_cus(options);
     int gpu_end = compute_gpu_range_end(num_nodes, use_gpu, active_workers,
-                                        options.gpu_cus);
+                                        gpu_cus);
     std::vector<VertexRange> cpu_ranges =
         make_cpu_ranges(gpu_end, num_nodes, active_workers);
 
@@ -121,7 +120,7 @@ int main(int argc, char **argv)
                 "color_max mode: cpu_workers=%d active=%zu gpu=%s "
                 "gpu_range=[0,%d) gpu_cus=%d\n",
                 cpu_workers, cpu_ranges.size(), use_gpu ? "enabled" : "off",
-                gpu_end, options.gpu_cus);
+                gpu_end, gpu_cus);
         fflush(stdout);
     }
 

@@ -65,6 +65,19 @@
 #include "util.h"
 #include <fstream>
 
+static int *
+managed_csr_array(size_t count, const char *name)
+{
+    void *ptr = NULL;
+    hipError_t err = hipMallocManaged(&ptr, count * sizeof(int));
+    if (err != hipSuccess) {
+        fprintf(stderr, "hipMallocManaged failed for %s: %s\n", name,
+                hipGetErrorString(err));
+        exit(1);
+    }
+    return (int *)ptr;
+}
+
 bool doCompare(CooTuple elem1, CooTuple elem2)
 {
     if (elem1.row < elem2.row) {
@@ -198,9 +211,9 @@ csr_array *parseMetis(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool di
     }
 #endif
 
-    int *row_array = (int *)malloc((num_nodes + 1) * sizeof(int));
-    int *col_array = (int *)malloc(num_edges * sizeof(int));
-    int *data_array = (int *)malloc(num_edges * sizeof(int));
+    int *row_array = managed_csr_array(num_nodes + 1, "row_array");
+    int *col_array = managed_csr_array(num_edges, "col_array");
+    int *data_array = managed_csr_array(num_edges, "data_array");
 
     int row_cnt = 0;
     int prev = -1;
@@ -306,9 +319,9 @@ csr_array *parseCOO(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool dire
     }
 #endif
 
-    int *row_array = (int *)malloc((num_nodes + 1) * sizeof(int));
-    int *col_array = (int *)malloc(num_edges * sizeof(int));
-    int *data_array = (int *)malloc(num_edges * sizeof(int));
+    int *row_array = managed_csr_array(num_nodes + 1, "row_array");
+    int *col_array = managed_csr_array(num_edges, "col_array");
+    int *data_array = managed_csr_array(num_edges, "data_array");
 
     int row_cnt = 0;
     int prev = -1;
@@ -623,9 +636,9 @@ csr_array *parseMM(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool direc
     }
 #endif
 
-    int *row_array = (int *)malloc((num_nodes + 1) * sizeof(int));
-    int *col_array = (int *)malloc(num_edges * sizeof(int));
-    int *data_array = (int *)malloc(num_edges * sizeof(int));
+    int *row_array = managed_csr_array(num_nodes + 1, "row_array");
+    int *col_array = managed_csr_array(num_edges, "col_array");
+    int *data_array = managed_csr_array(num_edges, "data_array");
 
     int row_cnt = 0;
     int prev = -1;
@@ -685,7 +698,7 @@ csr_array *parseMetis_transpose(char* tmpchar, int *p_num_nodes, int *p_num_edge
 
             sscanf(line, "%d %d", p_num_nodes, p_num_edges);
 
-            col_cnt = (int *)malloc(*p_num_nodes * sizeof(int));
+            col_cnt = managed_csr_array(*p_num_nodes, "col_cnt");
             if (!col_cnt) {
                 printf("memory allocation failed for col_cnt\n");
                 exit(1);
@@ -755,9 +768,9 @@ csr_array *parseMetis_transpose(char* tmpchar, int *p_num_nodes, int *p_num_edge
     }
 #endif
 
-    int *row_array = (int *)malloc((num_nodes + 1) * sizeof(int));
-    int *col_array = (int *)malloc(num_edges * sizeof(int));
-    int *data_array = (int *)malloc(num_edges * sizeof(int));
+    int *row_array = managed_csr_array(num_nodes + 1, "row_array");
+    int *col_array = managed_csr_array(num_edges, "col_array");
+    int *data_array = managed_csr_array(num_edges, "data_array");
 
     int row_cnt = 0;
     int prev = -1;
@@ -867,9 +880,9 @@ csr_array *parseCOO_transpose(char* tmpchar, int *p_num_nodes, int *p_num_edges,
     }
 #endif
 
-    int *row_array = (int *)malloc((num_nodes + 1) * sizeof(int));
-    int *col_array = (int *)malloc(num_edges * sizeof(int));
-    int *data_array = (int *)malloc(num_edges * sizeof(int));
+    int *row_array = managed_csr_array(num_nodes + 1, "row_array");
+    int *col_array = managed_csr_array(num_edges, "col_array");
+    int *data_array = managed_csr_array(num_edges, "data_array");
 
     int row_cnt = 0;
     int prev = -1;
@@ -899,4 +912,3 @@ csr_array *parseCOO_transpose(char* tmpchar, int *p_num_nodes, int *p_num_edges,
 
     return csr;
 }
-

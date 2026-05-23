@@ -1,0 +1,16 @@
+# Build outputs
+bin/
+*.gem5
+*.o
+*.so
+*.a
+
+# Runtime outputs
+m5out*/
+*.log
+stats.txt
+config.ini
+config.json
+config.dot
+config.dot.*
+citations.bib

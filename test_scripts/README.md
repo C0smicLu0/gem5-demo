@@ -41,6 +41,10 @@
 说明：
 - 不再支持在 `run/all` 命令后直接追加额外 config 参数。
 - 若检测到此类额外参数，脚本会报错并退出。
+- 对迁入源码并支持 CPU+GPU 的 `square` 与 Pannotia 工作负载，脚本会从
+  合并后的 `config_args` 读取最终 `-n` 和 `-u`。
+- 注入 workload 参数时，`-n N` 会按现有保守策略换算为
+  `--cpu-workers max(0, N - 3)`；`-u N` 会变成 `--gpu-cus N`。
 
 你也可以通过环境变量覆盖默认值：
 
@@ -74,6 +78,27 @@ test_scripts/gem5_workload_runner.sh list
 ```bash
 test_scripts/gem5_workload_runner.sh run square
 ```
+
+启动 gem5 debug flag 时可在 `run/all` 后追加：
+
+```bash
+test_scripts/gem5_workload_runner.sh run square square-protocol-trace \
+  --profile args1 --debug-flags ProtocolTrace
+```
+
+为支持 CPU+GPU 的工作负载选择带 `-n/-u` 的 profile：
+
+```bash
+test_scripts/gem5_workload_runner.sh run square square-profile-args1 \
+  --profile args1
+
+test_scripts/gem5_workload_runner.sh run pannotia-bc-1k-128k bc-n16-u224 \
+  --profile args1
+```
+
+`args1` 当前配置为 `-n16 -u224`，因此上面的运行会向 workload
+传入 `--cpu-workers 13 --gpu-cus 224`。如果在 JSON 中修改 profile 或
+工作负载的 `config_args`，注入的 workload 参数也会跟着最终 `-n/-u` 改变。
 
 运行 + 分析 + 检查：
 

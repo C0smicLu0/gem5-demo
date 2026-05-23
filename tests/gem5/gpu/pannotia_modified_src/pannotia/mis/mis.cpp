@@ -72,7 +72,7 @@ cpu_mis2_range(const csr_array *csr, int *node_value, int *s_array,
             int end = (tid + 1 < num_nodes) ?
                 csr->row_array[tid + 1] : num_edges;
 
-            c_array[tid] = -2;
+            local_update[tid] = -2;
 
             for (int edge = start; edge < end; ++edge) {
                 int neighbor = csr->col_array[edge];
@@ -124,8 +124,6 @@ int main(int argc, char **argv)
         fprintf(stderr, "reserve for future\n");
         exit(1);
     }
-    convert_csr_to_managed(csr, num_nodes, num_edges);
-
     int *node_value = managed_int_array(num_nodes, "node_value");
     int *s_array = managed_int_array(num_nodes, "s_array");
     int *c_array = managed_int_array(num_nodes, "c_array");
@@ -147,8 +145,9 @@ int main(int argc, char **argv)
     }
 
     int active_workers = use_cpu ? std::min(cpu_workers, num_nodes) : 0;
+    int gpu_cus = resolve_gpu_cus(options);
     int gpu_end = compute_gpu_range_end(num_nodes, use_gpu, active_workers,
-                                        options.gpu_cus);
+                                        gpu_cus);
     std::vector<VertexRange> cpu_ranges =
         make_cpu_ranges(gpu_end, num_nodes, active_workers);
 
@@ -157,7 +156,7 @@ int main(int argc, char **argv)
                 "mis mode: cpu_workers=%d active=%zu gpu=%s "
                 "gpu_range=[0,%d) gpu_cus=%d\n",
                 cpu_workers, cpu_ranges.size(), use_gpu ? "enabled" : "off",
-                gpu_end, options.gpu_cus);
+                gpu_end, gpu_cus);
         fflush(stdout);
     }
 
