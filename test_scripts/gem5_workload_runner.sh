@@ -11,6 +11,7 @@ usage() {
   cat <<'EOF'
 Usage:
   gem5_workload_runner.sh list
+  gem5_workload_runner.sh compile <workload>
   gem5_workload_runner.sh run <workload> [run_tag] [--profile <name> ...]
   gem5_workload_runner.sh analyze <workload> <run_tag>
   gem5_workload_runner.sh check <workload> <run_tag> [low high]
@@ -366,10 +367,63 @@ run_check() {
   "$GEM5_TEST" check "$run_dir" "$low" "$high"
 }
 
+rodinia_compile_target() {
+  local workload="$1"
+  case "$workload" in
+    rodinia-btree) echo "hip_mod/b+tree" ;;
+    rodinia-bfs) echo "hip_mod/bfs" ;;
+    rodinia-dwt2d) echo "hip_mod/dwt2d" ;;
+    rodinia-gaussian) echo "hip_mod/gaussian" ;;
+    rodinia-hotspot) echo "hip_mod/hotspot" ;;
+    rodinia-lavaMD) echo "hip_mod/lavaMD" ;;
+    rodinia-nw) echo "hip_mod/nw" ;;
+    rodinia-particlefilter) echo "hip_mod/particlefilter" ;;
+    rodinia-pathfinder) echo "hip_mod/pathfinder" ;;
+    *) return 1 ;;
+  esac
+}
+
+run_compile() {
+  local workload="$1"
+  local compile_sh="${REPO_ROOT}/rodinia_hip/docker_compile.sh"
+  if [[ ! -x "$compile_sh" ]]; then
+    echo "compile script not found or not executable: $compile_sh"
+    return 1
+  fi
+
+  local target=""
+  if [[ "$workload" == rodinia-* ]]; then
+    if ! target="$(rodinia_compile_target "$workload")"; then
+      echo "unsupported rodinia workload for compile: $workload"
+      return 1
+    fi
+  else
+    echo "compile currently supports rodinia-* workloads only: $workload"
+    return 1
+  fi
+
+  echo "compile_target=${target}"
+  "$compile_sh" "$target"
+}
+
 cmd="${1:-}"
 case "$cmd" in
   list)
     list_workloads
+    ;;
+  compile)
+    workload="${2:-}"
+    if [[ -z "$workload" ]]; then
+      usage
+      exit 1
+    fi
+    if ! workload_exists "$workload"; then
+      echo "unknown workload: $workload"
+      echo "available:"
+      list_workloads
+      exit 1
+    fi
+    run_compile "$workload"
     ;;
   run|analyze|check|all)
     # 统一入口校验：workload 必填且必须在 JSON 中存在
