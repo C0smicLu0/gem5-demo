@@ -379,6 +379,10 @@ class GPUCoalescer : public RubyPort
     { return *m_FirstResponseToCompletionDelayHist[t]; }
 
   protected:
+    void coalSetupLatOutput();
+    void coalDumpLatOutput();
+    std::string coalSafeName(const std::string &name) const;
+
     bool tryCacheAccess(Addr addr, RubyRequestType type,
                         Addr pc, RubyAccessMode access_mode,
                         int size, DataBlock*& data_ptr);
@@ -458,6 +462,8 @@ class GPUCoalescer : public RubyPort
 
     // Global outstanding request count, across all request tables
     int m_outstanding_count;
+    // Per-packet ingress cycle in coalescer for end-to-end Ruby turnaround.
+    std::unordered_map<const Packet*, Cycles> pktIngressCycle;
     bool m_deadlock_check_scheduled;
     std::unordered_map<int, PacketPtr> kernelEndList;
     std::vector<int> newKernelEnds;
@@ -530,6 +536,20 @@ class GPUCoalescer : public RubyPort
     std::vector<statistics::Histogram *> m_InitialToForwardDelayHist;
     std::vector<statistics::Histogram *> m_ForwardToFirstResponseDelayHist;
     std::vector<statistics::Histogram *> m_FirstResponseToCompletionDelayHist;
+    struct CoalLatAgg
+    {
+        uint64_t samples = 0;
+        uint64_t sum = 0;
+        uint64_t min = 0;
+        uint64_t max = 0;
+        uint64_t over_100 = 0;
+        uint64_t over_500 = 0;
+        uint64_t over_1000 = 0;
+        uint64_t over_5000 = 0;
+    };
+    CoalLatAgg coalLatTotalAgg;
+    std::vector<CoalLatAgg> coalLatTypeAgg;
+    bool m_coal_lat_dump_registered = false;
 
 // TODO - Need to update the following stats once the VIPER protocol
 //        is re-integrated.

@@ -20,8 +20,8 @@ Usage:
 Notes:
   - run_tag defaults to current time: YYYYMMDD-HHMMSS
   - run_dir = <base_run_root>/<workload>-<run_tag>
-  - analyze reads <run_dir>/lat_run_out/seq_lat_stats_*.txt
-  - check prints PASS/FAIL/UNKNOWN for ldst_mean and functional_tests (non-fatal)
+  - analyze reads <run_dir>/lat_run_out/{seq,coal}_lat_stats_*.txt
+  - check prints PASS/FAIL/UNKNOWN for cpu_ldst_mean/gpu_ldst_mean and functional_tests (non-fatal)
   - Edit JSON only; avoid hardcoding args in commands.
 EOF
 }
@@ -122,6 +122,28 @@ extract_num_cpus_from_config_args() {
   echo ""
 }
 
+extract_num_cus_from_config_args() {
+  local cfg="$1"
+  read -r -a arr <<< "$cfg"
+  local i tok
+  for ((i=0; i<${#arr[@]}; i++)); do
+    tok="${arr[$i]}"
+    if [[ "$tok" == "-u" || "$tok" == "--num-compute-units" ]]; then
+      if (( i + 1 < ${#arr[@]} )); then
+        echo "${arr[$((i+1))]}"
+        return 0
+      fi
+    elif [[ "$tok" =~ ^-u[0-9]+$ ]]; then
+      echo "${tok#-u}"
+      return 0
+    elif [[ "$tok" == --num-compute-units=* ]]; then
+      echo "${tok#--num-compute-units=}"
+      return 0
+    fi
+  done
+  echo ""
+}
+
 inject_mt_threads_into_workload_args() {
   local workload_args="$1"
   local num_cpus="$2"
@@ -171,6 +193,57 @@ else:
 
 print(shlex.join(tokens))
 PY2
+}
+
+inject_num_cus_into_workload_args() {
+  local workload_args="$1"
+  local num_cus="$2"
+  if [[ -z "$num_cus" ]]; then
+    echo "$workload_args"
+    return 0
+  fi
+
+  python3 - "$workload_args" "$num_cus" <<'PY3'
+import shlex
+import sys
+
+workload_args = sys.argv[1]
+num_cus = sys.argv[2]
+
+if not workload_args.strip():
+    print(workload_args)
+    sys.exit(0)
+
+tokens = shlex.split(workload_args)
+
+def rewrite_options(opt_str: str) -> str:
+    opt_tokens = shlex.split(opt_str)
+    out = []
+    i = 0
+    while i < len(opt_tokens):
+        t = opt_tokens[i]
+        if t == "--num-cus":
+            i += 2 if i + 1 < len(opt_tokens) else 1
+            continue
+        if t.startswith("--num-cus="):
+            i += 1
+            continue
+        out.append(t)
+        i += 1
+    out += ["--num-cus", num_cus]
+    return shlex.join(out)
+
+if "--options" in tokens:
+    idx = tokens.index("--options")
+    if idx + 1 < len(tokens):
+        tokens[idx + 1] = rewrite_options(tokens[idx + 1])
+    else:
+        tokens += ["--num-cus", num_cus]
+else:
+    tokens += ["--options", shlex.join(["--num-cus", num_cus])]
+
+print(shlex.join(tokens))
+PY3
 }
 
 option_overridden() {
@@ -333,6 +406,12 @@ run_test() {
     workload_args="$(inject_mt_threads_into_workload_args "$workload_args" "$cfg_num_cpus")"
   fi
 
+  local cfg_num_cus
+  cfg_num_cus="$(extract_num_cus_from_config_args "$config_args")"
+  if [[ "$workload" == rodinia-* && -n "$cfg_num_cus" ]]; then
+    workload_args="$(inject_num_cus_into_workload_args "$workload_args" "$cfg_num_cus")"
+  fi
+
   echo "run_dir=${run_dir}"
   if [[ -n "$selected_profiles" ]]; then
     echo "profile=${selected_profiles}"
@@ -340,6 +419,7 @@ run_test() {
   echo "workload_args=${workload_args}"
   if [[ "$workload" == rodinia-* ]]; then
     echo "forwarded_mt_threads=${cfg_num_cpus:-unset} (as --mt-cpu-threads in --options)"
+    echo "forwarded_num_cus=${cfg_num_cus:-unset} (as --num-cus in --options)"
   fi
   "$GEM5_TEST" test \
     --run-dir "$run_dir" \

@@ -86,6 +86,10 @@ static void rodinia_mt_init_cfg(void) {
     const char *s_seed = getenv("RODINIA_SHARE_SEED");
 
     int parsed_threads = rodinia_parse_threads_from_cmdline();
+    if (parsed_threads <= 0) {
+        const char *s_mt = getenv("RODINIA_MT_THREADS");
+        if (s_mt) parsed_threads = atoi(s_mt);
+    }
     rodinia_mt_threads = (parsed_threads > 0) ? parsed_threads : 1;
 
     if (s_work) rodinia_mt_work_percent = atoi(s_work);
@@ -95,6 +99,13 @@ static void rodinia_mt_init_cfg(void) {
     if (rodinia_mt_work_percent > 100) rodinia_mt_work_percent = 100;
     if (rodinia_mt_seed == 0) rodinia_mt_seed = 1;
     rodinia_mt_inited = 1;
+}
+
+static void rodinia_mt_set_threads(int n) {
+    if (n > 0) {
+        rodinia_mt_threads = n;
+        rodinia_mt_inited = 1;
+    }
 }
 
 static void *rodinia_mt_worker(void *p) {
@@ -597,7 +608,7 @@ int findIndex(double * CDF, int lengthCDF, double value){
 * @param seed The seed array used for random number generation
 * @param Nparticles The number of particles to be used
 */
-void particleFilter(int * I, int IszX, int IszY, int Nfr, int * seed, int Nparticles){
+void particleFilter(int * I, int IszX, int IszY, int Nfr, int * seed, int Nparticles, int num_cus){
 	int max_size = IszX*IszY*Nfr;
 	long long start = get_time();
 	//original particle centroid
@@ -757,7 +768,8 @@ void particleFilter(int * I, int IszX, int IszY, int Nfr, int * seed, int Nparti
 		long long end_copy = get_time();
 		//Set number of threads
 		int num_blocks = ceil((double) Nparticles/(double) threads_per_block);
-		
+		if (num_cus > num_blocks) num_blocks = num_cus;
+
 		//KERNEL FUNCTION CALL
 		rodinia_mt_cpu_phase();
 		kernel <<< num_blocks, threads_per_block >>> (arrayX_GPU, arrayY_GPU, CDF_GPU, u_GPU, xj_GPU, yj_GPU, Nparticles);
@@ -808,9 +820,9 @@ void particleFilter(int * I, int IszX, int IszY, int Nfr, int * seed, int Nparti
 }
 int main(int argc, char * argv[]){
 	
-	char* usage = "naive.out -x <dimX> -y <dimY> -z <Nfr> -np <Nparticles>";
+	char* usage = "naive.out -x <dimX> -y <dimY> -z <Nfr> -np <Nparticles> --mt-cpu-threads <N> --num-cus <M>";
 	//check number of arguments
-	if(argc != 11)
+	if(argc != 13)
 	{
 		printf("%s\n", usage);
 		return 0;
@@ -866,6 +878,29 @@ int main(int argc, char * argv[]){
 		printf("Number of particles must be > 0\n");
 		return 0;
 	}
+
+	if (strcmp(argv[9], "--mt-cpu-threads")) {
+		printf("%s\n", usage);
+		return 0;
+	}
+	int mt_threads = 0;
+	sscanf(argv[10], "%d", &mt_threads);
+	if (mt_threads <= 0) {
+		printf("mt-cpu-threads must be > 0\n");
+		return 0;
+	}
+	rodinia_mt_set_threads(mt_threads);
+
+	if (strcmp(argv[11], "--num-cus")) {
+		printf("%s\n", usage);
+		return 0;
+	}
+	int num_cus = 0;
+	sscanf(argv[12], "%d", &num_cus);
+	if (num_cus <= 0) {
+		printf("num-cus must be > 0\n");
+		return 0;
+	}
 	//establish seed
 	int * seed = (int *)malloc(sizeof(int)*Nparticles);
 	int i;
@@ -879,7 +914,7 @@ int main(int argc, char * argv[]){
 	long long endVideoSequence = get_time();
 	printf("VIDEO SEQUENCE TOOK %f\n", elapsed_time(start, endVideoSequence));
 	//call particle filter
-	particleFilter(I, IszX, IszY, Nfr, seed, Nparticles);
+	particleFilter(I, IszX, IszY, Nfr, seed, Nparticles, num_cus);
 	long long endParticleFilter = get_time();
 	printf("PARTICLE FILTER TOOK %f\n", elapsed_time(endVideoSequence, endParticleFilter));
 	printf("ENTIRE PROGRAM TOOK %f\n", elapsed_time(start, endParticleFilter));

@@ -104,9 +104,9 @@ run_analyze() {
     return 1
   fi
   run_dir="$(resolve_path "$run_dir")"
-  if ! ls "${run_dir}/lat_run_out"/seq_lat_stats_*.txt >/dev/null 2>&1; then
-    echo "analyze input not found: ${run_dir}/lat_run_out/seq_lat_stats_*.txt"
-    echo "hint: run with the updated Sequencer that writes lat_run_out first."
+  if ! ls "${run_dir}/lat_run_out"/seq_lat_stats_*.txt >/dev/null 2>&1 && ! ls "${run_dir}/lat_run_out"/coal_lat_stats_*.txt >/dev/null 2>&1; then
+    echo "analyze input not found: ${run_dir}/lat_run_out/{seq,coal}_lat_stats_*.txt"
+    echo "hint: run with updated Sequencer/GPUCoalescer that writes lat_run_out first."
     return 1
   fi
   python3 "${SCRIPT_DIR}/analyze_log.py" \
@@ -134,8 +134,24 @@ path = pathlib.Path(sys.argv[1])
 low = float(sys.argv[2])
 high = float(sys.argv[3])
 data = json.loads(path.read_text())
-ldst = data.get("ldst", {})
-mean = ldst.get("mean")
+cpu_ldst = data.get("cpu_ldst") or {}
+gpu_ldst = data.get("gpu_ldst") or {}
+ldst = data.get("ldst") or {}
+cpu_mean = cpu_ldst.get("mean")
+gpu_mean = gpu_ldst.get("mean")
+ldst_mean = ldst.get("mean")
+
+if ldst_mean is None:
+    cpu_samples = cpu_ldst.get("samples") or 0
+    gpu_samples = gpu_ldst.get("samples") or 0
+    total_samples = cpu_samples + gpu_samples
+    if total_samples > 0 and cpu_mean is not None and gpu_mean is not None:
+        ldst_mean = (cpu_mean * cpu_samples + gpu_mean * gpu_samples) / total_samples
+    elif total_samples > 0 and cpu_mean is not None and gpu_samples == 0:
+        ldst_mean = cpu_mean
+    elif total_samples > 0 and gpu_mean is not None and cpu_samples == 0:
+        ldst_mean = gpu_mean
+
 isatty = sys.stdout.isatty()
 def c(s, code):
     if not isatty:
@@ -151,15 +167,16 @@ def status_color(status):
 
 print(c("Check Summary", "1;36"))
 print(c("=" * 72, "36"))
-print(c("ldst_mean", "1;34"))
-if mean is None or (isinstance(mean, float) and math.isnan(mean)):
-    print(f"  status: {status_color('UNKNOWN')}")
-    print("  notes : ldst_mean is missing")
-else:
-    in_range = (low <= mean <= high)
-    status = "PASS" if in_range else "FAIL"
-    print(f"  status: {status_color(status)}")
-    print(f"  notes : value={mean:.6f}, range=[{low:.3f}, {high:.3f}]")
+for metric_name, mean in (("cpu_ldst_mean", cpu_mean), ("gpu_ldst_mean", gpu_mean), ("ldst_mean", ldst_mean)):
+    print(c(metric_name, "1;34"))
+    if mean is None or (isinstance(mean, float) and math.isnan(mean)):
+        print(f"  status: {status_color('UNKNOWN')}")
+        print(f"  notes : {metric_name} is missing")
+    else:
+        in_range = (low <= mean <= high)
+        status = "PASS" if in_range else "FAIL"
+        print(f"  status: {status_color(status)}")
+        print(f"  notes : value={mean:.6f}, range=[{low:.3f}, {high:.3f}]")
 
 ft = data.get("functional_tests")
 if ft:

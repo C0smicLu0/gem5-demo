@@ -9,7 +9,7 @@
 - `gem5_test.sh`：底层执行器，提供 `list | test | analyze | check` 子命令。
 - `gem5_workload_runner.sh`：面向工作负载的封装脚本，提供 `list | run | analyze | check | all`。
 - `gem5_workloads.json`：工作负载及其参数的配置文件。
-- `analyze_log.py`：解析 `lat_run_out/seq_lat_stats_*.txt` 并生成汇总报告。
+- `analyze_log.py`：解析 `lat_run_out/{seq,coal}_lat_stats_*.txt` 并生成 CPU/GPU 双通道汇总报告。
 
 ## 路径行为
 
@@ -28,7 +28,7 @@
 1. `gem5_workload_runner.sh` 读取 `gem5_workloads.json`，确定 `run_dir`。
 2. `run/all` 会调用 `gem5_test.sh test` 生成并执行容器化的 gem5 命令。
 3. `analyze/all` 会调用 `gem5_test.sh analyze`，后者再调用 `analyze_log.py`。
-4. `check/all` 会调用 `gem5_test.sh check`，根据 `ldst.mean` 阈值和功能测试状态进行判断。
+4. `check/all` 会调用 `gem5_test.sh check`，根据 `cpu_ldst.mean` / `gpu_ldst.mean` 阈值和功能测试状态进行判断。
 
 ## 配置参数的优先级
 
@@ -95,5 +95,7 @@ test_scripts/gem5_test.sh check tests/testing-results/manual-run 100 150
 `simout`、`stats.txt` 及其他 `gem5` 输出文件
 
 `lat_run_out/seq_lat_stats_*.txt`（由 `Sequencer` 延迟回调生成）
+
+`lat_run_out/coal_lat_stats_*.txt`（由 `GPUCoalescer` 延迟回调生成）
 
 `analyze.md`、`analyze.json`（由 `analyze_log.py` 生成）
