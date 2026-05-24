@@ -46,7 +46,7 @@ bool pageAlign = false;
 struct HeteroOptions
 {
   int cpu_workers = 0;
-  int gpu_cus = 0;
+  int gpu_cus = -1;
   bool debug_log = false;
 };
 
@@ -95,6 +95,16 @@ static void parseExtraArgs(int argc, char **argv, HeteroOptions *options)
       fprintf(stderr, "unknown option: %s\n", argv[arg]);
       exit(-1);
     }
+  }
+}
+
+static void validateOptions(const HeteroOptions &options)
+{
+  if (options.cpu_workers > 0 && options.gpu_cus <= 0) {
+    fprintf(stderr,
+            "CPU+GPU mode requires explicit --gpu-cus N when "
+            "--cpu-workers is non-zero\n");
+    exit(-1);
   }
 }
 
@@ -1278,6 +1288,7 @@ int main(int argc, char ** argv)
 
   HeteroOptions options;
   parseExtraArgs(argc, argv, &options);
+  validateOptions(options);
 
   // boilerplate code to identify compute capability, # CU/CUM/CUX, etc.
   int deviceCount;

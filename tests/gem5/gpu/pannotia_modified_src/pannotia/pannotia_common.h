@@ -12,7 +12,7 @@
 
 struct PannotiaOptions
 {
-    int cpu_workers = -1;
+    int cpu_workers = 0;
     int gpu_cus = -1;
     bool cpu_only = false;
     bool gpu_only = false;
@@ -78,36 +78,20 @@ static void parse_pannotia_options(int argc, char **argv, int first_option,
         fprintf(stderr, "--cpu-only and --gpu-only cannot be used together\n");
         exit(1);
     }
-}
 
-static int online_cpu_count()
-{
-    FILE *fp = fopen("/sys/devices/system/cpu/online", "r");
-    if (fp) {
-        int first = 0;
-        int last = 0;
-        int matched = fscanf(fp, "%d-%d", &first, &last);
-        fclose(fp);
-
-        if (matched == 2 && last >= first) {
-            return last - first + 1;
-        }
-        if (matched == 1) {
-            return 1;
-        }
+    if (options->cpu_only && options->cpu_workers == 0) {
+        fprintf(stderr,
+                "--cpu-only requires --cpu-workers N with N > 0\n");
+        exit(1);
     }
 
-    unsigned workers = std::thread::hardware_concurrency();
-    return workers == 0 ? 1 : static_cast<int>(workers);
-}
-
-static int default_cpu_workers(bool cpu_only)
-{
-    int cpus = online_cpu_count();
-    if (cpu_only) {
-        return cpus;
+    if (!options->cpu_only && !options->gpu_only &&
+        options->cpu_workers > 0 && options->gpu_cus <= 0) {
+        fprintf(stderr,
+                "CPU+GPU mode requires explicit --gpu-cus N when "
+                "--cpu-workers is non-zero\n");
+        exit(1);
     }
-    return std::max(0, cpus - 3);
 }
 
 static void *checked_hip_malloc_managed(size_t bytes, const char *name)
@@ -146,27 +130,16 @@ static void free_managed_csr(csr_array *csr)
 
 static int resolve_cpu_workers(const PannotiaOptions &options)
 {
-    int workers = options.cpu_workers >= 0 ?
-        options.cpu_workers : default_cpu_workers(options.cpu_only);
+    int workers = options.cpu_workers;
     if (options.gpu_only) {
         workers = 0;
     }
     return workers;
 }
 
-static int detect_gpu_cus(int fallback)
-{
-    hipDeviceProp_t prop;
-    hipError_t err = hipGetDeviceProperties(&prop, 0);
-    if (err == hipSuccess && prop.multiProcessorCount > 0) {
-        return prop.multiProcessorCount;
-    }
-    return fallback;
-}
-
 static int resolve_gpu_cus(const PannotiaOptions &options)
 {
-    return options.gpu_cus > 0 ? options.gpu_cus : detect_gpu_cus(16);
+    return options.gpu_cus;
 }
 
 static int compute_gpu_range_end(int num_nodes, bool use_gpu,
