@@ -760,7 +760,7 @@ case "$cmd" in
           i=$((i + 1))
         done
       fi
-      parse_run_options "$@"
+      parse_run_options "${rem[@]}"
       run_test "$workload" "$run_tag" "$PROFILE"
     elif [[ "$cmd" == "analyze" ]]; then
       # analyze: 仅执行离线分析
@@ -800,7 +800,7 @@ case "$cmd" in
         high="$2"
         shift 2
       fi
-      parse_run_options "$@"
+      parse_run_options "${rem[@]}"
       run_test "$workload" "$run_tag" "$PROFILE"
       run_analyze "$workload" "$run_tag"
       run_functional_check "$workload" "$run_tag"
