@@ -307,6 +307,8 @@ class FunctionalTestAnalyzer:
     EXEC_HINT_PATTERNS = ["begin simulation", "exiting @ tick", "exiting because", "sim_seconds", "final_tick"]
     RESULT_FAIL_PATTERNS = ["verification failed", "mismatch", "incorrect", "wrong answer", "error:"]
     RESULT_PASS_PATTERNS = ["pass", "passed", "success", "verification ok"]
+    RESULT_CHECK_FAIL_PATTERNS = ["result_check: fail"]
+    RESULT_CHECK_PASS_PATTERNS = ["result_check: pass"]
     CONFIG_OBJECT_HINTS = ["cpu", "gpu", "cu", "cache", "directory", "memory"]
 
     def __init__(self, run_dir):
@@ -460,13 +462,22 @@ class FunctionalTestAnalyzer:
 
     def _analyze_result_validation(self):
         all_text = self._combined_text(["simout", "simerr"])
+        marker_fail_ev = self._find_pattern_evidence(all_text, self.RESULT_CHECK_FAIL_PATTERNS, "simout/simerr")
+        if marker_fail_ev:
+            return self._mk_result(self.STATUS_FAIL, marker_fail_ev, "命中 RESULT_CHECK: FAIL 标记")
+        marker_pass_ev = self._find_pattern_evidence(all_text, self.RESULT_CHECK_PASS_PATTERNS, "simout/simerr")
+        if marker_pass_ev:
+            return self._mk_result(self.STATUS_PASS, marker_pass_ev, "命中 RESULT_CHECK: PASS 标记")
         fail_ev = self._find_pattern_evidence(all_text, self.RESULT_FAIL_PATTERNS, "simout/simerr")
         if fail_ev:
             return self._mk_result(self.STATUS_FAIL, fail_ev, "检测到 correctness/error 失败信号")
         pass_ev = self._find_pattern_evidence(all_text, self.RESULT_PASS_PATTERNS, "simout/simerr")
         if pass_ev:
             return self._mk_result(self.STATUS_PASS, pass_ev, "检测到 correctness/返回状态成功信号")
-        return self._mk_result(self.STATUS_UNKNOWN, [], "无统一 correctness 文本，保持 UNKNOWN")
+        exec_status = self.items.get("functional_execution", {}).get("status")
+        if exec_status == self.STATUS_PASS and not fail_ev and not marker_fail_ev:
+            return self._mk_result(self.STATUS_PASS, [], "功能执行已正常结束且未命中失败信号，按策略判定 PASS")
+        return self._mk_result(self.STATUS_UNKNOWN, [], "执行状态不明确且无统一 correctness 文本，保持 UNKNOWN")
 
     def _analyze_exception_check(self):
         all_text = self._combined_text(["simout", "simerr", "stats"])

@@ -11,17 +11,19 @@ usage() {
   cat <<'EOF'
 Usage:
   gem5_workload_runner.sh list
-  gem5_workload_runner.sh compile <workload>
+  gem5_workload_runner.sh compile <workload|all>
   gem5_workload_runner.sh run <workload> [run_tag] [--profile <name> ...]
   gem5_workload_runner.sh analyze <workload> <run_tag>
-  gem5_workload_runner.sh check <workload> <run_tag> [low high]
-  gem5_workload_runner.sh all <workload> [run_tag] [low high] [--profile <name> ...]
+  gem5_workload_runner.sh functional_check <workload> <run_tag>
+  gem5_workload_runner.sh latency_check <workload> <run_tag>
+  gem5_workload_runner.sh all <workload> [run_tag] [--profile <name> ...]
 
 Notes:
   - run_tag defaults to current time: YYYYMMDD-HHMMSS
   - run_dir = <base_run_root>/<workload>-<run_tag>
   - analyze reads <run_dir>/lat_run_out/{seq,coal}_lat_stats_*.txt
-  - check prints PASS/FAIL/UNKNOWN for cpu_ldst_mean/gpu_ldst_mean and functional_tests (non-fatal)
+  - functional_check prints PASS/FAIL/UNKNOWN for 5 functional tests
+  - latency_check prints PASS/FAIL/UNKNOWN for cpu_ldst_mean/gpu_ldst_mean/ldst_mean
   - Edit JSON only; avoid hardcoding args in commands.
 EOF
 }
@@ -231,6 +233,16 @@ def rewrite_options(opt_str: str) -> str:
         out.append(t)
         i += 1
     out += ["--num-cus", num_cus]
+    # If workload uses -np, scale it to num_cus * 64 so each block has ~64 real particles
+    num_cus_int = int(num_cus)
+    if num_cus_int > 0:
+        target_np = num_cus_int * 64
+        for j, t in enumerate(out):
+            if t == "-np" and j + 1 < len(out):
+                existing_np = int(out[j + 1])
+                if existing_np < target_np:
+                    out[j + 1] = str(target_np)
+                break
     return shlex.join(out)
 
 if "--options" in tokens:
@@ -245,6 +257,8 @@ else:
 print(shlex.join(tokens))
 PY3
 }
+
+
 
 option_overridden() {
   # 判断某个 token 是否属于会被覆盖的关键选项（当前只处理 -u/-n 两组）
@@ -437,14 +451,20 @@ run_analyze() {
   "$GEM5_TEST" analyze "$run_dir"
 }
 
-run_check() {
+run_functional_check() {
   local workload="$1"
   local run_tag="$2"
-  local low="${3:-100}"
-  local high="${4:-150}"
   local run_dir
   run_dir="$(build_run_dir "$workload" "$run_tag")"
-  "$GEM5_TEST" check "$run_dir" "$low" "$high"
+  "$GEM5_TEST" functional_check "$run_dir"
+}
+
+run_latency_check() {
+  local workload="$1"
+  local run_tag="$2"
+  local run_dir
+  run_dir="$(build_run_dir "$workload" "$run_tag")"
+  "$GEM5_TEST" latency_check "$run_dir"
 }
 
 rodinia_compile_target() {
@@ -486,6 +506,18 @@ run_compile() {
   "$compile_sh" "$target"
 }
 
+list_rodinia_workloads() {
+  python3 - "$CONFIG_FILE" <<'PY'
+import json
+import sys
+
+cfg = json.load(open(sys.argv[1], "r"))
+for name in sorted(cfg.get("workloads", {}).keys()):
+    if name.startswith("rodinia-"):
+        print(name)
+PY
+}
+
 cmd="${1:-}"
 case "$cmd" in
   list)
@@ -497,15 +529,28 @@ case "$cmd" in
       usage
       exit 1
     fi
-    if ! workload_exists "$workload"; then
-      echo "unknown workload: $workload"
-      echo "available:"
-      list_workloads
-      exit 1
+    if [[ "$workload" == "all" ]]; then
+      mapfile -t rodinia_workloads < <(list_rodinia_workloads)
+      if (( ${#rodinia_workloads[@]} == 0 )); then
+        echo "no rodinia workloads found in config: $CONFIG_FILE"
+        exit 1
+      fi
+
+      for w in "${rodinia_workloads[@]}"; do
+        echo "==> compile workload: ${w}"
+        run_compile "$w"
+      done
+    else
+      if ! workload_exists "$workload"; then
+        echo "unknown workload: $workload"
+        echo "available:"
+        list_workloads
+        exit 1
+      fi
+      run_compile "$workload"
     fi
-    run_compile "$workload"
     ;;
-  run|analyze|check|all)
+  run|analyze|functional_check|latency_check|all|check)
     # 统一入口校验：workload 必填且必须在 JSON 中存在
     workload="${2:-}"
     if [[ -z "$workload" ]]; then
@@ -518,12 +563,18 @@ case "$cmd" in
       list_workloads
       exit 1
     fi
-    run_tag="${3:-$(date +%Y%m%d-%H%M%S)}"
+    if [[ -n "${3:-}" && "$3" != --* ]]; then
+        run_tag="$3"
+        profile_start=4
+    else
+        run_tag="$(date +%Y%m%d-%H%M%S)"
+        profile_start=3
+    fi
     if [[ "$cmd" == "run" ]]; then
       # run: 仅执行测试
       profile_tokens=()
-      if (( $# >= 4 )); then
-        rem=("${@:4}")
+      if (( $# >= profile_start )); then
+        rem=("${@:$profile_start}")
         i=0
         while (( i < ${#rem[@]} )); do
           if [[ "${rem[$i]}" != "--profile" ]]; then
@@ -543,20 +594,24 @@ case "$cmd" in
     elif [[ "$cmd" == "analyze" ]]; then
       # analyze: 仅执行离线分析
       run_analyze "$workload" "$run_tag"
+    elif [[ "$cmd" == "functional_check" ]]; then
+      run_functional_check "$workload" "$run_tag"
+    elif [[ "$cmd" == "latency_check" ]]; then
+      run_latency_check "$workload" "$run_tag"
     elif [[ "$cmd" == "check" ]]; then
-      # check: 仅做阈值检查（可自定义 low/high）
-      run_check "$workload" "$run_tag" "${4:-100}" "${5:-150}"
+      # 兼容旧命令：等价于 functional_check + latency_check
+      run_functional_check "$workload" "$run_tag"
+      echo
+      run_latency_check "$workload" "$run_tag"
     else
-      # all: 顺序执行 run -> analyze -> check
-      low="${4:-100}"
-      high="${5:-150}"
+      # all: 顺序执行 run -> analyze -> functional_check -> latency_check
       profile_tokens=()
-      if (( $# >= 6 )); then
-        rem=("${@:6}")
+      if (( $# >= profile_start )); then
+        rem=("${@:$profile_start}")
         i=0
         while (( i < ${#rem[@]} )); do
           if [[ "${rem[$i]}" != "--profile" ]]; then
-            echo "usage: $0 all <workload> [run_tag] [low high] [--profile <name> ...]"
+            echo "usage: $0 all <workload> [run_tag] [--profile <name> ...]"
             exit 1
           fi
           i=$((i + 1))
@@ -570,7 +625,8 @@ case "$cmd" in
       fi
       run_test "$workload" "$run_tag" "${profile_tokens[*]}"
       run_analyze "$workload" "$run_tag"
-      run_check "$workload" "$run_tag" "$low" "$high"
+      run_functional_check "$workload" "$run_tag"
+      run_latency_check "$workload" "$run_tag"
     fi
     ;;
   *)
