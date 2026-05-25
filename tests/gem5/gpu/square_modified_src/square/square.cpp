@@ -28,7 +28,9 @@ THE SOFTWARE.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <system_error>
 #include <thread>
+#include <unistd.h>
 #include <vector>
 
 #if defined(GEM5_FUSION) || defined(GEM5_FS)
@@ -103,6 +105,20 @@ parse_int_value(const char *value, int *parsed)
 
     *parsed = static_cast<int>(number);
     return true;
+}
+
+static void
+direct_log(const char *message)
+{
+    size_t len = strlen(message);
+    while (len > 0) {
+        ssize_t written = write(STDERR_FILENO, message, len);
+        if (written <= 0) {
+            return;
+        }
+        message += written;
+        len -= static_cast<size_t>(written);
+    }
 }
 
 static void
@@ -184,11 +200,17 @@ static void
 cpu_shared_load_range(const float *A, size_t elements, int worker_count,
                       volatile float *sink, int worker_id, bool debug_log)
 {
+    char message[160];
     float local = 0.0f;
     const size_t begin =
         (elements * static_cast<size_t>(worker_id)) / worker_count;
     const size_t end =
         (elements * static_cast<size_t>(worker_id + 1)) / worker_count;
+
+    snprintf(message, sizeof(message),
+             "CPU worker %d started shared load [%zu, %zu)\n",
+             worker_id, begin, end);
+    direct_log(message);
 
     for (size_t i = begin; i < end; ++i) {
         local += A[i] * 0.000001f;
@@ -196,9 +218,10 @@ cpu_shared_load_range(const float *A, size_t elements, int worker_count,
 
     sink[worker_id] = local;
 
-    fprintf(stdout, "CPU worker %d finished shared load [%zu, %zu)\n",
-            worker_id, begin, end);
-    fflush(stdout);
+    snprintf(message, sizeof(message),
+             "CPU worker %d finished shared load [%zu, %zu)\n",
+             worker_id, begin, end);
+    direct_log(message);
 }
 
 int
@@ -256,10 +279,26 @@ main(int argc, char *argv[])
 #endif
 
     for (int worker = 0; worker < options.cpu_workers; ++worker) {
-        cpu_threads.emplace_back(cpu_shared_load_range, A_h, options.elements,
-                                 options.cpu_workers, cpu_sinks.data(),
-                                 worker,
-                                 options.debug_log);
+        try {
+            cpu_threads.emplace_back(cpu_shared_load_range, A_h,
+                                     options.elements, options.cpu_workers,
+                                     cpu_sinks.data(), worker,
+                                     options.debug_log);
+        } catch (const std::system_error &error) {
+            char message[192];
+            snprintf(message, sizeof(message),
+                     "Failed to create CPU worker %d/%d: %s\n",
+                     worker, options.cpu_workers, error.what());
+            direct_log(message);
+            break;
+        }
+    }
+
+    {
+        char message[160];
+        snprintf(message, sizeof(message), "Created %zu/%d CPU workers\n",
+                 cpu_threads.size(), options.cpu_workers);
+        direct_log(message);
     }
 
     if (options.debug_log) {
