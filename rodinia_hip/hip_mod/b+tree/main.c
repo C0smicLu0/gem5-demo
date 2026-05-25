@@ -1900,6 +1900,7 @@ main(	int argc,
 	char *command_file = NULL;
 	char *output="output.txt";
 	FILE * pFile;
+	int num_cus = 0;
 
 
 	// go through arguments
@@ -1918,21 +1919,32 @@ main(	int argc,
 	      return -1;
 	    }
 	  }
-	  else if(strcmp(argv[cur_arg], "command")==0){
-	    // check if value provided
-	    if(argc>=cur_arg+1){
-	      command_file = argv[cur_arg+1];
-	      cur_arg = cur_arg+1;
-	      // value is not a number
-	    }
-	    // value not provided
-	    else{
-	      printf("ERROR: Missing value to command parameter\n");
-	      return -1;
-	    }
-	  }
-	}
-	// Print configuration
+	          else if(strcmp(argv[cur_arg], "command")==0){
+            // check if value provided
+            if(argc>=cur_arg+1){
+              command_file = argv[cur_arg+1];
+              cur_arg = cur_arg+1;
+              // value is not a number
+            }
+            // value not provided
+            else{
+              printf("ERROR: Missing value to command parameter\n");
+              return -1;
+            }
+          }
+          else if(strcmp(argv[cur_arg], "--mt-cpu-threads")==0){
+            if(argc>=cur_arg+1){
+              cur_arg = cur_arg+1;  // skip value (no-op, no rodinia_mt)
+            }
+          }
+          else if(strcmp(argv[cur_arg], "--num-cus")==0){
+            if(argc>=cur_arg+1){
+              num_cus = atoi(argv[cur_arg+1]);
+              cur_arg = cur_arg+1;
+            }
+          }
+        }
+// Print configuration
 	  if((input_file==NULL)||(command_file==NULL))
 	    printf("Usage: ./b+tree file input_file command command_list\n");
 

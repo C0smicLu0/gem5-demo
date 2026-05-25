@@ -103,6 +103,36 @@ static void rodinia_mt_set_threads(int n) {
     }
 }
 
+static int rodinia_mt_visible_cpus(void) {
+#ifdef __linux__
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    if (sched_getaffinity(0, sizeof(set), &set) == 0) {
+        int cnt = 0;
+        for (int cpu = 0; cpu < CPU_SETSIZE; cpu++) {
+            if (CPU_ISSET(cpu, &set)) cnt++;
+        }
+        if (cnt > 0) return cnt;
+    }
+#endif
+    long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+    if (ncpu > 0 && ncpu <= INT_MAX) return (int)ncpu;
+    return 1;
+}
+
+static void rodinia_mt_cap_threads(void) {
+    int visible = rodinia_mt_visible_cpus();
+    int max_threads = visible - 2;
+    if (max_threads < 1) max_threads = 1;
+
+    if (rodinia_mt_threads > max_threads) {
+        printf("[rodinia_mt][pf] clamp mt-cpu-threads from %d to %d (visible_cpus=%d, reserve=2)\n",
+               rodinia_mt_threads, max_threads, visible);
+        fflush(stdout);
+        rodinia_mt_threads = max_threads;
+    }
+}
+
 static void *rodinia_mt_worker(void *p) {
     rodinia_mt_arg_t *a = (rodinia_mt_arg_t *)p;
     unsigned int s = a->seed ^ (unsigned int)(a->tid + 1) * 0x9e3779b9u;
@@ -151,6 +181,7 @@ static void rodinia_mt_start_pool(void) {
     rodinia_mt_init_cfg();
     if (rodinia_mt_started || rodinia_mt_work_percent <= 0) return;
 
+    rodinia_mt_cap_threads();
     int n = rodinia_mt_threads;
     rodinia_mt_pool = (pthread_t *)malloc((size_t)n * sizeof(pthread_t));
     rodinia_mt_args = (rodinia_mt_arg_t *)malloc((size_t)n * sizeof(rodinia_mt_arg_t));
@@ -939,11 +970,16 @@ void particleFilter(unsigned char * I, int IszX, int IszY, int Nfr, int * seed, 
     long long send_end = get_time();
     printf("TIME TO SEND TO GPU: %f\n", elapsed_time(send_start, send_end));
     int num_blocks = ceil((double) Nparticles / (double) threads_per_block);
-    if (num_cus > num_blocks) num_blocks = num_cus;
+    if (num_cus > num_blocks) {
+        int max_blocks = (Nparticles + 63) / 64;
+        if (max_blocks < num_blocks) max_blocks = num_blocks;
+        if (max_blocks > num_cus) max_blocks = num_cus;
+        num_blocks = max_blocks;
+    }
 
 
     for (k = 1; k < Nfr; k++) {
-        
+
         rodinia_mt_cpu_phase_shared(weights_GPU, (size_t)Nparticles * sizeof(double));
         likelihood_kernel <<< num_blocks, threads_per_block >>> (arrayX_GPU, arrayY_GPU, xj_GPU, yj_GPU, CDF_GPU, ind_GPU, objxy_GPU, likelihood_GPU, I_GPU, u_GPU, weights_GPU, Nparticles, countOnes, max_size, k, IszY, Nfr, seed_GPU, partial_sums);
 

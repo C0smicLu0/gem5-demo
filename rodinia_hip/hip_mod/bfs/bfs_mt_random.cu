@@ -177,6 +177,16 @@ void BFSGraph(int argc, char** argv)
         g_share_seed = (unsigned int)atoi(argv[4]);
     if (g_share_seed == 0)
         g_share_seed = 1;
+
+    int num_cus = 0;
+    for (int ai = 5; ai < argc; ai++) {
+        if (strcmp(argv[ai], "--mt-cpu-threads") == 0 && ai + 1 < argc) {
+            g_num_cpu_threads = atoi(argv[++ai]);
+        } else if (strcmp(argv[ai], "--num-cus") == 0 && ai + 1 < argc) {
+            num_cus = atoi(argv[++ai]);
+        }
+    }
+    if (g_num_cpu_threads <= 0) g_num_cpu_threads = 1;
     printf("BFS_MT: cpu_threads=%d share_percent=%d seed=%u\n",
            g_num_cpu_threads, g_share_percent, g_share_seed);
 
@@ -199,6 +209,7 @@ void BFSGraph(int argc, char** argv)
         num_of_blocks = (int)ceil(no_of_nodes / (double)MAX_THREADS_PER_BLOCK);
         num_of_threads_per_block = MAX_THREADS_PER_BLOCK;
     }
+    if (num_cus > 0 && num_of_blocks > num_cus) num_of_blocks = num_cus;
 
     Node* h_graph_nodes =
         (Node*)checked_hip_malloc_managed(sizeof(Node) * no_of_nodes);

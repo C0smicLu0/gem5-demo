@@ -92,7 +92,15 @@ void BFSGraph( int argc, char** argv)
 {
 
     char *input_f;
-	if(argc!=2){
+	int num_cus = 0;
+	for (int ai = 2; ai < argc; ai++) {
+		if (strcmp(argv[ai], "--mt-cpu-threads") == 0 && ai + 1 < argc) {
+			ai++;  // skip value (no-op, no rodinia_mt)
+		} else if (strcmp(argv[ai], "--num-cus") == 0 && ai + 1 < argc) {
+			num_cus = atoi(argv[++ai]);
+		}
+	}
+	if(argc<2){
 	Usage(argc, argv);
 	exit(0);
 	}
@@ -121,6 +129,7 @@ void BFSGraph( int argc, char** argv)
 		num_of_blocks = (int)ceil(no_of_nodes/(double)MAX_THREADS_PER_BLOCK); 
 		num_of_threads_per_block = MAX_THREADS_PER_BLOCK; 
 	}
+	if (num_cus > 0 && num_of_blocks > num_cus) num_of_blocks = num_cus;
 
 	// allocate host memory
 	// 原来：h_graph_* 在 host，d_graph_* 在 device，需要 hipMemcpy(H2D)
