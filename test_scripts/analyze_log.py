@@ -395,59 +395,59 @@ class FunctionalTestAnalyzer:
             if is_cu:
                 cu_ipc[name] = raw
 
-        total = len(cpu_ipc) + len(cu_ipc)
-
-        return self._mk_result(
-            self.STATUS_PASS,
-            evidence[:8],
-            f"cpu/cu 数量达标（cpu={len(cpu_ipc)}, cu={len(cu_ipc)}, total={total}）",
-        )
-
-
-        #     is_bad = (low_raw == "nan" or val != val or val == 0.0)
-        #     if is_bad:
-        #         item = f"{name}.ipc={raw}"
-        #         bad.append(item)
-        #         if is_cpu:
-        #             bad_cpu.append((int(cpu_m.group(1)), item))
-        #         if is_cu:
-        #             bad_cu.append((int(cu_m.group(1)), item))
-        #     if len(evidence) < 8:
-        #         evidence.append(f"stats.txt: {name}.ipc={raw}")
-
         # total = len(cpu_ipc) + len(cu_ipc)
-        # if total == 0:
-        #     return self._mk_result(self.STATUS_UNKNOWN, [], "stats.txt 未检测到 cpu*/cu* 的 ipc 项")
-        # if bad:
-        #     first_bad_cpu = min(bad_cpu, key=lambda x: x[0])[1] if bad_cpu else "none"
-        #     first_bad_cu = min(bad_cu, key=lambda x: x[0])[1] if bad_cu else "none"
-        #     ev = [
-        #         f"first_bad_cpu: {first_bad_cpu}",
-        #         f"first_bad_cu: {first_bad_cu}",
-        #         f"bad_cpu_count={len(bad_cpu)}",
-        #         f"bad_cu_count={len(bad_cu)}",
-        #     ]
-        #     ev.extend(bad[:4])
-        #     return self._mk_result(
-        #         self.STATUS_FAIL,
-        #         ev,
-        #         (
-        #             "存在 cpu/cu 的 ipc 为 0 或 NaN "
-        #             f"（cpu={len(cpu_ipc)}, cu={len(cu_ipc)}, total={total}, "
-        #             f"bad_cpu={len(bad_cpu)}, bad_cu={len(bad_cu)}）"
-        #         ),
-        #     )
-        # if total < 240:
-        #     return self._mk_result(
-        #         self.STATUS_FAIL,
-        #         evidence[:8],
-        #         f"cpu+cu 的 ipc 项数量不足 240（cpu={len(cpu_ipc)}, cu={len(cu_ipc)}, total={total}）",
-        #     )
+
         # return self._mk_result(
         #     self.STATUS_PASS,
         #     evidence[:8],
-        #     f"所有 cpu/cu ipc 均非 0/NaN 且数量达标（cpu={len(cpu_ipc)}, cu={len(cu_ipc)}, total={total}）",
+        #     f"cpu/cu 数量达标（cpu={len(cpu_ipc)}, cu={len(cu_ipc)}, total={total}）",
         # )
+
+
+            is_bad = (low_raw == "nan" or val != val or val == 0.0)
+            if is_bad:
+                item = f"{name}.ipc={raw}"
+                bad.append(item)
+                if is_cpu:
+                    bad_cpu.append((int(cpu_m.group(1)), item))
+                if is_cu:
+                    bad_cu.append((int(cu_m.group(1)), item))
+            if len(evidence) < 8:
+                evidence.append(f"stats.txt: {name}.ipc={raw}")
+
+        total = len(cpu_ipc) + len(cu_ipc)
+        if total == 0:
+            return self._mk_result(self.STATUS_UNKNOWN, [], "stats.txt 未检测到 cpu*/cu* 的 ipc 项")
+        if bad:
+            first_bad_cpu = min(bad_cpu, key=lambda x: x[0])[1] if bad_cpu else "none"
+            first_bad_cu = min(bad_cu, key=lambda x: x[0])[1] if bad_cu else "none"
+            ev = [
+                f"first_bad_cpu: {first_bad_cpu}",
+                f"first_bad_cu: {first_bad_cu}",
+                f"bad_cpu_count={len(bad_cpu)}",
+                f"bad_cu_count={len(bad_cu)}",
+            ]
+            ev.extend(bad[:4])
+            return self._mk_result(
+                self.STATUS_FAIL,
+                ev,
+                (
+                    "存在 cpu/cu 的 ipc 为 0 或 NaN "
+                    f"（cpu={len(cpu_ipc)}, cu={len(cu_ipc)}, total={total}, "
+                    f"bad_cpu={len(bad_cpu)}, bad_cu={len(bad_cu)}）"
+                ),
+            )
+        if total < 240:
+            return self._mk_result(
+                self.STATUS_FAIL,
+                evidence[:8],
+                f"cpu+cu 的 ipc 项数量不足 240（cpu={len(cpu_ipc)}, cu={len(cu_ipc)}, total={total}）",
+            )
+        return self._mk_result(
+            self.STATUS_PASS,
+            evidence[:8],
+            f"所有 cpu/cu ipc 均非 0/NaN 且数量达标（cpu={len(cpu_ipc)}, cu={len(cu_ipc)}, total={total}）",
+        )
 
     def _analyze_system_init(self):
         all_text = self._combined_text(["simout", "simerr"])

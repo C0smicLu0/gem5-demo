@@ -434,11 +434,13 @@ add_resource_workload_args() {
 PROFILE=""
 DEBUG_FLAGS=""
 DEBUG_START=""
+DEBUG_FILE=""
 
 parse_run_options() {
   PROFILE=""
   DEBUG_FLAGS=""
   DEBUG_START=""
+DEBUG_FILE=""
 
   while (($#)); do
     case "$1" in
@@ -477,6 +479,21 @@ parse_run_options() {
         DEBUG_START="${1#--debug-start=}"
         [[ -n "$DEBUG_START" ]] || {
           echo "missing value for --debug-start" >&2
+          return 1
+        }
+        ;;
+      --debug-file)
+        shift
+        [[ $# -gt 0 && -n "${1:-}" ]] || {
+          echo "missing value for --debug-file" >&2
+          return 1
+        }
+        DEBUG_FILE="$1"
+        ;;
+      --debug-file=*)
+        DEBUG_FILE="${1#--debug-file=}"
+        [[ -n "$DEBUG_FILE" ]] || {
+          echo "missing value for --debug-file" >&2
           return 1
         }
         ;;
@@ -563,6 +580,9 @@ run_test() {
   fi
   if [[ -n "$DEBUG_START" ]]; then
     gem5_opt_args="$(join_trim "$gem5_opt_args" "--debug-start=${DEBUG_START}")"
+  fi
+  if [[ -n "$DEBUG_FILE" ]]; then
+    gem5_opt_args="$(join_trim "$gem5_opt_args" "--debug-file=${DEBUG_FILE}")"
   fi
   global_config_args="$(get_json "cfg.get('config_args', '')")"
   workload_config_args="$(get_json "cfg['workloads']['${workload}'].get('config_args', '')")"

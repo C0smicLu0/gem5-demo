@@ -145,9 +145,8 @@ echo "$INNER_SCRIPT" | docker run --rm -i \
 HOST_BIN_SRC="${RODINIA_ROOT}/${TARGET_REL}/bin"
 if [[ -d "${HOST_BIN_SRC}" ]]; then
     mkdir -p "${SYNC_BIN_DST}"
-    rm -rf "${SYNC_BIN_DST}"/*
-    cp -a "${HOST_BIN_SRC}/." "${SYNC_BIN_DST}/"
-    echo "[host] bin synced to: ${SYNC_BIN_DST}"
+    cp -af "${HOST_BIN_SRC}/." "${SYNC_BIN_DST}/"
+    echo "[host] bin synced incrementally to: ${SYNC_BIN_DST}"
 else
     echo "[host] warning: bin source not found, skip sync: ${HOST_BIN_SRC}" >&2
 fi
