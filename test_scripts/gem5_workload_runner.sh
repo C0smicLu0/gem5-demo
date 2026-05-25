@@ -458,6 +458,13 @@ parse_run_options() {
         }
         DEBUG_FLAGS="$1"
         ;;
+      --debug-flags=*)
+        DEBUG_FLAGS="${1#--debug-flags=}"
+        [[ -n "$DEBUG_FLAGS" ]] || {
+          echo "missing value for --debug-flags" >&2
+          return 1
+        }
+        ;;
       --debug-start)
         shift
         [[ $# -gt 0 && -n "${1:-}" ]] || {
@@ -465,6 +472,13 @@ parse_run_options() {
           return 1
         }
         DEBUG_START="$1"
+        ;;
+      --debug-start=*)
+        DEBUG_START="${1#--debug-start=}"
+        [[ -n "$DEBUG_START" ]] || {
+          echo "missing value for --debug-start" >&2
+          return 1
+        }
         ;;
       *)
         echo "unknown run option: $1" >&2
@@ -742,23 +756,9 @@ case "$cmd" in
     fi
     if [[ "$cmd" == "run" ]]; then
       # run: 仅执行测试
-      profile_tokens=()
+      rem=()
       if (( $# >= profile_start )); then
         rem=("${@:$profile_start}")
-        i=0
-        while (( i < ${#rem[@]} )); do
-          if [[ "${rem[$i]}" != "--profile" ]]; then
-            echo "usage: $0 run <workload> [run_tag] [--profile <name> ...]"
-            exit 1
-          fi
-          i=$((i + 1))
-          if (( i >= ${#rem[@]} )); then
-            echo "missing value for --profile"
-            exit 1
-          fi
-          profile_tokens+=("${rem[$i]}")
-          i=$((i + 1))
-        done
       fi
       parse_run_options "${rem[@]}"
       run_test "$workload" "$run_tag" "$PROFILE"
@@ -777,28 +777,9 @@ case "$cmd" in
       run_latency_check "$workload" "$run_tag"
     else
       # all: 顺序执行 run -> analyze -> functional_check -> latency_check
-      profile_tokens=()
+      rem=()
       if (( $# >= profile_start )); then
         rem=("${@:$profile_start}")
-        i=0
-        while (( i < ${#rem[@]} )); do
-          if [[ "${rem[$i]}" != "--profile" ]]; then
-            echo "usage: $0 all <workload> [run_tag] [--profile <name> ...]"
-            exit 1
-          fi
-          i=$((i + 1))
-          if (( i >= ${#rem[@]} )); then
-            echo "missing value for --profile"
-            exit 1
-          fi
-          profile_tokens+=("${rem[$i]}")
-          i=$((i + 1))
-        done
-      fi
-      if (($# >= 2)) && [[ "$1" != --* && "$2" != --* ]]; then
-        low="$1"
-        high="$2"
-        shift 2
       fi
       parse_run_options "${rem[@]}"
       run_test "$workload" "$run_tag" "$PROFILE"
