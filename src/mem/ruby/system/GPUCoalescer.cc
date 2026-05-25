@@ -31,7 +31,11 @@
 
 #include "mem/ruby/system/GPUCoalescer.hh"
 
+#include <filesystem>
+#include <fstream>
+
 #include "base/compiler.hh"
+#include "base/output.hh"
 #include "base/logging.hh"
 #include "base/str.hh"
 #include "cpu/testers/rubytest/RubyTester.hh"
@@ -285,11 +289,87 @@ GPUCoalescer::GPUCoalescer(const Params &p)
         }
     }
 
+    coalLatTypeAgg.resize(RubyRequestType_NUM);
+    coalSetupLatOutput();
 }
 
 GPUCoalescer::~GPUCoalescer()
 {
 }
+
+std::string
+GPUCoalescer::coalSafeName(const std::string &name) const
+{
+    std::string safe = name;
+    for (char &c : safe) {
+        if (c == '.' || c == '/' || c == ' ') {
+            c = '_';
+        }
+    }
+    return safe;
+}
+
+void
+GPUCoalescer::coalSetupLatOutput()
+{
+    if (m_coal_lat_dump_registered) {
+        return;
+    }
+    statistics::registerDumpCallback([this]() { coalDumpLatOutput(); });
+    m_coal_lat_dump_registered = true;
+}
+
+void
+GPUCoalescer::coalDumpLatOutput()
+{
+    const std::filesystem::path out_dir = simout.resolve("lat_run_out");
+    std::error_code ec;
+    std::filesystem::create_directories(out_dir, ec);
+    if (ec) {
+        return;
+    }
+
+    const std::string filename = "coal_lat_stats_" + coalSafeName(name()) + ".txt";
+    std::ofstream fout(out_dir / filename, std::ios::out | std::ios::app);
+    if (!fout.is_open()) {
+        return;
+    }
+
+    const double avg = coalLatTotalAgg.samples ?
+        static_cast<double>(coalLatTotalAgg.sum) / coalLatTotalAgg.samples : 0.0;
+    fout << "object: " << name() << "\n";
+    fout << "[GLOBAL]\n";
+    fout << "  accesses: " << coalLatTotalAgg.samples << "\n";
+    fout << "  total_latency: " << coalLatTotalAgg.sum << "\n";
+    fout << "  average_latency: " << avg << "\n";
+    fout << "  min_latency: " << coalLatTotalAgg.min << "\n";
+    fout << "  max_latency: " << coalLatTotalAgg.max << "\n";
+    fout << "  over_100: " << coalLatTotalAgg.over_100 << "\n";
+    fout << "  over_500: " << coalLatTotalAgg.over_500 << "\n";
+    fout << "  over_1000: " << coalLatTotalAgg.over_1000 << "\n";
+    fout << "  over_5000: " << coalLatTotalAgg.over_5000 << "\n";
+    fout << "[BY_TYPE]\n";
+    for (int i = 0; i < RubyRequestType_NUM; ++i) {
+        const auto &st = coalLatTypeAgg[i];
+        if (!st.samples) {
+            continue;
+        }
+        const double tavg = static_cast<double>(st.sum) / st.samples;
+        fout << "  type=" << RubyRequestType_to_string(static_cast<RubyRequestType>(i))
+             << " accesses=" << st.samples
+             << " total_latency=" << st.sum
+             << " avg_latency=" << tavg
+             << " min_latency=" << st.min
+             << " max_latency=" << st.max
+             << " over_100=" << st.over_100
+             << " over_500=" << st.over_500
+             << " over_1000=" << st.over_1000
+             << " over_5000=" << st.over_5000
+             << "\n";
+    }
+    fout << "----\n";
+}
+
 
 Port &
 GPUCoalescer::getPort(const std::string &if_name, PortID idx)
@@ -375,6 +455,11 @@ GPUCoalescer::resetStats()
         m_InitialToForwardDelayHist[i]->reset();
         m_ForwardToFirstResponseDelayHist[i]->reset();
         m_FirstResponseToCompletionDelayHist[i]->reset();
+    }
+
+    coalLatTotalAgg = {};
+    for (auto &st : coalLatTypeAgg) {
+        st = {};
     }
 }
 
@@ -585,6 +670,34 @@ GPUCoalescer::hitCallback(CoalescedRequest* crequest,
 
     RubyRequestType type = crequest->getRubyType();
 
+    auto update_lat_agg = [](CoalLatAgg &agg, uint64_t lat) {
+        agg.samples++;
+        agg.sum += lat;
+        if (agg.samples == 1) {
+            agg.min = lat;
+            agg.max = lat;
+        } else {
+            if (lat < agg.min) {
+                agg.min = lat;
+            }
+            if (lat > agg.max) {
+                agg.max = lat;
+            }
+        }
+        if (lat > 100) {
+            agg.over_100++;
+        }
+        if (lat > 500) {
+            agg.over_500++;
+        }
+        if (lat > 1000) {
+            agg.over_1000++;
+        }
+        if (lat > 5000) {
+            agg.over_5000++;
+        }
+    };
+
     DPRINTF(GPUCoalescer, "Got hitCallback for 0x%X\n", request_line_address);
 
     DPRINTF(RubyHitMiss, "GPU TCP Cache %s at %#x\n",
@@ -611,6 +724,19 @@ GPUCoalescer::hitCallback(CoalescedRequest* crequest,
         offset = getOffset(pkt->getAddr());
         pkt_size = pkt->getSize();
         request_address = pkt->getAddr();
+
+        uint64_t lat = 0;
+        auto it = pktIngressCycle.find(pkt);
+        if (it != pktIngressCycle.end()) {
+            lat = static_cast<uint64_t>(curCycle() - it->second);
+            pktIngressCycle.erase(it);
+        } else {
+            lat = static_cast<uint64_t>(curCycle() - crequest->getIssueTime());
+        }
+        update_lat_agg(coalLatTotalAgg, lat);
+        if (type >= 0 && type < RubyRequestType_NUM) {
+            update_lat_agg(coalLatTypeAgg[type], lat);
+        }
 
         // When the Ruby system is cooldown phase, the requests come from
         // the cache recorder. These requests do not get coalesced and
@@ -739,6 +865,7 @@ GPUCoalescer::makeRequest(PacketPtr pkt)
         // it's picked for coalescing process later in this cycle or in a
         // future cycle. Packets remaining is set to the number of excepted
         // requests from the instruction based on its exec_mask.
+        pktIngressCycle[pkt] = curCycle();
         uncoalescedTable.insertPacket(pkt);
         uncoalescedTable.insertReqType(pkt, getRequestType(pkt));
         uncoalescedTable.initPacketsRemaining(seq_num, num_packets);

@@ -51,10 +51,12 @@ def read_text_file(path):
 
 
 class LatRunOutAnalyzer:
-    def __init__(self, run_dir):
+    def __init__(self, run_dir, file_pattern="seq_lat_stats_*.txt", name="cpu"):
         self.run_dir = run_dir
         self.lat_dir = os.path.join(run_dir, "lat_run_out")
         self.files = []
+        self.file_pattern = file_pattern
+        self.name = name
         self.types = defaultdict(lambda: {
             "samples": 0,
             "sum": 0.0,
@@ -80,6 +82,12 @@ class LatRunOutAnalyzer:
         chunks = [c.strip() for c in text.split("----") if c.strip()]
         if not chunks:
             return []
+        # Some dumps append a final empty/zero block after resetStats.
+        # Use the last block that still contains type-level rows.
+        for chunk in reversed(chunks):
+            lines = chunk.splitlines()
+            if any(line.strip().startswith("type=") for line in lines):
+                return lines
         return chunks[-1].splitlines()
 
     def _parse_type_line(self, line):
@@ -94,7 +102,7 @@ class LatRunOutAnalyzer:
         return item
 
     def process(self):
-        self.files = sorted(glob.glob(os.path.join(self.lat_dir, "seq_lat_stats_*.txt")))
+        self.files = sorted(glob.glob(os.path.join(self.lat_dir, self.file_pattern)))
         if not self.files:
             return False
         for path in self.files:
@@ -139,6 +147,7 @@ class LatRunOutAnalyzer:
             return {}
         return {
             "samples": int(st["samples"]),
+            "sum": float(st["sum"]),
             "min": int(st["min"]) if st["min"] is not None else None,
             "max": int(st["max"]) if st["max"] is not None else None,
             "mean": st["sum"] / st["samples"],
@@ -170,7 +179,7 @@ class LatRunOutAnalyzer:
         return data
 
     def print_summary(self):
-        section_header("Latency Aggregate (lat_run_out)")
+        section_header(f"Latency Aggregate ({self.name})")
         print(color("source files", "1;34") + f": {len(self.files)}")
         total = self._metrics(self.total)
         if not total:
@@ -298,6 +307,8 @@ class FunctionalTestAnalyzer:
     EXEC_HINT_PATTERNS = ["begin simulation", "exiting @ tick", "exiting because", "sim_seconds", "final_tick"]
     RESULT_FAIL_PATTERNS = ["verification failed", "mismatch", "incorrect", "wrong answer", "error:"]
     RESULT_PASS_PATTERNS = ["pass", "passed", "success", "verification ok"]
+    RESULT_CHECK_FAIL_PATTERNS = ["result_check: fail"]
+    RESULT_CHECK_PASS_PATTERNS = ["result_check: pass"]
     CONFIG_OBJECT_HINTS = ["cpu", "gpu", "cu", "cache", "directory", "memory"]
 
     def __init__(self, run_dir):
@@ -460,13 +471,22 @@ class FunctionalTestAnalyzer:
 
     def _analyze_result_validation(self):
         all_text = self._combined_text(["simout", "simerr"])
+        marker_fail_ev = self._find_pattern_evidence(all_text, self.RESULT_CHECK_FAIL_PATTERNS, "simout/simerr")
+        if marker_fail_ev:
+            return self._mk_result(self.STATUS_FAIL, marker_fail_ev, "命中 RESULT_CHECK: FAIL 标记")
+        marker_pass_ev = self._find_pattern_evidence(all_text, self.RESULT_CHECK_PASS_PATTERNS, "simout/simerr")
+        if marker_pass_ev:
+            return self._mk_result(self.STATUS_PASS, marker_pass_ev, "命中 RESULT_CHECK: PASS 标记")
         fail_ev = self._find_pattern_evidence(all_text, self.RESULT_FAIL_PATTERNS, "simout/simerr")
         if fail_ev:
             return self._mk_result(self.STATUS_FAIL, fail_ev, "检测到 correctness/error 失败信号")
         pass_ev = self._find_pattern_evidence(all_text, self.RESULT_PASS_PATTERNS, "simout/simerr")
         if pass_ev:
             return self._mk_result(self.STATUS_PASS, pass_ev, "检测到 correctness/返回状态成功信号")
-        return self._mk_result(self.STATUS_UNKNOWN, [], "无统一 correctness 文本，保持 UNKNOWN")
+        exec_status = self.items.get("functional_execution", {}).get("status")
+        if exec_status == self.STATUS_PASS and not fail_ev and not marker_fail_ev:
+            return self._mk_result(self.STATUS_PASS, [], "功能执行已正常结束且未命中失败信号，按策略判定 PASS")
+        return self._mk_result(self.STATUS_UNKNOWN, [], "执行状态不明确且无统一 correctness 文本，保持 UNKNOWN")
 
     def _analyze_exception_check(self):
         all_text = self._combined_text(["simout", "simerr", "stats"])
@@ -525,7 +545,7 @@ class FunctionalTestAnalyzer:
 
 def main():
     parser = argparse.ArgumentParser(description="gem5 lat_run_out 聚合分析工具")
-    parser.add_argument("--run-dir", required=True, help="run目录，读取 lat_run_out/seq_lat_stats_*.txt")
+    parser.add_argument("--run-dir", required=True, help="run目录，读取 lat_run_out/{seq,coal}_lat_stats_*.txt")
     parser.add_argument("--output-md", help="分析markdown输出路径")
     parser.add_argument("--output-json", help="分析json输出路径")
     args = parser.parse_args()
@@ -535,21 +555,46 @@ def main():
     output_md = args.output_md or os.path.join(run_dir, "analyze.md")
     output_json = args.output_json or os.path.join(run_dir, "analyze.json")
 
-    analyzer = LatRunOutAnalyzer(run_dir)
+    cpu_analyzer = LatRunOutAnalyzer(run_dir, "seq_lat_stats_*.txt", "cpu")
+    gpu_analyzer = LatRunOutAnalyzer(run_dir, "coal_lat_stats_*.txt", "gpu")
     miss_analyzer = CacheMissRateAnalyzer(stats_file)
     func_analyzer = FunctionalTestAnalyzer(run_dir)
 
     captured = io.StringIO()
     with redirect_stdout(captured):
-        ok = analyzer.process()
+        cpu_ok = cpu_analyzer.process()
+        gpu_ok = gpu_analyzer.process()
+        ok = cpu_ok or gpu_ok
         if ok:
-            analyzer.print_summary()
+            if cpu_ok:
+                cpu_analyzer.print_summary()
+            else:
+                section_header("Latency Aggregate (cpu)")
+                print(color("无可用 seq_lat_stats_*.txt", "1;33"))
+            if gpu_ok:
+                gpu_analyzer.print_summary()
+            else:
+                section_header("Latency Aggregate (gpu)")
+                print(color("无可用 coal_lat_stats_*.txt", "1;33"))
+
+            cpu_ldst = cpu_analyzer.build_summary_data().get("ldst") if cpu_ok else None
+            gpu_ldst = gpu_analyzer.build_summary_data().get("ldst") if gpu_ok else None
+            cpu_samples = (cpu_ldst or {}).get("samples", 0)
+            gpu_samples = (gpu_ldst or {}).get("samples", 0)
+            total_samples = cpu_samples + gpu_samples
+            section_header("Latency Aggregate (ldst)")
+            if total_samples <= 0:
+                print(color("无可用 unified ldst 数据", "1;33"))
+            else:
+                total_sum = (cpu_ldst or {}).get("sum", 0.0) + (gpu_ldst or {}).get("sum", 0.0)
+                print(color("ldst_mean(weighted)", "1;34") + f": {total_sum / total_samples:.6f}")
+                print(color("samples(cpu/gpu/total)", "1;34") + f": {cpu_samples}/{gpu_samples}/{total_samples}")
             miss_analyzer.process()
             miss_analyzer.print_summary()
             func_analyzer.process()
             func_analyzer.print_summary()
         else:
-            print("\n" + color("解析失败：lat_run_out 下无可用 seq_lat_stats_*.txt", "1;31"))
+            print("\n" + color("解析失败：lat_run_out 下无可用 seq/coal 延迟统计文件", "1;31"))
 
     analysis_text = captured.getvalue()
     print(analysis_text, end="")
@@ -559,11 +604,44 @@ def main():
             f.write(strip_ansi(analysis_text))
         sys.exit(1)
 
-    summary = analyzer.build_summary_data()
+    cpu_summary = cpu_analyzer.build_summary_data() if cpu_ok else {}
+    gpu_summary = gpu_analyzer.build_summary_data() if gpu_ok else {}
+
+    cpu_ldst = cpu_summary.get("ldst")
+    gpu_ldst = gpu_summary.get("ldst")
+    cpu_samples = (cpu_ldst or {}).get("samples", 0)
+    gpu_samples = (gpu_ldst or {}).get("samples", 0)
+    total_samples = cpu_samples + gpu_samples
+
+    unified_ldst = None
+    if total_samples > 0:
+        cpu_sum = (cpu_ldst or {}).get("sum", 0.0)
+        gpu_sum = (gpu_ldst or {}).get("sum", 0.0)
+        unified_ldst = {
+            "samples": total_samples,
+            "sum": cpu_sum + gpu_sum,
+            "mean": (cpu_sum + gpu_sum) / total_samples,
+            "min": min([x for x in [(cpu_ldst or {}).get("min"), (gpu_ldst or {}).get("min")] if x is not None], default=None),
+            "max": max([x for x in [(cpu_ldst or {}).get("max"), (gpu_ldst or {}).get("max")] if x is not None], default=None),
+            "over_100": int((cpu_ldst or {}).get("over_100", 0) + (gpu_ldst or {}).get("over_100", 0)),
+            "over_500": int((cpu_ldst or {}).get("over_500", 0) + (gpu_ldst or {}).get("over_500", 0)),
+            "over_1000": int((cpu_ldst or {}).get("over_1000", 0) + (gpu_ldst or {}).get("over_1000", 0)),
+            "over_5000": int((cpu_ldst or {}).get("over_5000", 0) + (gpu_ldst or {}).get("over_5000", 0)),
+        }
+
+    summary = {
+        "cpu_ldst": cpu_ldst,
+        "gpu_ldst": gpu_ldst,
+        "ldst": unified_ldst,
+        "cpu": cpu_summary,
+        "gpu": gpu_summary,
+    }
     summary["meta"] = {
         "run_dir": run_dir,
         "lat_run_out_dir": os.path.join(run_dir, "lat_run_out"),
         "generated_at": datetime.now().isoformat(),
+        "cpu_files": cpu_analyzer.files,
+        "gpu_files": gpu_analyzer.files,
     }
     summary["cache_miss_rates"] = miss_analyzer.build_summary_data()
     summary["functional_tests"] = func_analyzer.build_summary_data()

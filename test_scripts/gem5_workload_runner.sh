@@ -11,16 +11,19 @@ usage() {
   cat <<'EOF'
 Usage:
   gem5_workload_runner.sh list
+  gem5_workload_runner.sh compile <workload|all>
   gem5_workload_runner.sh run <workload> [run_tag] [--profile <name> ...] [--debug-flags <csv>] [--debug-start <tick>]
   gem5_workload_runner.sh analyze <workload> <run_tag>
-  gem5_workload_runner.sh check <workload> <run_tag> [low high]
+  gem5_workload_runner.sh functional_check <workload> <run_tag>
+  gem5_workload_runner.sh latency_check <workload> <run_tag>
   gem5_workload_runner.sh all <workload> [run_tag] [low high] [--profile <name> ...] [--debug-flags <csv>] [--debug-start <tick>]
 
 Notes:
   - run_tag defaults to current time: YYYYMMDD-HHMMSS
   - run_dir = <base_run_root>/<workload>-<run_tag>
-  - analyze reads <run_dir>/lat_run_out/seq_lat_stats_*.txt
-  - check prints PASS/FAIL/UNKNOWN for ldst_mean and functional_tests (non-fatal)
+  - analyze reads <run_dir>/lat_run_out/{seq,coal}_lat_stats_*.txt
+  - functional_check prints PASS/FAIL/UNKNOWN for 5 functional tests
+  - latency_check prints PASS/FAIL/UNKNOWN for cpu_ldst_mean/gpu_ldst_mean/ldst_mean
   - Edit JSON only; avoid hardcoding args in commands.
 
 Run/all options:
@@ -130,6 +133,28 @@ extract_num_cpus_from_config_args() {
   echo ""
 }
 
+extract_num_cus_from_config_args() {
+  local cfg="$1"
+  read -r -a arr <<< "$cfg"
+  local i tok
+  for ((i=0; i<${#arr[@]}; i++)); do
+    tok="${arr[$i]}"
+    if [[ "$tok" == "-u" || "$tok" == "--num-compute-units" ]]; then
+      if (( i + 1 < ${#arr[@]} )); then
+        echo "${arr[$((i+1))]}"
+        return 0
+      fi
+    elif [[ "$tok" =~ ^-u[0-9]+$ ]]; then
+      echo "${tok#-u}"
+      return 0
+    elif [[ "$tok" == --num-compute-units=* ]]; then
+      echo "${tok#--num-compute-units=}"
+      return 0
+    fi
+  done
+  echo ""
+}
+
 inject_mt_threads_into_workload_args() {
   local workload_args="$1"
   local num_cpus="$2"
@@ -180,6 +205,69 @@ else:
 print(shlex.join(tokens))
 PY2
 }
+
+inject_num_cus_into_workload_args() {
+  local workload_args="$1"
+  local num_cus="$2"
+  if [[ -z "$num_cus" ]]; then
+    echo "$workload_args"
+    return 0
+  fi
+
+  python3 - "$workload_args" "$num_cus" <<'PY3'
+import shlex
+import sys
+
+workload_args = sys.argv[1]
+num_cus = sys.argv[2]
+
+if not workload_args.strip():
+    print(workload_args)
+    sys.exit(0)
+
+tokens = shlex.split(workload_args)
+
+def rewrite_options(opt_str: str) -> str:
+    opt_tokens = shlex.split(opt_str)
+    out = []
+    i = 0
+    while i < len(opt_tokens):
+        t = opt_tokens[i]
+        if t == "--num-cus":
+            i += 2 if i + 1 < len(opt_tokens) else 1
+            continue
+        if t.startswith("--num-cus="):
+            i += 1
+            continue
+        out.append(t)
+        i += 1
+    out += ["--num-cus", num_cus]
+    # If workload uses -np, scale it to num_cus * 64 so each block has ~64 real particles
+    num_cus_int = int(num_cus)
+    if num_cus_int > 0:
+        target_np = num_cus_int * 64
+        for j, t in enumerate(out):
+            if t == "-np" and j + 1 < len(out):
+                existing_np = int(out[j + 1])
+                if existing_np < target_np:
+                    out[j + 1] = str(target_np)
+                break
+    return shlex.join(out)
+
+if "--options" in tokens:
+    idx = tokens.index("--options")
+    if idx + 1 < len(tokens):
+        tokens[idx + 1] = rewrite_options(tokens[idx + 1])
+    else:
+        tokens += ["--num-cus", num_cus]
+else:
+    tokens += ["--options", shlex.join(["--num-cus", num_cus])]
+
+print(shlex.join(tokens))
+PY3
+}
+
+
 
 option_overridden() {
   # 判断某个 token 是否属于会被覆盖的关键选项（当前只处理 -u/-n 两组）
@@ -499,6 +587,12 @@ run_test() {
     workload_args="$(inject_mt_threads_into_workload_args "$workload_args" "$cfg_num_cpus")"
   fi
 
+  local cfg_num_cus
+  cfg_num_cus="$(extract_num_cus_from_config_args "$config_args")"
+  if [[ "$workload" == rodinia-* && -n "$cfg_num_cus" ]]; then
+    workload_args="$(inject_num_cus_into_workload_args "$workload_args" "$cfg_num_cus")"
+  fi
+
   echo "run_dir=${run_dir}"
   if [[ -n "$selected_profiles" ]]; then
     echo "profile=${selected_profiles}"
@@ -506,6 +600,7 @@ run_test() {
   echo "workload_args=${workload_args}"
   if [[ "$workload" == rodinia-* ]]; then
     echo "forwarded_mt_threads=${cfg_num_cpus:-unset} (as --mt-cpu-threads in --options)"
+    echo "forwarded_num_cus=${cfg_num_cus:-unset} (as --num-cus in --options)"
   fi
   if [[ -n "$resource_cpus" || -n "$resource_gpu_cus" ]]; then
     echo "resources=cpus:${resource_cpus} gpu_cus:${resource_gpu_cus} (from config_args)"
@@ -526,14 +621,71 @@ run_analyze() {
   "$GEM5_TEST" analyze "$run_dir"
 }
 
-run_check() {
+run_functional_check() {
   local workload="$1"
   local run_tag="$2"
-  local low="${3:-100}"
-  local high="${4:-150}"
   local run_dir
   run_dir="$(build_run_dir "$workload" "$run_tag")"
-  "$GEM5_TEST" check "$run_dir" "$low" "$high"
+  "$GEM5_TEST" functional_check "$run_dir"
+}
+
+run_latency_check() {
+  local workload="$1"
+  local run_tag="$2"
+  local run_dir
+  run_dir="$(build_run_dir "$workload" "$run_tag")"
+  "$GEM5_TEST" latency_check "$run_dir"
+}
+
+rodinia_compile_target() {
+  local workload="$1"
+  case "$workload" in
+    rodinia-btree) echo "hip_mod/b+tree" ;;
+    rodinia-bfs) echo "hip_mod/bfs" ;;
+    rodinia-dwt2d) echo "hip_mod/dwt2d" ;;
+    rodinia-gaussian) echo "hip_mod/gaussian" ;;
+    rodinia-hotspot) echo "hip_mod/hotspot" ;;
+    rodinia-lavaMD) echo "hip_mod/lavaMD" ;;
+    rodinia-nw) echo "hip_mod/nw" ;;
+    rodinia-particlefilter) echo "hip_mod/particlefilter" ;;
+    rodinia-pathfinder) echo "hip_mod/pathfinder" ;;
+    *) return 1 ;;
+  esac
+}
+
+run_compile() {
+  local workload="$1"
+  local compile_sh="${REPO_ROOT}/rodinia_hip/docker_compile.sh"
+  if [[ ! -x "$compile_sh" ]]; then
+    echo "compile script not found or not executable: $compile_sh"
+    return 1
+  fi
+
+  local target=""
+  if [[ "$workload" == rodinia-* ]]; then
+    if ! target="$(rodinia_compile_target "$workload")"; then
+      echo "unsupported rodinia workload for compile: $workload"
+      return 1
+    fi
+  else
+    echo "compile currently supports rodinia-* workloads only: $workload"
+    return 1
+  fi
+
+  echo "compile_target=${target}"
+  "$compile_sh" "$target"
+}
+
+list_rodinia_workloads() {
+  python3 - "$CONFIG_FILE" <<'PY'
+import json
+import sys
+
+cfg = json.load(open(sys.argv[1], "r"))
+for name in sorted(cfg.get("workloads", {}).keys()):
+    if name.startswith("rodinia-"):
+        print(name)
+PY
 }
 
 cmd="${1:-}"
@@ -541,7 +693,34 @@ case "$cmd" in
   list)
     list_workloads
     ;;
-  run|analyze|check|all)
+  compile)
+    workload="${2:-}"
+    if [[ -z "$workload" ]]; then
+      usage
+      exit 1
+    fi
+    if [[ "$workload" == "all" ]]; then
+      mapfile -t rodinia_workloads < <(list_rodinia_workloads)
+      if (( ${#rodinia_workloads[@]} == 0 )); then
+        echo "no rodinia workloads found in config: $CONFIG_FILE"
+        exit 1
+      fi
+
+      for w in "${rodinia_workloads[@]}"; do
+        echo "==> compile workload: ${w}"
+        run_compile "$w"
+      done
+    else
+      if ! workload_exists "$workload"; then
+        echo "unknown workload: $workload"
+        echo "available:"
+        list_workloads
+        exit 1
+      fi
+      run_compile "$workload"
+    fi
+    ;;
+  run|analyze|functional_check|latency_check|all|check)
     # 统一入口校验：workload 必填且必须在 JSON 中存在
     workload="${2:-}"
     if [[ -z "$workload" ]]; then
@@ -554,13 +733,32 @@ case "$cmd" in
       list_workloads
       exit 1
     fi
+    if [[ -n "${3:-}" && "$3" != --* ]]; then
+        run_tag="$3"
+        profile_start=4
+    else
+        run_tag="$(date +%Y%m%d-%H%M%S)"
+        profile_start=3
+    fi
     if [[ "$cmd" == "run" ]]; then
       # run: 仅执行测试
-      shift 2
-      run_tag="$(date +%Y%m%d-%H%M%S)"
-      if (($#)) && [[ "$1" != --* ]]; then
-        run_tag="$1"
-        shift
+      profile_tokens=()
+      if (( $# >= profile_start )); then
+        rem=("${@:$profile_start}")
+        i=0
+        while (( i < ${#rem[@]} )); do
+          if [[ "${rem[$i]}" != "--profile" ]]; then
+            echo "usage: $0 run <workload> [run_tag] [--profile <name> ...]"
+            exit 1
+          fi
+          i=$((i + 1))
+          if (( i >= ${#rem[@]} )); then
+            echo "missing value for --profile"
+            exit 1
+          fi
+          profile_tokens+=("${rem[$i]}")
+          i=$((i + 1))
+        done
       fi
       parse_run_options "$@"
       run_test "$workload" "$run_tag" "$PROFILE"
@@ -568,19 +766,34 @@ case "$cmd" in
       # analyze: 仅执行离线分析
       run_tag="${3:-$(date +%Y%m%d-%H%M%S)}"
       run_analyze "$workload" "$run_tag"
+    elif [[ "$cmd" == "functional_check" ]]; then
+      run_functional_check "$workload" "$run_tag"
+    elif [[ "$cmd" == "latency_check" ]]; then
+      run_latency_check "$workload" "$run_tag"
     elif [[ "$cmd" == "check" ]]; then
-      # check: 仅做阈值检查（可自定义 low/high）
-      run_tag="${3:-$(date +%Y%m%d-%H%M%S)}"
-      run_check "$workload" "$run_tag" "${4:-100}" "${5:-150}"
+      # 兼容旧命令：等价于 functional_check + latency_check
+      run_functional_check "$workload" "$run_tag"
+      echo
+      run_latency_check "$workload" "$run_tag"
     else
-      # all: 顺序执行 run -> analyze -> check
-      shift 2
-      run_tag="$(date +%Y%m%d-%H%M%S)"
-      low=100
-      high=150
-      if (($#)) && [[ "$1" != --* ]]; then
-        run_tag="$1"
-        shift
+      # all: 顺序执行 run -> analyze -> functional_check -> latency_check
+      profile_tokens=()
+      if (( $# >= profile_start )); then
+        rem=("${@:$profile_start}")
+        i=0
+        while (( i < ${#rem[@]} )); do
+          if [[ "${rem[$i]}" != "--profile" ]]; then
+            echo "usage: $0 all <workload> [run_tag] [--profile <name> ...]"
+            exit 1
+          fi
+          i=$((i + 1))
+          if (( i >= ${#rem[@]} )); then
+            echo "missing value for --profile"
+            exit 1
+          fi
+          profile_tokens+=("${rem[$i]}")
+          i=$((i + 1))
+        done
       fi
       if (($# >= 2)) && [[ "$1" != --* && "$2" != --* ]]; then
         low="$1"
@@ -590,7 +803,8 @@ case "$cmd" in
       parse_run_options "$@"
       run_test "$workload" "$run_tag" "$PROFILE"
       run_analyze "$workload" "$run_tag"
-      run_check "$workload" "$run_tag" "$low" "$high"
+      run_functional_check "$workload" "$run_tag"
+      run_latency_check "$workload" "$run_tag"
     fi
     ;;
   *)

@@ -485,14 +485,6 @@ Sequencer::recordMissLatency(SequencerRequest* srequest, bool llscSuccess,
     assert(curCycle() >= issued_time);
     Cycles total_lat = completion_time - issued_time;
 
-    if ((initialRequestTime != 0) && (initialRequestTime < issued_time)) {
-        // if the request was combined in the protocol with an earlier request
-        // for the same address, it is possible that it will return an
-        // initialRequestTime corresponding the earlier request.  Since Cycles
-        // is unsigned, we can't let this request get profiled below.
-
-        total_lat = Cycles(0);
-    }
 
     DPRINTFR(ProtocolTrace, "%15s %3s %10s%20s %6s>%-6s %s %d cycles\n",
              curTick(), m_version, "Seq", llscSuccess ? "Done" : "SC_Failed",

@@ -453,6 +453,19 @@ parser.add_argument(
     "0 keeps protocol defaults; >0 limits dequeues per cycle for all Ruby "
     "MessageBuffer instances.",
 )
+parser.add_argument(
+    "--stats-dump-mode",
+    type=str,
+    choices=["stage", "full"],
+    default="full",
+    help="Stats dump mode: 'stage' dumps+resets at intermediate events; 'full' keeps full-run aggregate stats (default).",
+)
+parser.add_argument(
+    "--single-stats-dump",
+    action="store_true",
+    default=False,
+    help="Deprecated alias for '--stats-dump-mode=full'.",
+)
 
 Ruby.define_options(parser)
 
@@ -460,6 +473,11 @@ Ruby.define_options(parser)
 GPUTLBOptions.tlb_options(parser)
 
 args = parser.parse_args()
+
+if args.single_stats_dump:
+    args.stats_dump_mode = "full"
+
+stage_stats_dump = (args.stats_dump_mode == "stage")
 
 # Get the resource if specified.
 if args.download_resource:
@@ -1099,21 +1117,25 @@ while True:
         print("breaking loop with checkpoint")
         break
     elif "GPU Kernel Completed" in exit_event.getCause():
-        print("GPU Kernel Completed dump and reset")
-        m5.stats.dump()
-        m5.stats.reset()
+        if stage_stats_dump:
+            print("GPU Kernel Completed dump and reset")
+            m5.stats.dump()
+            m5.stats.reset()
     elif "GPU Blit Kernel Completed" in exit_event.getCause():
-        print("GPU Blit Kernel Completed dump and reset")
-        m5.stats.dump()
-        m5.stats.reset()
+        if stage_stats_dump:
+            print("GPU Blit Kernel Completed dump and reset")
+            m5.stats.dump()
+            m5.stats.reset()
     elif "workbegin" in exit_event.getCause():
-        print("m5 work begin dump and reset")
-        m5.stats.dump()
-        m5.stats.reset()
+        if stage_stats_dump:
+            print("m5 work begin dump and reset")
+            m5.stats.dump()
+            m5.stats.reset()
     elif "workend" in exit_event.getCause():
-        print("m5 work end dump and reset")
-        m5.stats.dump()
-        m5.stats.reset()
+        if stage_stats_dump:
+            print("m5 work end dump and reset")
+            m5.stats.dump()
+            m5.stats.reset()
     else:
         print(f"Unknown exit event: {exit_event.getCause()}. Continuing...")
 

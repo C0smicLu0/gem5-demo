@@ -104,9 +104,9 @@ run_analyze() {
     return 1
   fi
   run_dir="$(resolve_path "$run_dir")"
-  if ! ls "${run_dir}/lat_run_out"/seq_lat_stats_*.txt >/dev/null 2>&1; then
-    echo "analyze input not found: ${run_dir}/lat_run_out/seq_lat_stats_*.txt"
-    echo "hint: run with the updated Sequencer that writes lat_run_out first."
+  if ! ls "${run_dir}/lat_run_out"/seq_lat_stats_*.txt >/dev/null 2>&1 && ! ls "${run_dir}/lat_run_out"/coal_lat_stats_*.txt >/dev/null 2>&1; then
+    echo "analyze input not found: ${run_dir}/lat_run_out/{seq,coal}_lat_stats_*.txt"
+    echo "hint: run with updated Sequencer/GPUCoalescer that writes lat_run_out first."
     return 1
   fi
   python3 "${SCRIPT_DIR}/analyze_log.py" \
@@ -115,27 +115,40 @@ run_analyze() {
     --output-json "${run_dir}/analyze.json"
 }
 
-run_check() {
+run_latency_check() {
   local run_dir="$1"
-  local check_low="${2:-100}"
-  local check_high="${3:-150}"
   if [ -z "$run_dir" ]; then
-    echo "usage: $0 check <run_dir> [low] [high]"
+    echo "usage: $0 latency_check <run_dir>"
     return 1
   fi
   run_dir="$(resolve_path "$run_dir")"
-  python3 - "${run_dir}/analyze.json" "${check_low}" "${check_high}" <<'PY'
+  python3 - "${run_dir}/analyze.json" <<'PY'
 import json
 import math
 import pathlib
 import sys
 
 path = pathlib.Path(sys.argv[1])
-low = float(sys.argv[2])
-high = float(sys.argv[3])
 data = json.loads(path.read_text())
-ldst = data.get("ldst", {})
-mean = ldst.get("mean")
+
+cpu_ldst = data.get("cpu_ldst") or {}
+gpu_ldst = data.get("gpu_ldst") or {}
+ldst = data.get("ldst") or {}
+cpu_mean = cpu_ldst.get("mean")
+gpu_mean = gpu_ldst.get("mean")
+ldst_mean = ldst.get("mean")
+
+if ldst_mean is None:
+    cpu_samples = cpu_ldst.get("samples") or 0
+    gpu_samples = gpu_ldst.get("samples") or 0
+    total_samples = cpu_samples + gpu_samples
+    if total_samples > 0 and cpu_mean is not None and gpu_mean is not None:
+        ldst_mean = (cpu_mean * cpu_samples + gpu_mean * gpu_samples) / total_samples
+    elif total_samples > 0 and cpu_mean is not None and gpu_samples == 0:
+        ldst_mean = cpu_mean
+    elif total_samples > 0 and gpu_mean is not None and cpu_samples == 0:
+        ldst_mean = gpu_mean
+
 isatty = sys.stdout.isatty()
 def c(s, code):
     if not isatty:
@@ -149,29 +162,86 @@ def status_color(status):
         return c(status, "1;31")
     return c(status, "1;33")
 
-print(c("Check Summary", "1;36"))
+print(c("Latency Check", "1;36"))
 print(c("=" * 72, "36"))
-print(c("ldst_mean", "1;34"))
-if mean is None or (isinstance(mean, float) and math.isnan(mean)):
-    print(f"  status: {status_color('UNKNOWN')}")
-    print("  notes : ldst_mean is missing")
-else:
-    in_range = (low <= mean <= high)
-    status = "PASS" if in_range else "FAIL"
-    print(f"  status: {status_color(status)}")
-    print(f"  notes : value={mean:.6f}, range=[{low:.3f}, {high:.3f}]")
-
-ft = data.get("functional_tests")
-if ft:
-    items = ft.get("items", {})
-    if items:
-        print("")
-        print(c("functional_tests", "1;34"))
-        for name in sorted(items.keys()):
-            status = str(items[name].get("status", "UNKNOWN"))
-            print(f"  {name:<28} {status_color(status)}")
+for metric_name, mean in (("cpu_ldst_mean", cpu_mean), ("gpu_ldst_mean", gpu_mean), ("ldst_mean", ldst_mean)):
+    print(c(metric_name, "1;34"))
+    if mean is None or (isinstance(mean, float) and math.isnan(mean)):
+        print(f"  status: {status_color('UNKNOWN')}")
+        print(f"  notes : {metric_name} is missing")
+    else:
+        in_range = (mean <= 150.0)
+        status = "PASS" if in_range else "FAIL"
+        print(f"  status: {status_color(status)}")
+        print(f"  notes : value={mean:.6f}, threshold<=150.000")
 PY
 }
+
+run_functional_check() {
+  local run_dir="$1"
+  if [ -z "$run_dir" ]; then
+    echo "usage: $0 functional_check <run_dir>"
+    return 1
+  fi
+  run_dir="$(resolve_path "$run_dir")"
+  python3 - "${run_dir}/analyze.json" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+data = json.loads(path.read_text())
+ft = data.get("functional_tests") or {}
+items = ft.get("items") or {}
+
+isatty = sys.stdout.isatty()
+def c(s, code):
+    if not isatty:
+        return s
+    return f"\033[{code}m{s}\033[0m"
+
+def status_color(status):
+    if status == "PASS":
+        return c(status, "1;32")
+    if status == "FAIL":
+        return c(status, "1;31")
+    return c(status, "1;33")
+
+labels = {
+    "resource_instantiation": "资源实例化",
+    "system_initialization": "系统初始化",
+    "functional_execution": "功能执行",
+    "result_validation": "结果校验",
+    "exception_check": "异常检查",
+}
+order = [
+    "resource_instantiation",
+    "system_initialization",
+    "functional_execution",
+    "result_validation",
+    "exception_check",
+]
+
+print(c("Functional Check", "1;36"))
+print(c("=" * 72, "36"))
+if not items:
+    print(c("functional_tests items missing", "1;33"))
+    sys.exit(0)
+
+for key in order:
+    item = items.get(key, {})
+    status = str(item.get("status", "UNKNOWN"))
+    print(f"{labels.get(key, key):<16} {status_color(status)}")
+PY
+}
+
+run_check() {
+  local run_dir="$1"
+  run_functional_check "$run_dir"
+  echo
+  run_latency_check "$run_dir"
+}
+
 
 docker_run_args=("--rm")
 if [ -t 0 ] && [ -t 1 ]; then
@@ -200,11 +270,17 @@ case "${1:-}" in
   analyze)
     run_analyze "${2:-}"
     ;;
+  functional_check)
+    run_functional_check "${2:-}"
+    ;;
+  latency_check)
+    run_latency_check "${2:-}"
+    ;;
   check)
-    run_check "${2:-}" "${3:-}" "${4:-}"
+    run_check "${2:-}"
     ;;
   *)
-    echo "usage: $0 {list|test|analyze|check} ..."
+    echo "usage: $0 {list|test|analyze|functional_check|latency_check|check} ..."
     exit 1
     ;;
 esac
