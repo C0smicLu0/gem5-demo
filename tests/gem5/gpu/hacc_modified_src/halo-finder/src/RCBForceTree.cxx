@@ -111,6 +111,34 @@ void configureHaccExecution(const HaccExecutionOptions& options)
 {
   haccExecution = options;
 }
+
+namespace {
+const size_t HACC_CPU_LOAD_WORDS = 4096;
+
+void
+haccCpuPrivateLoad(POSVEL_T *buffer, size_t workerStride, size_t worker,
+                   size_t iterations, bool debugLog)
+{
+  POSVEL_T *workerBuffer = buffer + worker * workerStride;
+  for (size_t i = 0; i < workerStride; ++i) {
+    workerBuffer[i] = static_cast<POSVEL_T>(i + worker);
+  }
+
+  for (size_t repeat = 0; repeat < iterations; ++repeat) {
+    for (size_t index = workerStride - 1; index > 0; --index) {
+      workerBuffer[index] =
+        workerBuffer[index - 1] * static_cast<POSVEL_T>(1.000001) +
+        static_cast<POSVEL_T>(repeat + index);
+    }
+    workerBuffer[0] += static_cast<POSVEL_T>(repeat);
+  }
+
+  if (debugLog) {
+    fprintf(stdout, "HACC CPU private worker %zu finished\n", worker);
+    fflush(stdout);
+  }
+}
+}
 #ifdef __HIPCC__
 #include <cudaUtil.h>
 
@@ -1591,25 +1619,55 @@ void RCBForceTree<TDPTS>::runInternodeForceTasks(
     bool start = false;
   };
 
-  const bool runGpu = !haccExecution.cpuOnly;
-  size_t activeCpuWorkers = haccExecution.gpuOnly ? 0 :
-    std::min(static_cast<size_t>(haccExecution.cpuWorkers), tasks.size());
-  if (haccExecution.cpuOnly && activeCpuWorkers == 0) {
-    activeCpuWorkers = 1;
+  if (haccExecution.cpuOnly) {
+    size_t activeCpuWorkers =
+      std::min(static_cast<size_t>(std::max(1, haccExecution.cpuWorkers)),
+               tasks.size());
+    std::atomic<size_t> nextTask(0);
+    std::vector<std::thread> cpuThreads;
+    cpuThreads.reserve(activeCpuWorkers);
+
+#if defined(GEM5_FUSION)
+    m5_work_begin(0, 0);
+#elif defined(GEM5_FS)
+    map_m5_mem();
+    m5_work_begin_addr(0, 0);
+#endif
+
+    for (size_t worker = 0; worker < activeCpuWorkers; ++worker) {
+      cpuThreads.emplace_back([this, &tasks, &lists, &nextTask]() {
+        while (true) {
+          size_t task = nextTask.fetch_add(1);
+          if (task >= tasks.size()) {
+            break;
+          }
+          runCpuForceTask(tasks[task], lists);
+        }
+      });
+    }
+    for (std::thread &thread : cpuThreads) {
+      thread.join();
+    }
+
+#if defined(GEM5_FUSION)
+    m5_work_end(0, 0);
+#elif defined(GEM5_FS)
+    m5_work_end_addr(0, 0);
+#endif
+    return;
   }
 
-  const size_t cpuInitialEnd = activeCpuWorkers;
-  const size_t gpuChunk = std::max(1, haccExecution.gpuCus);
-  const size_t gpuInitialEnd = runGpu ?
-    std::min(tasks.size(), cpuInitialEnd + gpuChunk) : cpuInitialEnd;
-  std::atomic<size_t> nextTask(gpuInitialEnd);
+  const bool runGpu = !haccExecution.cpuOnly;
+  const size_t activeCpuWorkers = haccExecution.gpuOnly ? 0 :
+    static_cast<size_t>(haccExecution.cpuWorkers);
   CpuStartGate gate;
   std::vector<std::thread> cpuThreads;
   cpuThreads.reserve(activeCpuWorkers);
+  std::vector<POSVEL_T> cpuLoadBuffer(activeCpuWorkers * HACC_CPU_LOAD_WORDS);
 
   for (size_t worker = 0; worker < activeCpuWorkers; ++worker) {
-    cpuThreads.emplace_back([this, &tasks, &lists, &nextTask, &gate,
-                             worker]() {
+    cpuThreads.emplace_back([&cpuLoadBuffer, &gate, worker,
+                             iterations = tasks.size()]() {
       {
         std::unique_lock<std::mutex> lock(gate.mutex);
         ++gate.readyWorkers;
@@ -1617,14 +1675,8 @@ void RCBForceTree<TDPTS>::runInternodeForceTasks(
         gate.workStart.wait(lock, [&gate] { return gate.start; });
       }
 
-      runCpuForceTask(tasks[worker], lists);
-      while (true) {
-        size_t task = nextTask.fetch_add(1);
-        if (task >= tasks.size()) {
-          break;
-        }
-        runCpuForceTask(tasks[task], lists);
-      }
+      haccCpuPrivateLoad(cpuLoadBuffer.data(), HACC_CPU_LOAD_WORDS, worker,
+                         iterations, haccExecution.debugLog);
     });
   }
 
@@ -1637,10 +1689,9 @@ void RCBForceTree<TDPTS>::runInternodeForceTasks(
 
   if (haccExecution.debugLog) {
     fprintf(stdout,
-            "HACC force tasks: total=%zu cpu-workers=%zu "
-            "cpu-initial=%zu gpu-initial=%zu\n",
-            tasks.size(), activeCpuWorkers, cpuInitialEnd,
-            gpuInitialEnd - cpuInitialEnd);
+            "HACC independent mode: force-tasks=%zu cpu-workers=%zu "
+            "gpu=%s\n",
+            tasks.size(), activeCpuWorkers, runGpu ? "enabled" : "off");
     fflush(stdout);
   }
 
@@ -1660,18 +1711,8 @@ void RCBForceTree<TDPTS>::runInternodeForceTasks(
   }
 
   if (runGpu) {
-    for (size_t task = cpuInitialEnd; task < gpuInitialEnd; ++task) {
+    for (size_t task = 0; task < tasks.size(); ++task) {
       runGpuForceTask(tasks[task], lists);
-    }
-    while (true) {
-      size_t begin = nextTask.fetch_add(gpuChunk);
-      if (begin >= tasks.size()) {
-        break;
-      }
-      size_t end = std::min(tasks.size(), begin + gpuChunk);
-      for (size_t task = begin; task < end; ++task) {
-        runGpuForceTask(tasks[task], lists);
-      }
     }
   }
 

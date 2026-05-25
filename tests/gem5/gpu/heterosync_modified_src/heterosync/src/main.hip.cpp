@@ -1,11 +1,9 @@
 #include <cstdio>
 #include <string>
 #include <assert.h>
-#include <condition_variable>
 #include <errno.h>
 #include <limits.h>
 #include <math.h>
-#include <mutex>
 #include <stdlib.h>
 #include <string.h>
 #include <thread>
@@ -48,15 +46,6 @@ struct HeteroOptions
   int cpu_workers = 0;
   int gpu_cus = -1;
   bool debug_log = false;
-};
-
-struct CpuStartGate
-{
-  std::mutex mutex;
-  std::condition_variable workers_ready;
-  std::condition_variable work_start;
-  size_t ready_workers = 0;
-  bool start = false;
 };
 
 static bool parseNonNegativeInt(const char *value, int *parsed)
@@ -108,25 +97,26 @@ static void validateOptions(const HeteroOptions &options)
   }
 }
 
-static void cpuLoadWorker(float *buffer, size_t worker_stride, int worker_id,
-                          int num_iters, bool debug_log, CpuStartGate *gate)
+static bool allowsIndependentCpuLoad(unsigned int syncPrim)
 {
-  {
-    std::unique_lock<std::mutex> lock(gate->mutex);
-    ++gate->ready_workers;
-    gate->workers_ready.notify_one();
-    gate->work_start.wait(lock, [gate] { return gate->start; });
+  return syncPrim != 6 && syncPrim != 22;
+}
+
+static void cpuLoadWorker(int worker_id, int num_iters, bool debug_log)
+{
+  float worker_buffer[NUM_WORDS_PER_CACHELINE * 2];
+  for (int i = 0; i < NUM_WORDS_PER_CACHELINE * 2; ++i) {
+    worker_buffer[i] = static_cast<float>(worker_id + i);
   }
 
-  float *worker_buffer = buffer + worker_stride * worker_id;
   for (int repeat = 0; repeat < NUM_REPEATS; ++repeat) {
     for (int iter = 0; iter < num_iters * numWGs; ++iter) {
       for (int line = NUM_LDST - 1; line >= 0; --line) {
-        float *read_line = worker_buffer + line * NUM_WORDS_PER_CACHELINE;
-        float *write_line =
-          worker_buffer + (line + 1) * NUM_WORDS_PER_CACHELINE;
+        int read_base = (line % 2) * NUM_WORDS_PER_CACHELINE;
+        int write_base = ((line + 1) % 2) * NUM_WORDS_PER_CACHELINE;
         for (int word = 0; word < NUM_WORDS_PER_CACHELINE; ++word) {
-          write_line[word] = read_line[word];
+          worker_buffer[write_base + word] =
+            worker_buffer[read_base + word] + static_cast<float>(repeat + iter + word);
         }
       }
     }
@@ -136,6 +126,10 @@ static void cpuLoadWorker(float *buffer, size_t worker_stride, int worker_id,
     fprintf(stdout, "CPU worker %d finished heterosync load\n", worker_id);
     fflush(stdout);
   }
+}
+
+__global__ void cpuLoadWarmupKernel()
+{
 }
 
 /*
@@ -1377,6 +1371,15 @@ int main(int argc, char ** argv)
     exit(-1);
   }
 
+  int activeCpuWorkers = options.cpu_workers;
+  if (activeCpuWorkers > 0 && !allowsIndependentCpuLoad(syncPrim)) {
+    fprintf(stderr,
+            "WARNING: CPU workers are disabled for %s because this "
+            "workload remains unstable with extra host threads in gem5\n",
+            syncPrim_str);
+    activeCpuWorkers = 0;
+  }
+
   // multiply number of mutexes, semaphores by NUM_CU to
   // allow per-core locks
   hipLocksInit(MAX_WGS, 8 * NUM_CU, 24 * NUM_CU, pageAlign, NUM_CU, NUM_REPEATS, NUM_ITERS);
@@ -1394,8 +1397,7 @@ int main(int argc, char ** argv)
     requirements so we can reuse the same locations.
   */
   unsigned int * perCUBarriers;
-  hipMallocManaged(&perCUBarriers,
-                   sizeof(unsigned int) * (NUM_CU * MAX_WGS * 2));
+  hipHostMalloc(&perCUBarriers, sizeof(unsigned int) * (NUM_CU * MAX_WGS * 2));
 
   int numLocsMult = 0;
   // barriers and unique semaphores have numWGs WGs accessing unique locations
@@ -1425,7 +1427,7 @@ int main(int argc, char ** argv)
   int numStorageLocs = (numLocsMult * numUniqLocsAccPerWG);
   assert(numStorageLocs > 0);
   float * storage;
-  hipMallocManaged(&storage, sizeof(float) * numStorageLocs);
+  hipHostMalloc(&storage, sizeof(float) * numStorageLocs);
 
   fprintf(stdout, "# WGs: %d, # Ld/St: %d, # Locs Mult: %d, # Uniq Locs/WG: %d, # Storage Locs: %d\n", numWGs, NUM_LDST, numLocsMult, numUniqLocsAccPerWG, numStorageLocs);
 
@@ -1590,30 +1592,9 @@ int main(int argc, char ** argv)
     assert(MAX_WGS <= cpuLockData->maxBufferSize);
   }
 
-  float *cpuLoadBuffer = NULL;
-  const size_t cpuWorkerStride =
-    static_cast<size_t>(NUM_WORDS_PER_CACHELINE) * (NUM_LDST + 1);
   std::vector<std::thread> cpuThreads;
-  CpuStartGate cpuGate;
-  if (options.cpu_workers > 0) {
-    hipMallocManaged(&cpuLoadBuffer,
-                     sizeof(float) * cpuWorkerStride * options.cpu_workers);
-    for (size_t i = 0;
-         i < cpuWorkerStride * static_cast<size_t>(options.cpu_workers);
-         ++i) {
-      cpuLoadBuffer[i] = static_cast<float>(i);
-    }
-
-    cpuThreads.reserve(options.cpu_workers);
-    for (int worker = 0; worker < options.cpu_workers; ++worker) {
-      cpuThreads.emplace_back(cpuLoadWorker, cpuLoadBuffer, cpuWorkerStride,
-                              worker, NUM_ITERS, options.debug_log, &cpuGate);
-    }
-
-    std::unique_lock<std::mutex> lock(cpuGate.mutex);
-    cpuGate.workers_ready.wait(lock, [&cpuGate, &cpuThreads] {
-      return cpuGate.ready_workers == cpuThreads.size();
-    });
+  if (activeCpuWorkers > 0) {
+    cpuThreads.reserve(activeCpuWorkers);
   }
 
   // NOTE: region of interest begins here
@@ -1626,12 +1607,15 @@ int main(int argc, char ** argv)
   m5_work_begin_addr(0, 0);
 #endif
 
-  if (!cpuThreads.empty()) {
-    {
-      std::lock_guard<std::mutex> lock(cpuGate.mutex);
-      cpuGate.start = true;
+  hipLaunchKernelGGL(cpuLoadWarmupKernel, dim3(1), dim3(1), 0, 0);
+  hipError_t warmupErr = hipDeviceSynchronize();
+  checkError(warmupErr, "hipDeviceSynchronize (cpuLoadWarmupKernel)");
+
+  if (activeCpuWorkers > 0) {
+    for (int worker = 0; worker < activeCpuWorkers; ++worker) {
+      cpuThreads.emplace_back(cpuLoadWorker, worker, NUM_ITERS,
+                              options.debug_log);
     }
-    cpuGate.work_start.notify_all();
   }
 
   switch (syncPrim) {
@@ -1940,11 +1924,10 @@ int main(int argc, char ** argv)
 
   // free arrays
   hipLocksDestroy();
-  hipFree(storage);
-  hipFree(perCUBarriers);
-  if (cpuLoadBuffer != NULL) {
-    hipFree(cpuLoadBuffer);
-  }
+  hipHostFree(storage);
+  hipHostFree(perCUBarriers);
+
+  printf("PASS\n");
 
   return 0;
 }

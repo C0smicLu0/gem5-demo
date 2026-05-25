@@ -55,6 +55,7 @@ struct SquareOptions
     size_t elements = 1000000;
     int cpu_workers = 0;
     int gpu_cus = -1;
+    int cpu_max_percent = 10;
     bool cpu_only = false;
     bool gpu_only = false;
     bool debug_log = false;
@@ -74,6 +75,8 @@ usage(const char *program)
             "  --cpu-workers N  CPU worker thread count. Default: 0.\n"
             "  --gpu-cus N      GPU CU weight for CPU+GPU range split.\n"
             "  --elements N     Number of input elements. Default: 1000000.\n"
+            "  --cpu-max-percent N\n"
+            "                   Maximum total CPU element share. Default: 10.\n"
             "  --cpu-only       Run all element work on CPU workers.\n"
             "  --gpu-only       Run all element work on the GPU.\n"
             "  --debug-log      Print range assignment and completion logs.\n",
@@ -134,6 +137,16 @@ parse_options(int argc, char **argv, SquareOptions *options)
             if (++arg >= argc ||
                 !parse_size_value(argv[arg], &options->elements)) {
                 fprintf(stderr, "--elements requires a positive integer\n");
+                usage(argv[0]);
+                exit(EXIT_FAILURE);
+            }
+        } else if (strcmp(argv[arg], "--cpu-max-percent") == 0) {
+            if (++arg >= argc ||
+                !parse_int_value(argv[arg], &options->cpu_max_percent) ||
+                options->cpu_max_percent <= 0 ||
+                options->cpu_max_percent > 100) {
+                fprintf(stderr,
+                        "--cpu-max-percent requires an integer in [1, 100]\n");
                 usage(argv[0]);
                 exit(EXIT_FAILURE);
             }
@@ -246,7 +259,20 @@ gpu_range_end(const SquareOptions &options)
     if (gpu_end == 0) {
         gpu_end = 1;
     }
-    return static_cast<size_t>(gpu_end);
+
+    size_t split_end = static_cast<size_t>(gpu_end);
+    size_t cpu_elements = options.elements - split_end;
+    size_t max_cpu_elements =
+        (options.elements * static_cast<size_t>(options.cpu_max_percent)) /
+        100;
+    if (max_cpu_elements == 0) {
+        max_cpu_elements = 1;
+    }
+    if (cpu_elements > max_cpu_elements) {
+        split_end = options.elements - max_cpu_elements;
+    }
+
+    return split_end;
 }
 
 int
@@ -292,16 +318,10 @@ main(int argc, char *argv[])
     if (options.debug_log) {
         fprintf(stdout,
                 "Square split: elements=%zu gpu=[0, %zu) "
-                "cpu_workers=%zu cpu=[%zu, %zu)\n",
+                "cpu_workers=%zu cpu=[%zu, %zu) cpu_max_percent=%d\n",
                 options.elements, gpu_end, cpu_ranges.size(),
-                cpu_range.begin, cpu_range.end);
+                cpu_range.begin, cpu_range.end, options.cpu_max_percent);
         fflush(stdout);
-    }
-
-    for (size_t worker = 0; worker < cpu_ranges.size(); ++worker) {
-        cpu_threads.emplace_back(cpu_square_range, C_h, A_h,
-                                 cpu_ranges[worker], static_cast<int>(worker),
-                                 options.debug_log);
     }
 
 #if defined(GEM5_FUSION)
@@ -311,6 +331,12 @@ main(int argc, char *argv[])
     m5_work_begin_addr(0, 0);
 #endif
 
+    for (size_t worker = 0; worker < cpu_ranges.size(); ++worker) {
+        cpu_threads.emplace_back(cpu_square_range, C_h, A_h,
+                                 cpu_ranges[worker], static_cast<int>(worker),
+                                 options.debug_log);
+    }
+
     if (run_gpu) {
         printf("info: launch 'vector_square' kernel\n");
         hipLaunchKernelGGL(vector_square, dim3(blocks), dim3(threads_per_block),
@@ -318,8 +344,18 @@ main(int argc, char *argv[])
         CHECK(hipGetLastError());
     }
 
+    if (options.debug_log) {
+        fprintf(stdout, "Before CPU workers join\n");
+        fflush(stdout);
+    }
+
     for (std::thread &thread : cpu_threads) {
         thread.join();
+    }
+
+    if (options.debug_log) {
+        fprintf(stdout, "CPU workers joined\n");
+        fflush(stdout);
     }
 
     if (run_gpu) {

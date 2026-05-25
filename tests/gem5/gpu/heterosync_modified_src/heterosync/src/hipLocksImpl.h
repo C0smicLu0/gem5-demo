@@ -8,7 +8,7 @@ hipError_t hipLocksInit(const int maxWGsPerKernel, const int numMutexes,
   hipError_t hipErr = hipGetLastError();
   checkError(hipErr, "Start hipLocksInit");
 
-  hipMallocManaged(&cpuLockData, sizeof(hipLockData_t));
+  hipHostMalloc(&cpuLockData, sizeof(hipLockData_t));
 
   if (maxWGsPerKernel <= 0)       return hipErrorInitializationError;
   if (numMutexes <= 0)            return hipErrorInitializationError;
@@ -28,19 +28,13 @@ hipError_t hipLocksInit(const int maxWGsPerKernel, const int numMutexes,
   cpuLockData->mutexCount             = numMutexes;
   cpuLockData->semaphoreCount         = numSemaphores;
 
-  hipMallocManaged(&cpuLockData->barrierBuffers,
-                   sizeof(unsigned int) * cpuLockData->arrayStride * 2);
+  hipHostMalloc(&cpuLockData->barrierBuffers,   sizeof(unsigned int) * cpuLockData->arrayStride * 2);
 
-  hipMallocManaged(&cpuLockData->mutexBuffers,
-                   sizeof(int) * cpuLockData->arrayStride *
-                   cpuLockData->mutexCount);
-  hipMallocManaged(&cpuLockData->mutexBufferHeads,
-                   sizeof(unsigned int) * cpuLockData->mutexCount);
-  hipMallocManaged(&cpuLockData->mutexBufferTails,
-                   sizeof(unsigned int) * cpuLockData->mutexCount);
+  hipHostMalloc(&cpuLockData->mutexBuffers,     sizeof(int) * cpuLockData->arrayStride * cpuLockData->mutexCount);
+  hipHostMalloc(&cpuLockData->mutexBufferHeads, sizeof(unsigned int) * cpuLockData->mutexCount);
+  hipHostMalloc(&cpuLockData->mutexBufferTails, sizeof(unsigned int) * cpuLockData->mutexCount);
 
-  hipMallocManaged(&cpuLockData->semaphoreBuffers,
-                   sizeof(unsigned int) * 4 * cpuLockData->semaphoreCount);
+  hipHostMalloc(&cpuLockData->semaphoreBuffers, sizeof(unsigned int) * 4 * cpuLockData->semaphoreCount);
 
   hipErr = hipGetLastError();
   checkError(hipErr, "Before memsets");
@@ -87,14 +81,13 @@ hipError_t hipLocksInit(const int maxWGsPerKernel, const int numMutexes,
 hipError_t hipLocksDestroy()
 {
   if (cpuLockData == NULL) { return hipErrorInitializationError; }
-  hipFree(cpuLockData->barrierBuffers);
-  hipFree(cpuLockData->mutexBuffers);
-  hipFree(cpuLockData->mutexBufferHeads);
-  hipFree(cpuLockData->mutexBufferTails);
+  hipHostFree(cpuLockData->mutexBuffers);
+  hipHostFree(cpuLockData->mutexBufferHeads);
+  hipHostFree(cpuLockData->mutexBufferTails);
 
-  hipFree(cpuLockData->semaphoreBuffers);
+  hipHostFree(cpuLockData->semaphoreBuffers);
 
-  hipFree(cpuLockData);
+  hipHostFree(cpuLockData);
 
   return hipSuccess;
 }

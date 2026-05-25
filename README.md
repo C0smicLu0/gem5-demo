@@ -23,7 +23,7 @@ Use the provided build script:
 ./demo_build.sh
 ```
 
-This script builds the required gem5 binary for the demo.
+This script builds the required gem5 binary for the demo and precompiles the test file.
 
 # Test
 

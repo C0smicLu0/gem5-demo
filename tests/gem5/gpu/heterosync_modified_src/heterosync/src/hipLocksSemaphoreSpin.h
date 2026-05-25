@@ -12,16 +12,13 @@ inline __host__ hipError_t hipSemaphoreCreateSpin(hipSemaphore_t * const handle,
   // Here we set the initial value to be count+1, this allows us to do an
   // atomicExch(sem, 0) and basically use the semaphore value as both a
   // lock and a semaphore.
-  unsigned int initialValue = (count + 1);
+  unsigned int initialValue = (count + 1), zero = 0;
   *handle = semaphoreNumber;
   for (int id = 0; id < NUM_CU; ++id) { // need to set these values for all CUs
-    unsigned int * const buffer =
-      &(cpuLockData->semaphoreBuffers[(semaphoreNumber * 4 * NUM_CU) +
-                                      (id * 4)]);
-    buffer[0] = initialValue;
-    buffer[1] = 0;
-    buffer[2] = 0;
-    buffer[3] = initialValue;
+    hipMemcpy(&(cpuLockData->semaphoreBuffers[((semaphoreNumber * 4 * NUM_CU) + (id * 4))]), &initialValue, sizeof(initialValue), hipMemcpyHostToDevice);
+    hipMemcpy(&(cpuLockData->semaphoreBuffers[((semaphoreNumber * 4 * NUM_CU) + (id * 4)) + 1]), &zero, sizeof(zero), hipMemcpyHostToDevice);
+    hipMemcpy(&(cpuLockData->semaphoreBuffers[((semaphoreNumber * 4 * NUM_CU) + (id * 4)) + 2]), &zero, sizeof(zero), hipMemcpyHostToDevice);
+    hipMemcpy(&(cpuLockData->semaphoreBuffers[((semaphoreNumber * 4 * NUM_CU) + (id * 4)) + 3]), &initialValue, sizeof(initialValue), hipMemcpyHostToDevice);
   }
   return hipSuccess;
 }
