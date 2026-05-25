@@ -65,17 +65,17 @@
 #include "util.h"
 #include <fstream>
 
-static int *
-managed_csr_array(size_t count, const char *name)
+static inline void
+append_tuple_checked(CooTuple *tuple_array, int &cnt, int capacity,
+                     const CooTuple &temp, const char *parser_name)
 {
-    void *ptr = NULL;
-    hipError_t err = hipMallocManaged(&ptr, count * sizeof(int));
-    if (err != hipSuccess) {
-        fprintf(stderr, "hipMallocManaged failed for %s: %s\n", name,
-                hipGetErrorString(err));
+    if (cnt >= capacity) {
+        fprintf(stderr,
+                "ERROR: %s tuple_array overflow cnt=%d capacity=%d\n",
+                parser_name, cnt, capacity);
         exit(1);
     }
-    return (int *)ptr;
+    tuple_array[cnt++] = temp;
 }
 
 bool doCompare(CooTuple elem1, CooTuple elem2)
@@ -187,7 +187,8 @@ csr_array *parseMetis(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool di
                 temp.col = tail - 1;
                 temp.val = weight;
 
-                tuple_array[cnt++] = temp;
+                append_tuple_checked(tuple_array, cnt, num_edges, temp,
+                                     "parseMetis");
 
                 pch = strtok(NULL, " ,.-");
 
@@ -211,9 +212,9 @@ csr_array *parseMetis(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool di
     }
 #endif
 
-    int *row_array = managed_csr_array(num_nodes + 1, "row_array");
-    int *col_array = managed_csr_array(num_edges, "col_array");
-    int *data_array = managed_csr_array(num_edges, "data_array");
+    int *row_array = (int *)malloc((num_nodes + 1) * sizeof(int));
+    int *col_array = (int *)malloc(num_edges * sizeof(int));
+    int *data_array = (int *)malloc(num_edges * sizeof(int));
 
     int row_cnt = 0;
     int prev = -1;
@@ -235,6 +236,7 @@ csr_array *parseMetis(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool di
     csr->row_array = row_array;
     csr->col_array = col_array;
     csr->data_array = data_array;
+
     free(tuple_array);
     free(line);
     fclose(stream);
@@ -291,12 +293,14 @@ csr_array *parseCOO(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool dire
             temp.row = head - 1;
             temp.col = tail - 1;
             temp.val = weight;
-            tuple_array[cnt++] = temp;
+            append_tuple_checked(tuple_array, cnt, num_edges, temp,
+                                 "parseCOO");
             if (!directed) {
                 temp.row = tail - 1;
                 temp.col = head - 1;
                 temp.val = weight;
-                tuple_array[cnt++] = temp;
+                append_tuple_checked(tuple_array, cnt, num_edges, temp,
+                                     "parseCOO");
             }
 
 #ifdef VERBOSE
@@ -318,9 +322,9 @@ csr_array *parseCOO(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool dire
     }
 #endif
 
-    int *row_array = managed_csr_array(num_nodes + 1, "row_array");
-    int *col_array = managed_csr_array(num_edges, "col_array");
-    int *data_array = managed_csr_array(num_edges, "data_array");
+    int *row_array = (int *)malloc((num_nodes + 1) * sizeof(int));
+    int *col_array = (int *)malloc(num_edges * sizeof(int));
+    int *data_array = (int *)malloc(num_edges * sizeof(int));
 
     int row_cnt = 0;
     int prev = -1;
@@ -337,6 +341,7 @@ csr_array *parseCOO(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool dire
     }
 
     row_array[row_cnt] = idx;
+
     free(line);
     fclose(stream);
     free(tuple_array);
@@ -409,7 +414,8 @@ double_edges *parseMetis_doubleEdge(char* tmpchar, int *p_num_nodes, int *p_num_
                 temp.col = tail - 1;
                 temp.val = weight;
 
-                tuple_array[cnt++] = temp;
+                append_tuple_checked(tuple_array, cnt, num_edges, temp,
+                                     "parseMetis_doubleEdge");
 
                 pch = strtok(NULL, " ,.-");
             }
@@ -501,12 +507,14 @@ double_edges *parseCOO_doubleEdge(char* tmpchar, int *p_num_nodes, int *p_num_ed
             temp.row = head - 1;
             temp.col = tail - 1;
             temp.val = weight;
-            tuple_array[cnt++] = temp;
+            append_tuple_checked(tuple_array, cnt, num_edges, temp,
+                                 "parseCOO_doubleEdge");
             if (!directed) {
                 temp.row = tail - 1;
                 temp.col = head - 1;
                 temp.val = weight;
-                tuple_array[cnt++] = temp;
+                append_tuple_checked(tuple_array, cnt, num_edges, temp,
+                                     "parseCOO_doubleEdge");
             }
 
 #ifdef VERBOSE
@@ -610,13 +618,15 @@ csr_array *parseMM(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool direc
             temp.row = head - 1;
             temp.col = tail - 1;
             temp.val = weight;
-            tuple_array[cnt++] = temp;
+            append_tuple_checked(tuple_array, cnt, num_edges, temp,
+                                 "parseMM");
 
             if (!directed) {
                 temp.row = tail - 1;
                 temp.col = head - 1;
                 temp.val = weight;
-                tuple_array[cnt++] = temp;
+                append_tuple_checked(tuple_array, cnt, num_edges, temp,
+                                     "parseMM");
             }
 
 #ifdef VERBOSE
@@ -634,9 +644,9 @@ csr_array *parseMM(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool direc
     }
 #endif
 
-    int *row_array = managed_csr_array(num_nodes + 1, "row_array");
-    int *col_array = managed_csr_array(num_edges, "col_array");
-    int *data_array = managed_csr_array(num_edges, "data_array");
+    int *row_array = (int *)malloc((num_nodes + 1) * sizeof(int));
+    int *col_array = (int *)malloc(num_edges * sizeof(int));
+    int *data_array = (int *)malloc(num_edges * sizeof(int));
 
     int row_cnt = 0;
     int prev = -1;
@@ -696,7 +706,7 @@ csr_array *parseMetis_transpose(char* tmpchar, int *p_num_nodes, int *p_num_edge
 
             sscanf(line, "%d %d", p_num_nodes, p_num_edges);
 
-            col_cnt = managed_csr_array(*p_num_nodes, "col_cnt");
+            col_cnt = (int *)malloc(*p_num_nodes * sizeof(int));
             if (!col_cnt) {
                 printf("memory allocation failed for col_cnt\n");
                 exit(1);
@@ -743,7 +753,8 @@ csr_array *parseMetis_transpose(char* tmpchar, int *p_num_nodes, int *p_num_edge
                             "    Check if graph is undirected Metis format\n", tmpchar);
                     exit(1);
                 }
-                tuple_array[cnt++] = temp;
+                append_tuple_checked(tuple_array, cnt, num_edges, temp,
+                                     "parseMetis_transpose");
 
                 pch = strtok(NULL, " ,.-");
             }
@@ -766,9 +777,9 @@ csr_array *parseMetis_transpose(char* tmpchar, int *p_num_nodes, int *p_num_edge
     }
 #endif
 
-    int *row_array = managed_csr_array(num_nodes + 1, "row_array");
-    int *col_array = managed_csr_array(num_edges, "col_array");
-    int *data_array = managed_csr_array(num_edges, "data_array");
+    int *row_array = (int *)malloc((num_nodes + 1) * sizeof(int));
+    int *col_array = (int *)malloc(num_edges * sizeof(int));
+    int *data_array = (int *)malloc(num_edges * sizeof(int));
 
     int row_cnt = 0;
     int prev = -1;
@@ -851,12 +862,14 @@ csr_array *parseCOO_transpose(char* tmpchar, int *p_num_nodes, int *p_num_edges,
             temp.val = weight;
             temp.row = tail - 1;
             temp.col = head - 1;
-            tuple_array[cnt++] = temp;
+            append_tuple_checked(tuple_array, cnt, num_edges, temp,
+                                 "parseCOO_transpose");
             if (!directed) {
                 temp.val = weight;
                 temp.row = tail - 1;
                 temp.col = head - 1;
-                tuple_array[cnt++] = temp;
+                append_tuple_checked(tuple_array, cnt, num_edges, temp,
+                                     "parseCOO_transpose");
             }
 
 #ifdef VERBOSE
@@ -878,9 +891,9 @@ csr_array *parseCOO_transpose(char* tmpchar, int *p_num_nodes, int *p_num_edges,
     }
 #endif
 
-    int *row_array = managed_csr_array(num_nodes + 1, "row_array");
-    int *col_array = managed_csr_array(num_edges, "col_array");
-    int *data_array = managed_csr_array(num_edges, "data_array");
+    int *row_array = (int *)malloc((num_nodes + 1) * sizeof(int));
+    int *col_array = (int *)malloc(num_edges * sizeof(int));
+    int *data_array = (int *)malloc(num_edges * sizeof(int));
 
     int row_cnt = 0;
     int prev = -1;

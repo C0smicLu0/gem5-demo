@@ -85,11 +85,9 @@ Hal Finkel (hfinkel@anl.gov)
 #include "Partition.h"
 
 #include <atomic>
-#include <condition_variable>
 #include <cstring>
 #include <cstdio>
 #include <ctime>
-#include <mutex>
 #include <stdexcept>
 #include <thread>
 #include <assert.h>
@@ -113,28 +111,34 @@ void configureHaccExecution(const HaccExecutionOptions& options)
 }
 
 namespace {
-const size_t HACC_CPU_LOAD_WORDS = 4096;
+const size_t HACC_CPU_LOAD_WORDS = 2048;
 
 void
-haccCpuPrivateLoad(POSVEL_T *buffer, size_t workerStride, size_t worker,
-                   size_t iterations, bool debugLog)
+haccCpuSharedInputLoad(const POSVEL_T *x, const POSVEL_T *y,
+                       const POSVEL_T *z, const POSVEL_T *mass,
+                       ID_T particleCount, POSVEL_T *scratch,
+                       size_t workerStride, size_t worker,
+                       size_t iterations, bool debugLog)
 {
-  POSVEL_T *workerBuffer = buffer + worker * workerStride;
-  for (size_t i = 0; i < workerStride; ++i) {
-    workerBuffer[i] = static_cast<POSVEL_T>(i + worker);
+  POSVEL_T *workerScratch = scratch + worker * workerStride;
+  if (particleCount <= 0) {
+    return;
   }
 
   for (size_t repeat = 0; repeat < iterations; ++repeat) {
-    for (size_t index = workerStride - 1; index > 0; --index) {
-      workerBuffer[index] =
-        workerBuffer[index - 1] * static_cast<POSVEL_T>(1.000001) +
-        static_cast<POSVEL_T>(repeat + index);
+    for (size_t index = 0; index < workerStride; ++index) {
+      ID_T particle =
+        static_cast<ID_T>((repeat + index + worker) % particleCount);
+      workerScratch[index] =
+        x[particle] * static_cast<POSVEL_T>(0.25) +
+        y[particle] * static_cast<POSVEL_T>(0.25) +
+        z[particle] * static_cast<POSVEL_T>(0.25) +
+        mass[particle] * static_cast<POSVEL_T>(0.25);
     }
-    workerBuffer[0] += static_cast<POSVEL_T>(repeat);
   }
 
   if (debugLog) {
-    fprintf(stdout, "HACC CPU private worker %zu finished\n", worker);
+    fprintf(stdout, "HACC CPU shared-input worker %zu finished\n", worker);
     fflush(stdout);
   }
 }
@@ -1606,18 +1610,9 @@ void RCBForceTree<TDPTS>::runInternodeForceTasks(
     const std::vector<ForceTask> &tasks,
     const std::vector<InteractionList> &lists)
 {
-  if (tasks.empty()) {
+  if (tasks.empty() && haccExecution.cpuWorkers <= 0) {
     return;
   }
-
-  struct CpuStartGate
-  {
-    std::mutex mutex;
-    std::condition_variable workersReady;
-    std::condition_variable workStart;
-    size_t readyWorkers = 0;
-    bool start = false;
-  };
 
   if (haccExecution.cpuOnly) {
     size_t activeCpuWorkers =
@@ -1660,38 +1655,19 @@ void RCBForceTree<TDPTS>::runInternodeForceTasks(
   const bool runGpu = !haccExecution.cpuOnly;
   const size_t activeCpuWorkers = haccExecution.gpuOnly ? 0 :
     static_cast<size_t>(haccExecution.cpuWorkers);
-  CpuStartGate gate;
-  std::vector<std::thread> cpuThreads;
-  cpuThreads.reserve(activeCpuWorkers);
-  std::vector<POSVEL_T> cpuLoadBuffer(activeCpuWorkers * HACC_CPU_LOAD_WORDS);
-
-  for (size_t worker = 0; worker < activeCpuWorkers; ++worker) {
-    cpuThreads.emplace_back([&cpuLoadBuffer, &gate, worker,
-                             iterations = tasks.size()]() {
-      {
-        std::unique_lock<std::mutex> lock(gate.mutex);
-        ++gate.readyWorkers;
-        gate.workersReady.notify_one();
-        gate.workStart.wait(lock, [&gate] { return gate.start; });
-      }
-
-      haccCpuPrivateLoad(cpuLoadBuffer.data(), HACC_CPU_LOAD_WORDS, worker,
-                         iterations, haccExecution.debugLog);
-    });
-  }
-
-  if (!cpuThreads.empty()) {
-    std::unique_lock<std::mutex> lock(gate.mutex);
-    gate.workersReady.wait(lock, [&gate, &cpuThreads] {
-      return gate.readyWorkers == cpuThreads.size();
-    });
-  }
-
+  const size_t cpuLoadIterations =
+    std::max(static_cast<size_t>(1),
+             std::max(tasks.size() / 2,
+                      activeCpuWorkers > 0 ?
+                        static_cast<size_t>(particleCount) /
+                          (2 * activeCpuWorkers) + 1 :
+                        static_cast<size_t>(particleCount) / 2 + 1));
   if (haccExecution.debugLog) {
     fprintf(stdout,
-            "HACC independent mode: force-tasks=%zu cpu-workers=%zu "
-            "gpu=%s\n",
-            tasks.size(), activeCpuWorkers, runGpu ? "enabled" : "off");
+            "HACC ROI staged mode: force-tasks=%zu cpu-workers=%zu "
+            "cpu-iters=%zu gpu=%s\n",
+            tasks.size(), activeCpuWorkers, cpuLoadIterations,
+            runGpu ? "enabled" : "off");
     fflush(stdout);
   }
 
@@ -1702,22 +1678,28 @@ void RCBForceTree<TDPTS>::runInternodeForceTasks(
   m5_work_begin_addr(0, 0);
 #endif
 
-  if (!cpuThreads.empty()) {
-    {
-      std::lock_guard<std::mutex> lock(gate.mutex);
-      gate.start = true;
+  if (activeCpuWorkers > 0) {
+    std::vector<std::thread> cpuThreads;
+    cpuThreads.reserve(activeCpuWorkers);
+    std::vector<POSVEL_T> cpuLoadScratch(activeCpuWorkers *
+                                         HACC_CPU_LOAD_WORDS);
+    for (size_t worker = 0; worker < activeCpuWorkers; ++worker) {
+      cpuThreads.emplace_back([this, &cpuLoadScratch, worker,
+                               iterations = cpuLoadIterations]() {
+        haccCpuSharedInputLoad(xx, yy, zz, mass, particleCount,
+                               cpuLoadScratch.data(), HACC_CPU_LOAD_WORDS,
+                               worker, iterations, haccExecution.debugLog);
+      });
     }
-    gate.workStart.notify_all();
+    for (std::thread &thread : cpuThreads) {
+      thread.join();
+    }
   }
 
   if (runGpu) {
     for (size_t task = 0; task < tasks.size(); ++task) {
       runGpuForceTask(tasks[task], lists);
     }
-  }
-
-  for (std::thread &thread : cpuThreads) {
-    thread.join();
   }
 
 #ifdef __HIPCC__

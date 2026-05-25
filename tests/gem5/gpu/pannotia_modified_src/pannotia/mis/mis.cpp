@@ -19,27 +19,42 @@
 #endif
 
 #define RANGE 2048
-#define CPU_LOAD_WORDS 4096
+#define CPU_EDGE_STRIDE 8
 
 void dump2file(int *adjmatrix, int num_nodes);
 void print_vector(int *vector, int num);
 void print_vectorf(float *vector, int num);
 
 static void
-cpu_private_load(int *buffer, int worker_id, int iterations, bool debug_log)
+cpu_shared_load(const csr_array *csr, const int *node_value, int num_nodes,
+                int num_edges, int worker_id, int worker_count,
+                bool debug_log)
 {
-    int *worker_buffer = buffer + worker_id * CPU_LOAD_WORDS;
-    for (int repeat = 0; repeat < iterations; ++repeat) {
-        for (int index = CPU_LOAD_WORDS - 2; index >= 0; --index) {
-            worker_buffer[index + 1] = worker_buffer[index] + repeat + index;
+    long long local_sum = 0;
+    for (int tid = worker_id; tid < num_nodes; tid += worker_count) {
+        int start = csr->row_array[tid];
+        int end = (tid + 1 < num_nodes) ? csr->row_array[tid + 1]
+                                        : num_edges;
+        local_sum += node_value[tid];
+        for (int edge = start; edge < end; edge += CPU_EDGE_STRIDE) {
+            local_sum += csr->col_array[edge] & 1;
         }
     }
 
     if (debug_log) {
-        fprintf(stdout, "CPU worker %d finished MIS private load\n",
-                worker_id);
+        fprintf(stdout,
+                "CPU worker %d finished MIS shared load sum=%lld\n",
+                worker_id, local_sum);
         fflush(stdout);
     }
+}
+
+static int *
+copy_to_managed(const int *src, size_t count, const char *name)
+{
+    int *dst = managed_int_array(count, name);
+    memcpy(dst, src, count * sizeof(int));
+    return dst;
 }
 
 int
@@ -48,7 +63,7 @@ main(int argc, char **argv)
     char *tmpchar;
     int num_nodes;
     int num_edges;
-    int file_format;
+    int file_format = 1;
     bool directed = 0;
     hipError_t err = hipSuccess;
     PannotiaOptions options;
@@ -74,22 +89,8 @@ main(int argc, char **argv)
         exit(1);
     }
 
-    int *node_value = managed_int_array(num_nodes, "node_value");
-    int *s_array = managed_int_array(num_nodes, "s_array");
-    int *c_array = managed_int_array(num_nodes, "c_array");
-    int *c_array_u = managed_int_array(num_nodes, "c_array_u");
-    int *min_array = managed_int_array(num_nodes, "min_array");
-    int *stop_d = managed_int_array(1, "stop");
-
-    for (int i = 0; i < num_nodes; ++i) {
-        node_value[i] = rand() % RANGE;
-        s_array[i] = 0;
-        c_array[i] = -1;
-        c_array_u[i] = -1;
-        min_array[i] = BIGNUM;
-    }
-
     int cpu_workers = resolve_cpu_workers(options);
+    int gpu_cus = resolve_gpu_cus(options);
     bool use_gpu = !options.cpu_only;
     bool use_cpu = !options.gpu_only && cpu_workers > 0;
     if (!use_gpu && !use_cpu) {
@@ -100,26 +101,78 @@ main(int argc, char **argv)
     if (options.debug_log) {
         fprintf(stdout,
                 "mis mode: cpu_workers=%d gpu=%s gpu_cus=%d\n",
-                cpu_workers, use_gpu ? "enabled" : "off",
-                resolve_gpu_cus(options));
+                cpu_workers, use_gpu ? "enabled" : "off", gpu_cus);
         fflush(stdout);
     }
 
-    int *cpu_load_buffer = nullptr;
-    std::vector<std::thread> cpu_threads;
-    if (use_cpu) {
-        cpu_load_buffer = static_cast<int *>(
-            malloc(static_cast<size_t>(cpu_workers) * CPU_LOAD_WORDS *
-                   sizeof(int)));
-        if (cpu_load_buffer == nullptr) {
-            fprintf(stderr, "Failed to allocate cpu_load_buffer\n");
+    int *node_value = (int *)malloc(num_nodes * sizeof(int));
+    int *s_array = (int *)malloc(num_nodes * sizeof(int));
+    if (!node_value || !s_array) {
+        fprintf(stderr, "malloc failed for host arrays\n");
+        return -1;
+    }
+
+    for (int i = 0; i < num_nodes; i++) {
+        node_value[i] = rand() % RANGE;
+        s_array[i] = 0;
+    }
+
+    int *shared_row = copy_to_managed(csr->row_array, num_nodes + 1,
+                                      "shared_row");
+    int *shared_col = copy_to_managed(csr->col_array, num_edges,
+                                      "shared_col");
+    int *shared_node_value = copy_to_managed(node_value, num_nodes,
+                                             "shared_node_value");
+
+    csr_array shared_csr = {};
+    shared_csr.row_array = shared_row;
+    shared_csr.col_array = shared_col;
+
+    csr->freeArrays();
+    free(csr);
+    csr = &shared_csr;
+
+    int *c_array_d = nullptr;
+    int *c_array_u_d = nullptr;
+    int *s_array_d = nullptr;
+    int *min_array_d = nullptr;
+    int *stop_d = nullptr;
+
+    if (use_gpu) {
+        err = hipMalloc(&stop_d, sizeof(int));
+        if (err != hipSuccess) {
+            fprintf(stderr, "ERROR: hipMalloc stop_d => %s\n",
+                    hipGetErrorString(err));
             return -1;
         }
-
-        for (int i = 0; i < cpu_workers * CPU_LOAD_WORDS; ++i) {
-            cpu_load_buffer[i] = i;
+        err = hipMalloc(&min_array_d, num_nodes * sizeof(int));
+        if (err != hipSuccess) {
+            fprintf(stderr, "ERROR: hipMalloc min_array_d => %s\n",
+                    hipGetErrorString(err));
+            return -1;
         }
+        err = hipMalloc(&c_array_d, num_nodes * sizeof(int));
+        if (err != hipSuccess) {
+            fprintf(stderr, "ERROR: hipMalloc c_array_d => %s\n",
+                    hipGetErrorString(err));
+            return -1;
+        }
+        err = hipMalloc(&c_array_u_d, num_nodes * sizeof(int));
+        if (err != hipSuccess) {
+            fprintf(stderr, "ERROR: hipMalloc c_array_u_d => %s\n",
+                    hipGetErrorString(err));
+            return -1;
+        }
+        err = hipMalloc(&s_array_d, num_nodes * sizeof(int));
+        if (err != hipSuccess) {
+            fprintf(stderr, "ERROR: hipMalloc s_array_d => %s\n",
+                    hipGetErrorString(err));
+            return -1;
+        }
+    }
 
+    std::vector<std::thread> cpu_threads;
+    if (use_cpu) {
         cpu_threads.reserve(cpu_workers);
     }
 
@@ -135,21 +188,26 @@ main(int argc, char **argv)
 
     if (use_cpu) {
         for (int worker = 0; worker < cpu_workers; ++worker) {
-            cpu_threads.emplace_back(cpu_private_load, cpu_load_buffer,
-                                     worker, num_nodes, options.debug_log);
+            cpu_threads.emplace_back(cpu_shared_load, csr, shared_node_value,
+                                     num_nodes, num_edges, worker,
+                                     cpu_workers, options.debug_log);
         }
+        for (auto &thread : cpu_threads) {
+            thread.join();
+        }
+        cpu_threads.clear();
     }
 
-    int block_size = 128;
-    dim3 threads(block_size, 1, 1);
     int iterations = 0;
-
     if (use_gpu) {
+        int block_size = 128;
         int num_blocks = (num_nodes + block_size - 1) / block_size;
+        dim3 threads(block_size, 1, 1);
+        dim3 grid(num_blocks, 1, 1);
 
-        hipLaunchKernelGGL(HIP_KERNEL_NAME(init), dim3(num_blocks),
-                           dim3(threads), 0, 0, s_array, c_array, c_array_u,
-                           num_nodes, num_edges);
+        hipLaunchKernelGGL(HIP_KERNEL_NAME(init), dim3(grid), dim3(threads), 0,
+                           0, s_array_d, c_array_d, c_array_u_d, num_nodes,
+                           num_edges);
         hipDeviceSynchronize();
         err = hipGetLastError();
         if (err != hipSuccess) {
@@ -161,27 +219,46 @@ main(int argc, char **argv)
         int stop = 1;
         while (stop) {
             stop = 0;
-            *stop_d = 0;
+            err = hipMemcpy(stop_d, &stop, sizeof(int), hipMemcpyHostToDevice);
+            if (err != hipSuccess) {
+                fprintf(stderr, "ERROR: write stop_d variable (%s)\n",
+                        hipGetErrorString(err));
+                return -1;
+            }
 
-            hipLaunchKernelGGL(HIP_KERNEL_NAME(mis1), dim3(num_blocks),
+            hipLaunchKernelGGL(HIP_KERNEL_NAME(mis1), dim3(grid),
                                dim3(threads), 0, 0, csr->row_array,
-                               csr->col_array, node_value, s_array, c_array,
-                               min_array, stop_d, num_nodes, num_edges);
-            hipDeviceSynchronize();
-            stop |= *stop_d;
+                               csr->col_array, shared_node_value,
+                               s_array_d, c_array_d, min_array_d, stop_d,
+                               num_nodes, num_edges);
 
-            hipLaunchKernelGGL(HIP_KERNEL_NAME(mis2), dim3(num_blocks),
+            hipLaunchKernelGGL(HIP_KERNEL_NAME(mis2), dim3(grid),
                                dim3(threads), 0, 0, csr->row_array,
-                               csr->col_array, node_value, s_array, c_array,
-                               c_array_u, min_array, num_nodes, num_edges);
-            hipDeviceSynchronize();
+                               csr->col_array, shared_node_value,
+                               s_array_d, c_array_d, c_array_u_d, min_array_d,
+                               num_nodes, num_edges);
 
-            hipLaunchKernelGGL(HIP_KERNEL_NAME(mis3), dim3(num_blocks),
-                               dim3(threads), 0, 0, c_array_u, c_array,
+            hipLaunchKernelGGL(HIP_KERNEL_NAME(mis3), dim3(grid),
+                               dim3(threads), 0, 0, c_array_u_d, c_array_d,
                                num_nodes);
-            hipDeviceSynchronize();
+
+            err = hipMemcpy(&stop, stop_d, sizeof(int), hipMemcpyDeviceToHost);
+            if (err != hipSuccess) {
+                fprintf(stderr, "ERROR: read stop_d variable (%s)\n",
+                        hipGetErrorString(err));
+                return -1;
+            }
 
             iterations++;
+        }
+
+        hipDeviceSynchronize();
+        err = hipMemcpy(s_array, s_array_d, num_nodes * sizeof(int),
+                        hipMemcpyDeviceToHost);
+        if (err != hipSuccess) {
+            fprintf(stderr, "ERROR: hipMemcpy s_array_d failed (%s)\n",
+                    hipGetErrorString(err));
+            return -1;
         }
     }
 
@@ -201,16 +278,19 @@ main(int argc, char **argv)
     printf("number of iterations: %d\n", iterations);
     print_vector(s_array, num_nodes);
 
-    hipFree(node_value);
-    hipFree(s_array);
-    hipFree(c_array);
-    hipFree(c_array_u);
-    hipFree(min_array);
-    hipFree(stop_d);
-    if (cpu_load_buffer != nullptr) {
-        free(cpu_load_buffer);
+    free(node_value);
+    free(s_array);
+    hipFree(shared_row);
+    hipFree(shared_col);
+    hipFree(shared_node_value);
+
+    if (use_gpu) {
+        hipFree(c_array_d);
+        hipFree(c_array_u_d);
+        hipFree(s_array_d);
+        hipFree(min_array_d);
+        hipFree(stop_d);
     }
-    free_managed_csr(csr);
 
     printf("PASS\n");
     fflush(stdout);

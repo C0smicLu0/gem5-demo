@@ -97,28 +97,16 @@ static void validateOptions(const HeteroOptions &options)
   }
 }
 
-static bool allowsIndependentCpuLoad(unsigned int syncPrim)
+static void cpuLoadWorker(float *storage, int begin, int end, int worker_id,
+                          bool debug_log)
 {
-  return syncPrim != 6 && syncPrim != 22;
-}
-
-static void cpuLoadWorker(int worker_id, int num_iters, bool debug_log)
-{
-  float worker_buffer[NUM_WORDS_PER_CACHELINE * 2];
-  for (int i = 0; i < NUM_WORDS_PER_CACHELINE * 2; ++i) {
-    worker_buffer[i] = static_cast<float>(worker_id + i);
+  for (int index = end - 1; index >= begin; --index) {
+    storage[index] = storage[index] + static_cast<float>(worker_id + index);
   }
 
-  for (int repeat = 0; repeat < NUM_REPEATS; ++repeat) {
-    for (int iter = 0; iter < num_iters * numWGs; ++iter) {
-      for (int line = NUM_LDST - 1; line >= 0; --line) {
-        int read_base = (line % 2) * NUM_WORDS_PER_CACHELINE;
-        int write_base = ((line + 1) % 2) * NUM_WORDS_PER_CACHELINE;
-        for (int word = 0; word < NUM_WORDS_PER_CACHELINE; ++word) {
-          worker_buffer[write_base + word] =
-            worker_buffer[read_base + word] + static_cast<float>(repeat + iter + word);
-        }
-      }
+  if (begin < end) {
+    for (int index = begin; index < end; ++index) {
+      storage[index] = static_cast<float>(index);
     }
   }
 
@@ -1371,15 +1359,6 @@ int main(int argc, char ** argv)
     exit(-1);
   }
 
-  int activeCpuWorkers = options.cpu_workers;
-  if (activeCpuWorkers > 0 && !allowsIndependentCpuLoad(syncPrim)) {
-    fprintf(stderr,
-            "WARNING: CPU workers are disabled for %s because this "
-            "workload remains unstable with extra host threads in gem5\n",
-            syncPrim_str);
-    activeCpuWorkers = 0;
-  }
-
   // multiply number of mutexes, semaphores by NUM_CU to
   // allow per-core locks
   hipLocksInit(MAX_WGS, 8 * NUM_CU, 24 * NUM_CU, pageAlign, NUM_CU, NUM_REPEATS, NUM_ITERS);
@@ -1593,8 +1572,8 @@ int main(int argc, char ** argv)
   }
 
   std::vector<std::thread> cpuThreads;
-  if (activeCpuWorkers > 0) {
-    cpuThreads.reserve(activeCpuWorkers);
+  if (options.cpu_workers > 0) {
+    cpuThreads.reserve(options.cpu_workers);
   }
 
   // NOTE: region of interest begins here
@@ -1611,11 +1590,20 @@ int main(int argc, char ** argv)
   hipError_t warmupErr = hipDeviceSynchronize();
   checkError(warmupErr, "hipDeviceSynchronize (cpuLoadWarmupKernel)");
 
-  if (activeCpuWorkers > 0) {
-    for (int worker = 0; worker < activeCpuWorkers; ++worker) {
-      cpuThreads.emplace_back(cpuLoadWorker, worker, NUM_ITERS,
+  if (options.cpu_workers > 0) {
+    for (int worker = 0; worker < options.cpu_workers; ++worker) {
+      int begin = (numStorageLocs * worker) / options.cpu_workers;
+      int end = (numStorageLocs * (worker + 1)) / options.cpu_workers;
+      cpuThreads.emplace_back(cpuLoadWorker, storage, begin, end, worker,
                               options.debug_log);
     }
+    for (std::thread &thread : cpuThreads) {
+      thread.join();
+    }
+    cpuThreads.clear();
+
+    for (int i = 0; i < numStorageLocs; ++i) { storage[i] = i; }
+    for (int i = 0; i < (NUM_CU * MAX_WGS * 2); ++i) { perCUBarriers[i] = 0; }
   }
 
   switch (syncPrim) {
