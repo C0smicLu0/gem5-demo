@@ -32,7 +32,7 @@ Run/all options:
 
 Modified Square/Pannotia workloads derive their workload resource options from
 the merged gem5 config args. The final -n/--num-cpus becomes
---cpu-workers max(0, N - 3); the final -u/--num-compute-units becomes
+--cpu-workers max(0, N); the final -u/--num-compute-units becomes
 --gpu-cus N.
 EOF
 }
@@ -426,7 +426,7 @@ add_resource_workload_args() {
     return 1
   fi
 
-  cpu_workers=$(( cpus > 3 ? cpus - 3 : 0 ))
+  cpu_workers=$(( cpus ))
   append_options_tokens "$workload_args" \
     --cpu-workers "$cpu_workers" --gpu-cus "$gpu_cus"
 }
