@@ -16,19 +16,64 @@ Modern cache coherence protocols may introduce significant state-management over
 
 The implementation is integrated into gem5 and can be built and tested using the provided scripts.
 
-# Build
+## Docker
 
-Use the provided build script:
-```bashs
-./demo_build.sh
-```
+`demo_build.sh` and `demo_test.sh` use Docker.
 
-This script builds the required gem5 binary for the demo and precompiles the test file.
+If Docker is not installed yet, print the official install guidance with:
 
-# Test
-
-Use the provided test script:
 ```bash
-./demo_test.sh
+bash download_docker.sh
 ```
-This script runs the demo test cases and verifies that the modified cache coherence protocol can execute correctly.
+
+You can also use the built-in help entry:
+
+```bash
+bash demo_build.sh --docker-help
+bash demo_test.sh --docker-help
+```
+
+With this workspace under WSL, Docker Desktop for Windows with the WSL 2
+backend is usually the simplest setup.
+
+## Build
+
+Build gem5 and the GPU demo workloads:
+
+```bash
+bash demo_build.sh
+```
+
+Useful variants:
+
+```bash
+bash demo_build.sh --gem5-only
+bash demo_build.sh --gpu-only --gpu-in-container
+```
+
+`--gpu-in-container` is for the case where you are already inside a suitable
+GPU build environment and do not want the GPU workload scripts to launch Docker
+again.
+
+## Test
+
+Run the default quick demo:
+
+```bash
+bash demo_test.sh
+```
+
+This is equivalent to running `square` once with profile `cores.args1`.
+
+Run all configured `cores.args*` profiles in parallel:
+
+```bash
+bash demo_test.sh all
+```
+
+Optional examples:
+
+```bash
+bash demo_test.sh quick --run-tag smoke
+bash demo_test.sh all --run-tag nightly
+```

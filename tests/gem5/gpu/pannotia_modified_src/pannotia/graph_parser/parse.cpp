@@ -78,18 +78,6 @@ managed_csr_array(size_t count, const char *name)
     return (int *)ptr;
 }
 
-static void
-check_tuple_capacity(int cnt, int capacity, const char *parser_name)
-{
-    if (cnt >= capacity) {
-        fprintf(stderr,
-                "ERROR: %s tuple_array overflow cnt=%d capacity=%d\n",
-                parser_name, cnt, capacity);
-        fflush(stderr);
-        exit(1);
-    }
-}
-
 bool doCompare(CooTuple elem1, CooTuple elem2)
 {
     if (elem1.row < elem2.row) {
@@ -145,8 +133,6 @@ ell_array *csr2ell(csr_array *csr, int num_nodes, int num_edges, int fill)
 
 csr_array *parseMetis(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool directed)
 {
-    fprintf(stderr, "CHK parseMetis entry\n");
-    fflush(stderr);
     int cnt = 0;
     unsigned int lineno = 0;
     char *line = NULL;
@@ -201,7 +187,6 @@ csr_array *parseMetis(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool di
                 temp.col = tail - 1;
                 temp.val = weight;
 
-                check_tuple_capacity(cnt, num_edges, "parseMetis");
                 tuple_array[cnt++] = temp;
 
                 pch = strtok(NULL, " ,.-");
@@ -250,22 +235,9 @@ csr_array *parseMetis(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool di
     csr->row_array = row_array;
     csr->col_array = col_array;
     csr->data_array = data_array;
-
-    fprintf(stderr, "CHK parseMetis before free tuple_array\n");
-    fflush(stderr);
     free(tuple_array);
-    fprintf(stderr, "CHK parseMetis after free tuple_array\n");
-    fflush(stderr);
-    fprintf(stderr, "CHK parseMetis before free line\n");
-    fflush(stderr);
     free(line);
-    fprintf(stderr, "CHK parseMetis after free line\n");
-    fflush(stderr);
-    fprintf(stderr, "CHK parseMetis before fclose\n");
-    fflush(stderr);
     fclose(stream);
-    fprintf(stderr, "CHK parseMetis after fclose\n");
-    fflush(stderr);
 
     return csr;
 }
@@ -273,8 +245,6 @@ csr_array *parseMetis(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool di
 
 csr_array *parseCOO(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool directed)
 {
-    fprintf(stderr, "CHK parseCOO entry\n");
-    fflush(stderr);
     int cnt = 0;
     unsigned int lineno = 0;
     char sp[2], a, p;
@@ -321,13 +291,11 @@ csr_array *parseCOO(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool dire
             temp.row = head - 1;
             temp.col = tail - 1;
             temp.val = weight;
-            check_tuple_capacity(cnt, num_edges, "parseCOO");
             tuple_array[cnt++] = temp;
             if (!directed) {
                 temp.row = tail - 1;
                 temp.col = head - 1;
                 temp.val = weight;
-                check_tuple_capacity(cnt, num_edges, "parseCOO");
                 tuple_array[cnt++] = temp;
             }
 
@@ -369,31 +337,15 @@ csr_array *parseCOO(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool dire
     }
 
     row_array[row_cnt] = idx;
-
-    fprintf(stderr, "CHK parseCOO before free line\n");
-    fflush(stderr);
     free(line);
-    fprintf(stderr, "CHK parseCOO after free line\n");
-    fflush(stderr);
-    fprintf(stderr, "CHK parseCOO before fclose\n");
-    fflush(stderr);
     fclose(stream);
-    fprintf(stderr, "CHK parseCOO after fclose\n");
-    fflush(stderr);
-    fprintf(stderr, "CHK parseCOO before free tuple_array\n");
-    fflush(stderr);
     free(tuple_array);
-    fprintf(stderr, "CHK parseCOO after free tuple_array\n");
-    fflush(stderr);
 
     csr_array *csr = (csr_array *)malloc(sizeof(csr_array));
     memset(csr, 0, sizeof(csr_array));
     csr->row_array = row_array;
     csr->col_array = col_array;
     csr->data_array = data_array;
-
-    fprintf(stderr, "CHK parseCOO return\n");
-    fflush(stderr);
 
     return csr;
 

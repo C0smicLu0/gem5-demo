@@ -8,6 +8,7 @@ readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly GEM5_ROOT="$SCRIPT_DIR"
 readonly WORKLOAD_RUNNER="$GEM5_ROOT/test_scripts/gem5_workload_runner.sh"
 readonly WORKLOAD_CONFIG="$GEM5_ROOT/test_scripts/gem5_workloads.json"
+readonly DOCKER_HELP_SCRIPT="$GEM5_ROOT/download_docker.sh"
 
 MODE="quick"
 RUN_TAG=""
@@ -31,6 +32,7 @@ Options:
                       added automatically in all mode.
   --debug-flags CSV   Forward --debug-flags to gem5.
   --debug-start TICK  Forward --debug-start to gem5.
+  --docker-help       Print Docker install guidance and exit.
   -h, --help          Show this help and exit.
 
 Examples:
@@ -58,6 +60,20 @@ require_file()
     local path="$1"
 
     [[ -f "$path" ]] || die "file not found: $path"
+}
+
+docker_help()
+{
+    if [[ -f "$DOCKER_HELP_SCRIPT" ]]; then
+        bash "$DOCKER_HELP_SCRIPT"
+    else
+        cat <<EOF
+Docker is required for this script.
+See:
+  https://docs.docker.com/desktop/setup/install/windows-install/
+  https://docs.docker.com/engine/install/ubuntu/
+EOF
+    fi
 }
 
 timestamp_tag()
@@ -144,6 +160,10 @@ while (($#)); do
             (($#)) || die "--debug-start requires a value"
             DEBUG_START="$1"
             ;;
+        --docker-help)
+            docker_help
+            exit 0
+            ;;
         -h|--help)
             usage
             exit 0
@@ -157,6 +177,12 @@ done
 
 require_script "$WORKLOAD_RUNNER"
 require_file "$WORKLOAD_CONFIG"
+
+if ! command -v docker >/dev/null 2>&1; then
+    echo "error: docker not found in PATH" >&2
+    echo "hint: run 'bash $DOCKER_HELP_SCRIPT'" >&2
+    exit 1
+fi
 
 base_tag="${RUN_TAG:-$(timestamp_tag)}"
 runner_args=()

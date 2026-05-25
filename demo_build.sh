@@ -12,6 +12,7 @@ readonly SQUARE_BUILD_SCRIPT="$GPU_ROOT/square_modified_src/build_square.sh"
 readonly HACC_BUILD_SCRIPT="$GPU_ROOT/hacc_modified_src/build_hacc.sh"
 readonly PANNOTIA_BUILD_SCRIPT="$GPU_ROOT/pannotia_modified_src/build_pannotia.sh"
 readonly HETEROSYNC_BUILD_SCRIPT="$GPU_ROOT/heterosync_modified_src/build_heterosync.sh"
+readonly DOCKER_HELP_SCRIPT="$GEM5_ROOT/download_docker.sh"
 
 RUN_GEM5=1
 RUN_GPU=1
@@ -42,6 +43,7 @@ Options:
   --jobs N              Set JOBS=N for the gem5 scons build.
   --pannotia BENCH      Build one Pannotia benchmark. May be repeated.
                         Defaults to all benchmarks known by build_pannotia.sh.
+  --docker-help         Print Docker install guidance and exit.
   -h, --help            Show this help and exit.
 
 Examples:
@@ -63,6 +65,20 @@ require_script()
     local script="$1"
 
     [[ -f "$script" ]] || die "build script not found: $script"
+}
+
+docker_help()
+{
+    if [[ -f "$DOCKER_HELP_SCRIPT" ]]; then
+        bash "$DOCKER_HELP_SCRIPT"
+    else
+        cat <<EOF
+Docker is required for this script.
+See:
+  https://docs.docker.com/desktop/setup/install/windows-install/
+  https://docs.docker.com/engine/install/ubuntu/
+EOF
+    fi
 }
 
 run_step()
@@ -106,6 +122,10 @@ while (($#)); do
             (($#)) || die "--pannotia requires a benchmark name"
             PANNOTIA_BENCHMARKS+=("$1")
             ;;
+        --docker-help)
+            docker_help
+            exit 0
+            ;;
         -h|--help)
             usage
             exit 0
@@ -126,6 +146,18 @@ require_script "$SQUARE_BUILD_SCRIPT"
 require_script "$HACC_BUILD_SCRIPT"
 require_script "$PANNOTIA_BUILD_SCRIPT"
 require_script "$HETEROSYNC_BUILD_SCRIPT"
+
+if (( RUN_GEM5 )) && ! command -v docker >/dev/null 2>&1; then
+    echo "error: docker not found in PATH" >&2
+    echo "hint: run 'bash $DOCKER_HELP_SCRIPT'" >&2
+    exit 1
+fi
+
+if (( RUN_GPU && ! GPU_IN_CONTAINER )) && ! command -v docker >/dev/null 2>&1; then
+    echo "error: docker not found in PATH for GPU workload builds" >&2
+    echo "hint: run 'bash $DOCKER_HELP_SCRIPT' or use --gpu-in-container" >&2
+    exit 1
+fi
 
 if (( RUN_GEM5 )); then
     gem5_env=(env "GEM5_ROOT=$GEM5_ROOT")

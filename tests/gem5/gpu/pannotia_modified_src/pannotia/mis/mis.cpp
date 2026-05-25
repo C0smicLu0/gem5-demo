@@ -45,9 +45,6 @@ cpu_private_load(int *buffer, int worker_id, int iterations, bool debug_log)
 int
 main(int argc, char **argv)
 {
-    fprintf(stderr, "CHK main entry\n");
-    fflush(stderr);
-
     char *tmpchar;
     int num_nodes;
     int num_edges;
@@ -66,8 +63,6 @@ main(int argc, char **argv)
     }
 
     srand(7);
-    fprintf(stderr, "CHK options parsed\n");
-    fflush(stderr);
 
     csr_array *csr;
     if (file_format == 1) {
@@ -78,8 +73,6 @@ main(int argc, char **argv)
         fprintf(stderr, "reserve for future\n");
         exit(1);
     }
-    fprintf(stderr, "CHK graph parsed nodes=%d edges=%d\n", num_nodes, num_edges);
-    fflush(stderr);
 
     int *node_value = managed_int_array(num_nodes, "node_value");
     int *s_array = managed_int_array(num_nodes, "s_array");
@@ -87,8 +80,6 @@ main(int argc, char **argv)
     int *c_array_u = managed_int_array(num_nodes, "c_array_u");
     int *min_array = managed_int_array(num_nodes, "min_array");
     int *stop_d = managed_int_array(1, "stop");
-    fprintf(stderr, "CHK managed arrays allocated\n");
-    fflush(stderr);
 
     for (int i = 0; i < num_nodes; ++i) {
         node_value[i] = rand() % RANGE;
@@ -106,26 +97,34 @@ main(int argc, char **argv)
         return -1;
     }
 
-    int gpu_cus = resolve_gpu_cus(options);
-    int gpu_end = use_gpu ? num_nodes : 0;
+    if (options.debug_log) {
+        fprintf(stdout,
+                "mis mode: cpu_workers=%d gpu=%s gpu_cus=%d\n",
+                cpu_workers, use_gpu ? "enabled" : "off",
+                resolve_gpu_cus(options));
+        fflush(stdout);
+    }
+
     int *cpu_load_buffer = nullptr;
     std::vector<std::thread> cpu_threads;
+    if (use_cpu) {
+        cpu_load_buffer = static_cast<int *>(
+            malloc(static_cast<size_t>(cpu_workers) * CPU_LOAD_WORDS *
+                   sizeof(int)));
+        if (cpu_load_buffer == nullptr) {
+            fprintf(stderr, "Failed to allocate cpu_load_buffer\n");
+            return -1;
+        }
 
-    if (options.debug_log) {
-        fprintf(stderr,
-                "mis mode: cpu_workers=%d gpu=%s gpu_range=[0,%d) gpu_cus=%d\n",
-                cpu_workers, use_gpu ? "enabled" : "off", gpu_end, gpu_cus);
-        fflush(stderr);
+        for (int i = 0; i < cpu_workers * CPU_LOAD_WORDS; ++i) {
+            cpu_load_buffer[i] = i;
+        }
+
+        cpu_threads.reserve(cpu_workers);
     }
-    fprintf(stderr, "CHK execution mode ready\n");
-    fflush(stderr);
 
 #ifdef GEM5_FUSION
-    fprintf(stderr, "CHK before m5_work_begin\n");
-    fflush(stderr);
     m5_work_begin(0, 0);
-    fprintf(stderr, "CHK after m5_work_begin\n");
-    fflush(stderr);
 #endif
 
 #ifdef GEM5_FS
@@ -135,93 +134,63 @@ main(int argc, char **argv)
 #endif
 
     if (use_cpu) {
-        cpu_load_buffer = static_cast<int *>(
-            malloc(static_cast<size_t>(cpu_workers) * CPU_LOAD_WORDS *
-                   sizeof(int)));
-        if (cpu_load_buffer == nullptr) {
-            fprintf(stderr, "Failed to allocate cpu_load_buffer\n");
-            return -1;
-        }
-        for (int i = 0; i < cpu_workers * CPU_LOAD_WORDS; ++i) {
-            cpu_load_buffer[i] = i;
-        }
-
-        cpu_threads.reserve(cpu_workers);
         for (int worker = 0; worker < cpu_workers; ++worker) {
             cpu_threads.emplace_back(cpu_private_load, cpu_load_buffer,
                                      worker, num_nodes, options.debug_log);
         }
     }
-    fprintf(stderr, "CHK cpu workers launched\n");
-    fflush(stderr);
 
     int block_size = 128;
     dim3 threads(block_size, 1, 1);
     int iterations = 0;
 
-    if (use_gpu && gpu_end > 0) {
-        fprintf(stderr, "CHK before init kernel\n");
-        fflush(stderr);
-        int num_blocks = (gpu_end + block_size - 1) / block_size;
-        hipLaunchKernelGGL(HIP_KERNEL_NAME(init_range), dim3(num_blocks),
+    if (use_gpu) {
+        int num_blocks = (num_nodes + block_size - 1) / block_size;
+
+        hipLaunchKernelGGL(HIP_KERNEL_NAME(init), dim3(num_blocks),
                            dim3(threads), 0, 0, s_array, c_array, c_array_u,
-                           0, gpu_end, num_nodes, num_edges);
+                           num_nodes, num_edges);
         hipDeviceSynchronize();
-        fprintf(stderr, "CHK after init kernel sync\n");
-        fflush(stderr);
         err = hipGetLastError();
         if (err != hipSuccess) {
             fprintf(stderr, "ERROR: init kernel (%s)\n",
                     hipGetErrorString(err));
             return -1;
         }
+
+        int stop = 1;
+        while (stop) {
+            stop = 0;
+            *stop_d = 0;
+
+            hipLaunchKernelGGL(HIP_KERNEL_NAME(mis1), dim3(num_blocks),
+                               dim3(threads), 0, 0, csr->row_array,
+                               csr->col_array, node_value, s_array, c_array,
+                               min_array, stop_d, num_nodes, num_edges);
+            hipDeviceSynchronize();
+            stop |= *stop_d;
+
+            hipLaunchKernelGGL(HIP_KERNEL_NAME(mis2), dim3(num_blocks),
+                               dim3(threads), 0, 0, csr->row_array,
+                               csr->col_array, node_value, s_array, c_array,
+                               c_array_u, min_array, num_nodes, num_edges);
+            hipDeviceSynchronize();
+
+            hipLaunchKernelGGL(HIP_KERNEL_NAME(mis3), dim3(num_blocks),
+                               dim3(threads), 0, 0, c_array_u, c_array,
+                               num_nodes);
+            hipDeviceSynchronize();
+
+            iterations++;
+        }
     }
 
-    int stop = use_gpu ? 1 : 0;
-    fprintf(stderr, "CHK before main loop stop=%d\n", stop);
-    fflush(stderr);
-    while (stop) {
-        stop = 0;
-        *stop_d = 0;
-
-        int num_blocks = (gpu_end + block_size - 1) / block_size;
-        hipLaunchKernelGGL(HIP_KERNEL_NAME(mis1_range), dim3(num_blocks),
-                           dim3(threads), 0, 0, csr->row_array, csr->col_array,
-                           node_value, s_array, c_array, min_array, stop_d, 0,
-                           gpu_end, num_nodes, num_edges);
-        hipDeviceSynchronize();
-        stop |= *stop_d;
-
-        hipLaunchKernelGGL(HIP_KERNEL_NAME(mis2_range), dim3(num_blocks),
-                           dim3(threads), 0, 0, csr->row_array, csr->col_array,
-                           node_value, s_array, c_array, c_array_u, min_array,
-                           0, gpu_end, num_nodes, num_edges);
-        hipDeviceSynchronize();
-
-        hipLaunchKernelGGL(HIP_KERNEL_NAME(mis3_range), dim3(num_blocks),
-                           dim3(threads), 0, 0, c_array_u, c_array, 0, gpu_end,
-                           num_nodes);
-        hipDeviceSynchronize();
-
-        iterations++;
-    }
-    fprintf(stderr, "CHK after main loop iterations=%d\n", iterations);
-    fflush(stderr);
-
-    fprintf(stderr, "CHK before thread joins\n");
-    fflush(stderr);
     for (auto &thread : cpu_threads) {
         thread.join();
     }
-    fprintf(stderr, "CHK after thread joins\n");
-    fflush(stderr);
 
 #ifdef GEM5_FUSION
-    fprintf(stderr, "CHK before m5_work_end\n");
-    fflush(stderr);
     m5_work_end(0, 0);
-    fprintf(stderr, "CHK after m5_work_end\n");
-    fflush(stderr);
 #endif
 
 #ifdef GEM5_FS
@@ -229,71 +198,22 @@ main(int argc, char **argv)
     unmap_m5_mem();
 #endif
 
-    fprintf(stderr, "Before iteration summary\n");
-    fflush(stderr);
-    fprintf(stderr, "number of iterations: %d\n", iterations);
-    fflush(stderr);
-
-#if 1
-    fprintf(stderr, "Before print_vector\n");
-    fflush(stderr);
+    printf("number of iterations: %d\n", iterations);
     print_vector(s_array, num_nodes);
-    fprintf(stderr, "After print_vector\n");
-    fflush(stderr);
-#endif
 
-    fprintf(stderr, "Before hipFree node_value\n");
-    fflush(stderr);
     hipFree(node_value);
-    fprintf(stderr, "After hipFree node_value\n");
-    fflush(stderr);
-
-    fprintf(stderr, "Before hipFree s_array\n");
-    fflush(stderr);
     hipFree(s_array);
-    fprintf(stderr, "After hipFree s_array\n");
-    fflush(stderr);
-
-    fprintf(stderr, "Before hipFree c_array\n");
-    fflush(stderr);
     hipFree(c_array);
-    fprintf(stderr, "After hipFree c_array\n");
-    fflush(stderr);
-
-    fprintf(stderr, "Before hipFree c_array_u\n");
-    fflush(stderr);
     hipFree(c_array_u);
-    fprintf(stderr, "After hipFree c_array_u\n");
-    fflush(stderr);
-
-    fprintf(stderr, "Before hipFree min_array\n");
-    fflush(stderr);
     hipFree(min_array);
-    fprintf(stderr, "After hipFree min_array\n");
-    fflush(stderr);
-
-    fprintf(stderr, "Before hipFree stop_d\n");
-    fflush(stderr);
     hipFree(stop_d);
-    fprintf(stderr, "After hipFree stop_d\n");
-    fflush(stderr);
-
     if (cpu_load_buffer != nullptr) {
-        fprintf(stderr, "Before free cpu_load_buffer\n");
-        fflush(stderr);
         free(cpu_load_buffer);
-        fprintf(stderr, "After free cpu_load_buffer\n");
-        fflush(stderr);
     }
-
-    fprintf(stderr, "Before free_managed_csr\n");
-    fflush(stderr);
     free_managed_csr(csr);
-    fprintf(stderr, "After free_managed_csr\n");
-    fflush(stderr);
 
-    fprintf(stderr, "PASS\n");
-    fflush(stderr);
+    printf("PASS\n");
+    fflush(stdout);
 
     return 0;
 }
