@@ -31,6 +31,8 @@ cpu_shared_load(const csr_array *csr, const int *node_value, int num_nodes,
                 bool debug_log)
 {
     long long local_sum = 0;
+    // Spread workers across the vertex set so every worker touches the same
+    // shared graph inputs without writing any MIS state.
     for (int tid = worker_id; tid < num_nodes; tid += worker_count) {
         int start = csr->row_array[tid];
         int end = (tid + 1 < num_nodes) ? csr->row_array[tid + 1]
@@ -52,6 +54,8 @@ cpu_shared_load(const csr_array *csr, const int *node_value, int num_nodes,
 static int *
 copy_to_managed(const int *src, size_t count, const char *name)
 {
+    // Build a single managed copy of each read-only input so the CPU phase and
+    // the later GPU phase both consume the same backing storage.
     int *dst = managed_int_array(count, name);
     memcpy(dst, src, count * sizeof(int));
     return dst;
@@ -186,6 +190,8 @@ main(int argc, char **argv)
     m5_work_begin_addr(0, 0);
 #endif
 
+    // Run the CPU shared-load phase first so CPU and GPU do not touch the
+    // shared inputs concurrently, while still keeping both phases inside ROI.
     if (use_cpu) {
         for (int worker = 0; worker < cpu_workers; ++worker) {
             cpu_threads.emplace_back(cpu_shared_load, csr, shared_node_value,
@@ -200,6 +206,7 @@ main(int argc, char **argv)
 
     int iterations = 0;
     if (use_gpu) {
+        // After the CPU phase drains, execute the original GPU MIS path.
         int block_size = 128;
         int num_blocks = (num_nodes + block_size - 1) / block_size;
         dim3 threads(block_size, 1, 1);

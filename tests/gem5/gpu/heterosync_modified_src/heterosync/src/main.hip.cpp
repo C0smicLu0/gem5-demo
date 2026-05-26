@@ -1,12 +1,14 @@
 #include <cstdio>
 #include <string>
 #include <assert.h>
+#include <atomic>
 #include <errno.h>
 #include <limits.h>
 #include <math.h>
+#include <pthread.h>
+#include <sched.h>
 #include <stdlib.h>
 #include <string.h>
-#include <thread>
 #include <vector>
 #include "hip/hip_runtime.h"
 #include "hip_error.h"
@@ -46,6 +48,22 @@ struct HeteroOptions
   int cpu_workers = 0;
   int gpu_cus = -1;
   bool debug_log = false;
+};
+
+struct CpuLoadPlan
+{
+  const float *storage = NULL;
+  size_t elements = 0;
+  volatile float *sinks = NULL;
+  std::atomic<bool> start;
+  int actual_workers = 0;
+  bool debug_log = false;
+};
+
+struct CpuWorkerState
+{
+  CpuLoadPlan *plan = NULL;
+  int worker_id = 0;
 };
 
 static bool parseNonNegativeInt(const char *value, int *parsed)
@@ -97,23 +115,55 @@ static void validateOptions(const HeteroOptions &options)
   }
 }
 
-static void cpuLoadWorker(float *storage, int begin, int end, int worker_id,
-                          bool debug_log)
+static void *
+cpu_shared_load_entry(void *opaque)
 {
-  for (int index = end - 1; index >= begin; --index) {
-    storage[index] = storage[index] + static_cast<float>(worker_id + index);
+  CpuWorkerState *state = static_cast<CpuWorkerState *>(opaque);
+  CpuLoadPlan *plan = state->plan;
+
+  while (!plan->start.load(std::memory_order_acquire)) {
+    sched_yield();
   }
 
-  if (begin < end) {
-    for (int index = begin; index < end; ++index) {
-      storage[index] = static_cast<float>(index);
+  const int worker_count = plan->actual_workers;
+  const size_t begin =
+      (plan->elements * static_cast<size_t>(state->worker_id)) /
+      static_cast<size_t>(worker_count);
+  const size_t end =
+      (plan->elements * static_cast<size_t>(state->worker_id + 1)) /
+      static_cast<size_t>(worker_count);
+  float local = 0.0f;
+
+  printf("CPU worker %d started shared load [%zu, %zu)\n",
+         state->worker_id, begin, end);
+  fflush(stdout);
+
+  for (size_t i = begin; i < end; ++i) {
+    local += plan->storage[i] * 0.000001f;
+  }
+
+  const size_t range_size = end - begin;
+  const size_t extra_window = range_size < 1024 ? range_size : 1024;
+  const int extra_rounds = state->worker_id % 4;
+  for (int round = 0; round < extra_rounds; ++round) {
+    for (size_t i = 0; i < extra_window; ++i) {
+      local += plan->storage[begin + i] * 0.0000001f;
     }
   }
 
-  if (debug_log) {
-    fprintf(stdout, "CPU worker %d finished heterosync load\n", worker_id);
+  plan->sinks[state->worker_id] = local;
+
+  printf("CPU worker %d finished shared load [%zu, %zu)\n",
+         state->worker_id, begin, end);
+  fflush(stdout);
+
+  if (plan->debug_log) {
+    fprintf(stdout, "CPU worker %d finished heterosync shared load\n",
+            state->worker_id);
     fflush(stdout);
   }
+
+  return NULL;
 }
 
 __global__ void cpuLoadWarmupKernel()
@@ -1571,9 +1621,36 @@ int main(int argc, char ** argv)
     assert(MAX_WGS <= cpuLockData->maxBufferSize);
   }
 
-  std::vector<std::thread> cpuThreads;
-  if (options.cpu_workers > 0) {
-    cpuThreads.reserve(options.cpu_workers);
+  const size_t maxUsefulWorkers =
+      (numStorageLocs < INT_MAX) ? static_cast<size_t>(numStorageLocs) :
+                                   static_cast<size_t>(INT_MAX);
+  const int plannedWorkers =
+      static_cast<int>(std::min(static_cast<size_t>(options.cpu_workers),
+                                maxUsefulWorkers));
+  std::vector<pthread_t> cpuThreads(plannedWorkers);
+  std::vector<CpuWorkerState> cpuStates(plannedWorkers);
+  std::vector<float> cpuSinks(plannedWorkers, 0.0f);
+  CpuLoadPlan cpuPlan;
+  cpuPlan.storage = storage;
+  cpuPlan.elements = static_cast<size_t>(numStorageLocs);
+  cpuPlan.sinks = cpuSinks.data();
+  cpuPlan.start.store(false, std::memory_order_relaxed);
+  cpuPlan.actual_workers = 0;
+  cpuPlan.debug_log = options.debug_log;
+  size_t createdWorkers = 0;
+  pthread_attr_t threadAttr;
+  int attrStatus = pthread_attr_init(&threadAttr);
+  if (attrStatus != 0) {
+    fprintf(stderr, "pthread_attr_init failed: %s\n", strerror(attrStatus));
+    exit(-1);
+  }
+  size_t stackBytes = PTHREAD_STACK_MIN;
+  attrStatus = pthread_attr_setstacksize(&threadAttr, stackBytes);
+  if (attrStatus != 0) {
+    fprintf(stderr, "pthread_attr_setstacksize(%zu) failed: %s\n",
+            stackBytes, strerror(attrStatus));
+    pthread_attr_destroy(&threadAttr);
+    exit(-1);
   }
 
   // NOTE: region of interest begins here
@@ -1590,21 +1667,61 @@ int main(int argc, char ** argv)
   hipError_t warmupErr = hipDeviceSynchronize();
   checkError(warmupErr, "hipDeviceSynchronize (cpuLoadWarmupKernel)");
 
-  if (options.cpu_workers > 0) {
-    for (int worker = 0; worker < options.cpu_workers; ++worker) {
-      int begin = (numStorageLocs * worker) / options.cpu_workers;
-      int end = (numStorageLocs * (worker + 1)) / options.cpu_workers;
-      cpuThreads.emplace_back(cpuLoadWorker, storage, begin, end, worker,
-                              options.debug_log);
-    }
-    for (std::thread &thread : cpuThreads) {
-      thread.join();
-    }
-    cpuThreads.clear();
-
-    for (int i = 0; i < numStorageLocs; ++i) { storage[i] = i; }
-    for (int i = 0; i < (NUM_CU * MAX_WGS * 2); ++i) { perCUBarriers[i] = 0; }
+  if (options.debug_log) {
+    printf("HeteroSync shared-load split: storage=%d cpu_requested=%d "
+           "cpu_planned=%d roi_order=cpu-then-gpu\n",
+           numStorageLocs, options.cpu_workers, plannedWorkers);
+    fflush(stdout);
   }
+
+  printf("Before CPU worker creation\n");
+  fflush(stdout);
+  for (int worker = 0; worker < plannedWorkers; ++worker) {
+    cpuStates[worker].plan = &cpuPlan;
+    cpuStates[worker].worker_id = worker;
+    int createStatus = pthread_create(&cpuThreads[worker], &threadAttr,
+                                      cpu_shared_load_entry,
+                                      &cpuStates[worker]);
+    if (createStatus != 0) {
+      printf("Failed to create CPU worker %d/%d: %s\n",
+             worker, options.cpu_workers, strerror(createStatus));
+      fflush(stdout);
+      break;
+    }
+    ++createdWorkers;
+  }
+  pthread_attr_destroy(&threadAttr);
+
+  cpuPlan.actual_workers = static_cast<int>(createdWorkers);
+  if (createdWorkers > 0) {
+    cpuPlan.start.store(true, std::memory_order_release);
+  }
+
+  printf("Created %zu/%d CPU workers\n", createdWorkers,
+         options.cpu_workers);
+  fflush(stdout);
+  if (createdWorkers == 0 && options.cpu_workers > 0) {
+    printf("CPU shared load skipped because no worker threads were created\n");
+    fflush(stdout);
+  }
+
+  printf("Before CPU workers join\n");
+  fflush(stdout);
+  for (size_t index = 0; index < createdWorkers; ++index) {
+    printf("Joining CPU worker thread %zu\n", index);
+    fflush(stdout);
+    int joinStatus = pthread_join(cpuThreads[index], NULL);
+    if (joinStatus != 0) {
+      fprintf(stderr, "pthread_join(%zu) failed: %s\n",
+              index, strerror(joinStatus));
+      exit(-1);
+    }
+    printf("Joined CPU worker thread %zu\n", index);
+    fflush(stdout);
+  }
+
+  printf("CPU workers joined\n");
+  fflush(stdout);
 
   switch (syncPrim) {
     case 0: // atomic tree barrier
@@ -1722,9 +1839,6 @@ int main(int argc, char ** argv)
 
   // NOTE: Can end simulation here if don't care about output checking
   hipDeviceSynchronize();
-  for (std::thread &thread : cpuThreads) {
-    thread.join();
-  }
 
 #if defined(GEM5_FUSION)
   m5_work_end(0, 0);

@@ -88,6 +88,10 @@ Hal Finkel (hfinkel@anl.gov)
 #include <cstring>
 #include <cstdio>
 #include <ctime>
+#include <errno.h>
+#include <limits.h>
+#include <pthread.h>
+#include <sched.h>
 #include <stdexcept>
 #include <thread>
 #include <assert.h>
@@ -111,36 +115,71 @@ void configureHaccExecution(const HaccExecutionOptions& options)
 }
 
 namespace {
-const size_t HACC_CPU_LOAD_WORDS = 2048;
-
-void
-haccCpuSharedInputLoad(const POSVEL_T *x, const POSVEL_T *y,
-                       const POSVEL_T *z, const POSVEL_T *mass,
-                       ID_T particleCount, POSVEL_T *scratch,
-                       size_t workerStride, size_t worker,
-                       size_t iterations, bool debugLog)
+struct HaccCpuLoadPlan
 {
-  POSVEL_T *workerScratch = scratch + worker * workerStride;
-  if (particleCount <= 0) {
-    return;
+  const POSVEL_T *x = NULL;
+  const POSVEL_T *y = NULL;
+  const POSVEL_T *z = NULL;
+  const POSVEL_T *mass = NULL;
+  size_t particles = 0;
+  volatile POSVEL_T *sinks = NULL;
+  std::atomic<bool> start;
+  int actual_workers = 0;
+  bool debug_log = false;
+};
+
+struct HaccCpuWorkerState
+{
+  HaccCpuLoadPlan *plan = NULL;
+  int worker_id = 0;
+};
+
+static void *
+hacc_cpu_shared_load_entry(void *opaque)
+{
+  HaccCpuWorkerState *state = static_cast<HaccCpuWorkerState *>(opaque);
+  HaccCpuLoadPlan *plan = state->plan;
+
+  while (!plan->start.load(std::memory_order_acquire)) {
+    sched_yield();
   }
 
-  for (size_t repeat = 0; repeat < iterations; ++repeat) {
-    for (size_t index = 0; index < workerStride; ++index) {
-      ID_T particle =
-        static_cast<ID_T>((repeat + index + worker) % particleCount);
-      workerScratch[index] =
-        x[particle] * static_cast<POSVEL_T>(0.25) +
-        y[particle] * static_cast<POSVEL_T>(0.25) +
-        z[particle] * static_cast<POSVEL_T>(0.25) +
-        mass[particle] * static_cast<POSVEL_T>(0.25);
+  const int worker_count = plan->actual_workers;
+  const size_t begin =
+    (plan->particles * static_cast<size_t>(state->worker_id)) /
+    static_cast<size_t>(worker_count);
+  const size_t end =
+    (plan->particles * static_cast<size_t>(state->worker_id + 1)) /
+    static_cast<size_t>(worker_count);
+  POSVEL_T local = 0.0;
+
+  printf("HACC CPU worker %d started shared load [%zu, %zu)\n",
+         state->worker_id, begin, end);
+  fflush(stdout);
+
+  for (size_t i = begin; i < end; ++i) {
+    local += (plan->x[i] + plan->y[i] + plan->z[i] + plan->mass[i]) *
+             static_cast<POSVEL_T>(0.000001);
+  }
+
+  const size_t range_size = end - begin;
+  const size_t extra_window = range_size < 64 ? range_size : 64;
+  const int extra_rounds = state->worker_id % 4;
+  for (int round = 0; round < extra_rounds; ++round) {
+    for (size_t i = 0; i < extra_window; ++i) {
+      local += (plan->x[begin + i] + plan->mass[begin + i]) *
+               static_cast<POSVEL_T>(0.0000001);
     }
   }
 
-  if (debugLog) {
-    fprintf(stdout, "HACC CPU shared-input worker %zu finished\n", worker);
+  plan->sinks[state->worker_id] = local;
+  if (plan->debug_log) {
+    printf("HACC CPU worker %d finished shared load [%zu, %zu)\n",
+           state->worker_id, begin, end);
     fflush(stdout);
   }
+
+  return NULL;
 }
 }
 #ifdef __HIPCC__
@@ -1655,61 +1694,128 @@ void RCBForceTree<TDPTS>::runInternodeForceTasks(
   const bool runGpu = !haccExecution.cpuOnly;
   const size_t activeCpuWorkers = haccExecution.gpuOnly ? 0 :
     static_cast<size_t>(haccExecution.cpuWorkers);
-  const size_t cpuLoadIterations =
-    std::max(static_cast<size_t>(1),
-             std::max(tasks.size() / 2,
-                      activeCpuWorkers > 0 ?
-                        static_cast<size_t>(particleCount) /
-                          (2 * activeCpuWorkers) + 1 :
-                        static_cast<size_t>(particleCount) / 2 + 1));
   if (haccExecution.debugLog) {
     fprintf(stdout,
-            "HACC ROI staged mode: force-tasks=%zu cpu-workers=%zu "
-            "cpu-iters=%zu gpu=%s\n",
-            tasks.size(), activeCpuWorkers, cpuLoadIterations,
+            "HACC split: particles=%zu force_tasks=%zu cpu_requested=%d "
+            "cpu_planned=%zu cpu_shared_load=blocked-full-array "
+            "roi_order=cpu-then-gpu gpu=%s\n",
+            static_cast<size_t>(particleCount), tasks.size(),
+            haccExecution.cpuWorkers, activeCpuWorkers,
             runGpu ? "enabled" : "off");
     fflush(stdout);
   }
 
 #if defined(GEM5_FUSION)
+  printf("Before m5_work_begin\n");
+  fflush(stdout);
   m5_work_begin(0, 0);
+  printf("After m5_work_begin\n");
+  fflush(stdout);
 #elif defined(GEM5_FS)
   map_m5_mem();
+  printf("Before m5_work_begin\n");
+  fflush(stdout);
   m5_work_begin_addr(0, 0);
+  printf("After m5_work_begin\n");
+  fflush(stdout);
 #endif
 
   if (activeCpuWorkers > 0) {
-    std::vector<std::thread> cpuThreads;
-    cpuThreads.reserve(activeCpuWorkers);
-    std::vector<POSVEL_T> cpuLoadScratch(activeCpuWorkers *
-                                         HACC_CPU_LOAD_WORDS);
+    // Block the shared particle arrays across workers before replaying
+    // the original GPU force-task path in the same ROI.
+    std::vector<pthread_t> cpuThreads(activeCpuWorkers);
+    std::vector<HaccCpuWorkerState> cpuStates(activeCpuWorkers);
+    std::vector<POSVEL_T> cpuSinks(activeCpuWorkers, 0.0);
+    HaccCpuLoadPlan cpuPlan;
+    cpuPlan.x = xx;
+    cpuPlan.y = yy;
+    cpuPlan.z = zz;
+    cpuPlan.mass = mass;
+    cpuPlan.particles = static_cast<size_t>(particleCount);
+    cpuPlan.sinks = cpuSinks.data();
+    cpuPlan.start.store(false, std::memory_order_relaxed);
+    cpuPlan.actual_workers = 0;
+    cpuPlan.debug_log = haccExecution.debugLog;
+    size_t createdWorkers = 0;
+
+    printf("Before CPU worker creation\n");
+    fflush(stdout);
     for (size_t worker = 0; worker < activeCpuWorkers; ++worker) {
-      cpuThreads.emplace_back([this, &cpuLoadScratch, worker,
-                               iterations = cpuLoadIterations]() {
-        haccCpuSharedInputLoad(xx, yy, zz, mass, particleCount,
-                               cpuLoadScratch.data(), HACC_CPU_LOAD_WORDS,
-                               worker, iterations, haccExecution.debugLog);
-      });
+      cpuStates[worker].plan = &cpuPlan;
+      cpuStates[worker].worker_id = static_cast<int>(worker);
+      int createStatus = pthread_create(&cpuThreads[worker], NULL,
+                                        hacc_cpu_shared_load_entry,
+                                        &cpuStates[worker]);
+      if (createStatus != 0) {
+        printf("Failed to create HACC CPU worker %zu/%zu: %s\n",
+               worker, activeCpuWorkers, strerror(createStatus));
+        fflush(stdout);
+        break;
+      }
+      ++createdWorkers;
     }
-    for (std::thread &thread : cpuThreads) {
-      thread.join();
+
+    cpuPlan.actual_workers = static_cast<int>(createdWorkers);
+    if (createdWorkers > 0) {
+      cpuPlan.start.store(true, std::memory_order_release);
     }
+
+    printf("Created %zu/%zu HACC CPU workers\n", createdWorkers,
+           activeCpuWorkers);
+    fflush(stdout);
+    if (createdWorkers == 0 && activeCpuWorkers > 0) {
+      printf("HACC CPU shared load skipped because no worker threads were created\n");
+      fflush(stdout);
+    }
+
+    printf("Before CPU workers join\n");
+    fflush(stdout);
+    for (size_t worker = 0; worker < createdWorkers; ++worker) {
+      printf("Joining HACC CPU worker thread %zu\n", worker);
+      fflush(stdout);
+      int joinStatus = pthread_join(cpuThreads[worker], NULL);
+      if (joinStatus != 0) {
+        fprintf(stderr, "pthread_join(%zu) failed: %s\n",
+                worker, strerror(joinStatus));
+        exit(EXIT_FAILURE);
+      }
+      printf("Joined HACC CPU worker thread %zu\n", worker);
+      fflush(stdout);
+    }
+    printf("CPU workers joined\n");
+    fflush(stdout);
   }
 
   if (runGpu) {
+    printf("Before GPU force task replay\n");
+    fflush(stdout);
     for (size_t task = 0; task < tasks.size(); ++task) {
       runGpuForceTask(tasks[task], lists);
     }
+    printf("After GPU force task replay\n");
+    fflush(stdout);
   }
 
 #ifdef __HIPCC__
+  printf("Before hipDeviceSynchronize\n");
+  fflush(stdout);
   hipDeviceSynchronize();
+  printf("After hipDeviceSynchronize\n");
+  fflush(stdout);
 #endif
 
 #if defined(GEM5_FUSION)
+  printf("Before m5_work_end\n");
+  fflush(stdout);
   m5_work_end(0, 0);
+  printf("After m5_work_end\n");
+  fflush(stdout);
 #elif defined(GEM5_FS)
+  printf("Before m5_work_end\n");
+  fflush(stdout);
   m5_work_end_addr(0, 0);
+  printf("After m5_work_end\n");
+  fflush(stdout);
 #endif
 }
 
