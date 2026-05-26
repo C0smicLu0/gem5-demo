@@ -51,9 +51,22 @@ cpu_shared_load(const csr_array *csr, const int *node_value, int num_nodes,
     }
 }
 
+static int *
+copy_to_managed(const int *src, size_t count, const char *name)
+{
+    // Build a single managed copy of each read-only input so the CPU phase and
+    // the later GPU phase both consume the same backing storage.
+    int *dst = managed_int_array(count, name);
+    memcpy(dst, src, count * sizeof(int));
+    return dst;
+}
+
 int
 main(int argc, char **argv)
 {
+    fprintf(stderr, "CHK main entry\n");
+    fflush(stderr);
+
     char *tmpchar;
     int num_nodes;
     int num_edges;
@@ -72,6 +85,8 @@ main(int argc, char **argv)
     }
 
     srand(7);
+    fprintf(stderr, "CHK options parsed\n");
+    fflush(stderr);
 
     csr_array *csr;
     if (file_format == 1) {
@@ -113,28 +128,32 @@ main(int argc, char **argv)
         s_array[i] = 0;
     }
 
-    int *row_d = nullptr;
-    int *col_d = nullptr;
+    int *shared_row = copy_to_managed(csr->row_array, num_nodes + 1,
+                                      "shared_row");
+    int *shared_col = copy_to_managed(csr->col_array, num_edges,
+                                      "shared_col");
+    int *shared_node_value = copy_to_managed(node_value, num_nodes,
+                                             "shared_node_value");
+    fprintf(stderr, "CHK after shared input copies\n");
+    fflush(stderr);
+
+    csr_array shared_csr = {};
+    shared_csr.row_array = shared_row;
+    shared_csr.col_array = shared_col;
+
+    csr->freeArrays();
+    free(csr);
+    csr = &shared_csr;
+    fprintf(stderr, "CHK after original csr free\n");
+    fflush(stderr);
+
     int *c_array_d = nullptr;
     int *c_array_u_d = nullptr;
     int *s_array_d = nullptr;
-    int *node_value_d = nullptr;
     int *min_array_d = nullptr;
     int *stop_d = nullptr;
 
     if (use_gpu) {
-        err = hipMalloc(&row_d, num_nodes * sizeof(int));
-        if (err != hipSuccess) {
-            fprintf(stderr, "ERROR: hipMalloc row_d => %s\n",
-                    hipGetErrorString(err));
-            return -1;
-        }
-        err = hipMalloc(&col_d, num_edges * sizeof(int));
-        if (err != hipSuccess) {
-            fprintf(stderr, "ERROR: hipMalloc col_d => %s\n",
-                    hipGetErrorString(err));
-            return -1;
-        }
         err = hipMalloc(&stop_d, sizeof(int));
         if (err != hipSuccess) {
             fprintf(stderr, "ERROR: hipMalloc stop_d => %s\n",
@@ -165,19 +184,13 @@ main(int argc, char **argv)
                     hipGetErrorString(err));
             return -1;
         }
-        err = hipMalloc(&node_value_d, num_nodes * sizeof(int));
-        if (err != hipSuccess) {
-            fprintf(stderr, "ERROR: hipMalloc node_value_d => %s\n",
-                    hipGetErrorString(err));
-            return -1;
-        }
     }
 
     std::vector<std::thread> cpu_threads;
     if (use_cpu) {
         cpu_threads.reserve(cpu_workers);
     }
-    fprintf(stderr, "CHK before cpu worker creation\n");
+    fprintf(stderr, "CHK before ROI\n");
     fflush(stderr);
 
 #ifdef GEM5_FUSION
@@ -189,12 +202,16 @@ main(int argc, char **argv)
     map_m5_mem();
     m5_work_begin_addr(0, 0);
 #endif
+    fprintf(stderr, "CHK after ROI begin\n");
+    fflush(stderr);
 
     // Run the CPU shared-load phase first so CPU and GPU do not touch the
     // shared inputs concurrently, while still keeping both phases inside ROI.
     if (use_cpu) {
+        fprintf(stderr, "CHK before CPU shared phase\n");
+        fflush(stderr);
         for (int worker = 0; worker < cpu_workers; ++worker) {
-            cpu_threads.emplace_back(cpu_shared_load, csr, node_value,
+            cpu_threads.emplace_back(cpu_shared_load, csr, shared_node_value,
                                      num_nodes, num_edges, worker,
                                      cpu_workers, options.debug_log);
         }
@@ -202,33 +219,15 @@ main(int argc, char **argv)
             thread.join();
         }
         cpu_threads.clear();
+        fprintf(stderr, "CHK after CPU shared phase\n");
+        fflush(stderr);
     }
 
     int iterations = 0;
     if (use_gpu) {
+        fprintf(stderr, "CHK before GPU phase\n");
+        fflush(stderr);
         // After the CPU phase drains, execute the original GPU MIS path.
-        err = hipMemcpy(row_d, csr->row_array, num_nodes * sizeof(int),
-                        hipMemcpyHostToDevice);
-        if (err != hipSuccess) {
-            fprintf(stderr, "ERROR: hipMemcpy row_d => %s\n",
-                    hipGetErrorString(err));
-            return -1;
-        }
-        err = hipMemcpy(col_d, csr->col_array, num_edges * sizeof(int),
-                        hipMemcpyHostToDevice);
-        if (err != hipSuccess) {
-            fprintf(stderr, "ERROR: hipMemcpy col_d => %s\n",
-                    hipGetErrorString(err));
-            return -1;
-        }
-        err = hipMemcpy(node_value_d, node_value, num_nodes * sizeof(int),
-                        hipMemcpyHostToDevice);
-        if (err != hipSuccess) {
-            fprintf(stderr, "ERROR: hipMemcpy node_value_d => %s\n",
-                    hipGetErrorString(err));
-            return -1;
-        }
-
         int block_size = 128;
         int num_blocks = (num_nodes + block_size - 1) / block_size;
         dim3 threads(block_size, 1, 1);
@@ -238,6 +237,8 @@ main(int argc, char **argv)
                            0, s_array_d, c_array_d, c_array_u_d, num_nodes,
                            num_edges);
         hipDeviceSynchronize();
+        fprintf(stderr, "CHK after init kernel\n");
+        fflush(stderr);
         err = hipGetLastError();
         if (err != hipSuccess) {
             fprintf(stderr, "ERROR: init kernel (%s)\n",
@@ -256,14 +257,14 @@ main(int argc, char **argv)
             }
 
             hipLaunchKernelGGL(HIP_KERNEL_NAME(mis1), dim3(grid),
-                               dim3(threads), 0, 0, row_d, col_d,
-                               node_value_d,
+                               dim3(threads), 0, 0, csr->row_array,
+                               csr->col_array, shared_node_value,
                                s_array_d, c_array_d, min_array_d, stop_d,
                                num_nodes, num_edges);
 
             hipLaunchKernelGGL(HIP_KERNEL_NAME(mis2), dim3(grid),
-                               dim3(threads), 0, 0, row_d, col_d,
-                               node_value_d,
+                               dim3(threads), 0, 0, csr->row_array,
+                               csr->col_array, shared_node_value,
                                s_array_d, c_array_d, c_array_u_d, min_array_d,
                                num_nodes, num_edges);
 
@@ -282,6 +283,8 @@ main(int argc, char **argv)
         }
 
         hipDeviceSynchronize();
+        fprintf(stderr, "CHK after GPU loop iterations=%d\n", iterations);
+        fflush(stderr);
         err = hipMemcpy(s_array, s_array_d, num_nodes * sizeof(int),
                         hipMemcpyDeviceToHost);
         if (err != hipSuccess) {
@@ -289,6 +292,8 @@ main(int argc, char **argv)
                     hipGetErrorString(err));
             return -1;
         }
+        fprintf(stderr, "CHK after result copyback\n");
+        fflush(stderr);
     }
 
     for (auto &thread : cpu_threads) {
@@ -303,22 +308,22 @@ main(int argc, char **argv)
     m5_work_end_addr(0, 0);
     unmap_m5_mem();
 #endif
+    fprintf(stderr, "CHK after ROI end\n");
+    fflush(stderr);
 
     printf("number of iterations: %d\n", iterations);
     print_vector(s_array, num_nodes);
 
     free(node_value);
     free(s_array);
-    csr->freeArrays();
-    free(csr);
+    hipFree(shared_row);
+    hipFree(shared_col);
+    hipFree(shared_node_value);
 
     if (use_gpu) {
-        hipFree(row_d);
-        hipFree(col_d);
         hipFree(c_array_d);
         hipFree(c_array_u_d);
         hipFree(s_array_d);
-        hipFree(node_value_d);
         hipFree(min_array_d);
         hipFree(stop_d);
     }
