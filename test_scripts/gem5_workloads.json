@@ -34,16 +34,16 @@
       "workload_args": "--download-resource lulesh --download-dir /gem5/tests/gem5/resources --mem-size=8GiB --dgpu --gfx-version gfx900 -c /gem5/tests/gem5/resources/lulesh --options '0.01 2'"
     },
     "pannotia-bc-1k-128k": {
-      "workload_args": "--mem-size=8GB -c /gem5/tests/gem5/gpu/pannotia_modified_src/pannotia/bc/bin/bc.gem5 --options /gem5/tests/gem5/resources/gpu-pannotia/pannotia-datasets/1k_128k.gr"
+      "workload_args": "--mem-size=8GB -c /gem5/tests/gem5/gpu/pannotia_modified_src/pannotia/bc/bin/bc.gem5 --options /gem5/tests/gem5/gpu/pannotia_modified_src/pannotia/datasets/1k_128k.gr"
     },
     "pannotia-color-maxmin-1k-128k": {
-      "workload_args": "--mem-size=8GB -c /gem5/tests/gem5/gpu/pannotia_modified_src/pannotia/color/bin/color_maxmin.gem5 --options '/gem5/tests/gem5/resources/gpu-pannotia/pannotia-datasets/1k_128k.gr 0'"
+      "workload_args": "--mem-size=8GB -c /gem5/tests/gem5/gpu/pannotia_modified_src/pannotia/color/bin/color_maxmin.gem5 --options '/gem5/tests/gem5/gpu/pannotia_modified_src/pannotia/datasets/1k_128k.gr 0'"
     },
     "pannotia-color-max-1k-128k": {
-      "workload_args": "--mem-size=8GB -c /gem5/tests/gem5/gpu/pannotia_modified_src/pannotia/color/bin/color_max.gem5 --options '/gem5/tests/gem5/resources/gpu-pannotia/pannotia-datasets/1k_128k.gr 0'"
+      "workload_args": "--mem-size=8GB -c /gem5/tests/gem5/gpu/pannotia_modified_src/pannotia/color/bin/color_max.gem5 --options '/gem5/tests/gem5/gpu/pannotia_modified_src/pannotia/datasets/1k_128k.gr 0'"
     },
     "pannotia-mis-hip-1k-128k": {
-      "workload_args": "--mem-size=8GiB -c /gem5/tests/gem5/gpu/pannotia_modified_src/pannotia/mis/bin/mis_hip.gem5 --options '/gem5/tests/gem5/resources/gpu-pannotia/pannotia-datasets/1k_128k.gr 0'"
+      "workload_args": "--mem-size=8GiB -c /gem5/tests/gem5/gpu/pannotia_modified_src/pannotia/mis/bin/mis_hip.gem5 --options '/gem5/tests/gem5/gpu/pannotia_modified_src/pannotia/datasets/1k_128k.gr 0'"
     },
     "rodinia-btree": {
       "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin_mod/b+tree.out --options 'file /gem5/tests/gem5/resources/rodinia_hip/data/b+tree/mil.txt command /gem5/tests/gem5/resources/rodinia_hip/data/b+tree/command.txt'"
