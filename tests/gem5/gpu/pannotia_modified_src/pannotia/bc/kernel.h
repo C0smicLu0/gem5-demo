@@ -213,6 +213,120 @@ clean_1d_array(const int source, int *dist_array, float *sigma, float *rho,
 }
 
 /**
+ * @brief   array set 1D for a contiguous batch of sources
+ * @param   source_base   First source vertex in the batch
+ * @param   active_sources Number of active sources in the batch
+ * @param   dist_array    Flattened distance array
+ * @param   sigma         Flattened sigma array
+ * @param   rho           Flattened rho array
+ * @param   num_nodes     Number of vertices
+ */
+__global__ void
+clean_1d_array_batched(const int source_base, const int active_sources,
+                       int *dist_array, float *sigma, float *rho,
+                       const int num_nodes)
+{
+    int idx = hipBlockIdx_x * hipBlockDim_x + hipThreadIdx_x;
+    int total_states = active_sources * num_nodes;
+
+    if (idx < total_states) {
+        int source_slot = idx / num_nodes;
+        int tid = idx - source_slot * num_nodes;
+        int source = source_base + source_slot;
+
+        sigma[idx] = 0;
+        if (tid == source) {
+            rho[idx] = 1;
+            dist_array[idx] = 0;
+        } else {
+            rho[idx] = 0;
+            dist_array[idx] = -1;
+        }
+    }
+}
+
+/**
+ * @brief   BFS traversal for a contiguous batch of sources
+ */
+__global__ void
+bfs_kernel_batched(int *row, int *col, int *d, float *rho, int *cont,
+                   const int num_nodes, const int num_edges, const int dist,
+                   const int active_sources)
+{
+    int idx = hipBlockIdx_x * hipBlockDim_x + hipThreadIdx_x;
+    int total_states = active_sources * num_nodes;
+
+    if (idx < total_states) {
+        int source_slot = idx / num_nodes;
+        int tid = idx - source_slot * num_nodes;
+        int state_base = source_slot * num_nodes;
+
+        if (d[idx] == dist) {
+            int start = row[tid];
+            int end;
+            if (tid + 1 < num_nodes)
+                end = row[tid + 1];
+            else
+                end = num_edges;
+
+            for (int edge = start; edge < end; edge++) {
+                int w = col[edge];
+                int neighbor_idx = state_base + w;
+                if (d[neighbor_idx] < 0) {
+                    *cont = 1;
+                    d[neighbor_idx] = dist + 1;
+                }
+                if (d[neighbor_idx] == (dist + 1)) {
+                    atomicAdd(&rho[neighbor_idx], rho[idx]);
+                }
+            }
+        }
+    }
+}
+
+/**
+ * @brief   Back traversal for a contiguous batch of sources
+ */
+__global__ void
+backtrack_kernel_batched(int *row, int *col, int *d, float *rho,
+                         float *sigma, const int num_nodes,
+                         const int num_edges, const int dist,
+                         const int source_base, const int active_sources,
+                         float *bc)
+{
+    int idx = hipBlockIdx_x * hipBlockDim_x + hipThreadIdx_x;
+    int total_states = active_sources * num_nodes;
+
+    if (idx < total_states) {
+        int source_slot = idx / num_nodes;
+        int tid = idx - source_slot * num_nodes;
+        int state_base = source_slot * num_nodes;
+        int source = source_base + source_slot;
+
+        if (d[idx] == dist - 1) {
+            int start = row[tid];
+            int end;
+            if (tid + 1 < num_nodes)
+                end = row[tid + 1];
+            else
+                end = num_edges;
+
+            for (int edge = start; edge < end; edge++) {
+                int w = col[edge];
+                int neighbor_idx = state_base + w;
+                if (d[neighbor_idx] == dist - 2) {
+                    atomicAdd(&sigma[neighbor_idx],
+                              rho[neighbor_idx] / rho[idx] * (1 + sigma[idx]));
+                }
+            }
+
+            if (tid != source)
+                atomicAdd(&bc[tid], sigma[idx]);
+        }
+    }
+}
+
+/**
  * @brief   array set 2D
  * @param   p           Dependency array
  * @param   num_nodes   Number of vertices

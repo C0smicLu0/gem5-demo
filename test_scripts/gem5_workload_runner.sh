@@ -437,6 +437,13 @@ add_resource_workload_args() {
           ;;
       esac
       ;;
+    pannotia-mis-hip-*)
+      case " ${selected_profiles} " in
+        *" cores.args1 "*|*" args1 "*)
+          cpu_offset=3
+          ;;
+      esac
+      ;;
   esac
 
   cpu_workers=$(( cpus - cpu_offset ))

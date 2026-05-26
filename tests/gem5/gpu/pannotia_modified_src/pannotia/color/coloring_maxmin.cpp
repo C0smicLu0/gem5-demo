@@ -249,8 +249,12 @@ int main(int argc, char **argv)
         CHECK(hipMemcpy(node_value_d, node_value, num_nodes * sizeof(int),
                         hipMemcpyHostToDevice));
 
-        int block_size = 256;
-        int num_blocks = (num_nodes + block_size - 1) / block_size;
+        const int block_size = 64;
+        const int min_blocks = (num_nodes + block_size - 1) / block_size;
+        const int gpu_cus = options.gpu_cus > 0 ? resolve_gpu_cus(options) : 1;
+        // Overdecompose the launch so a small graph still creates enough
+        // blocks to keep many CUs active.
+        const int num_blocks = std::max(min_blocks, gpu_cus * 4);
         dim3 threads(block_size, 1, 1);
         dim3 grid(num_blocks, 1, 1);
         int stop = 1;

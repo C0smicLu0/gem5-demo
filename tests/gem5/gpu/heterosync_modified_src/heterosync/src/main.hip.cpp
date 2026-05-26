@@ -170,6 +170,23 @@ __global__ void cpuLoadWarmupKernel()
 {
 }
 
+__global__ void gpuOccupancyDummyKernel(float *output, int iterations,
+                                        int num_ldst)
+{
+  const int tid = hipBlockIdx_x * hipBlockDim_x + hipThreadIdx_x;
+  float value = static_cast<float>(tid);
+
+  for (int repeat = 0; repeat < NUM_REPEATS; ++repeat) {
+    for (int iter = 0; iter < iterations; ++iter) {
+      for (int step = 0; step < num_ldst; ++step) {
+        value = value * MAD_MUL + MAD_ADD + static_cast<float>(step);
+      }
+    }
+  }
+
+  output[tid] = value;
+}
+
 /*
   Helper function to do data accesses for golden checking code.
 */
@@ -1360,9 +1377,6 @@ int main(int argc, char ** argv)
   const char * syncPrim_str = argv[1];
   NUM_LDST = atoi(argv[2]);
   numWGs = atoi(argv[3]);
-  if (options.gpu_cus > 0 && numWGs < options.gpu_cus) {
-    numWGs = options.gpu_cus;
-  }
   assert(numWGs <= MAX_WGS);
   const int NUM_ITERS = atoi(argv[4]);
   const int numWGs_perCU = (int)ceil((float)numWGs / NUM_CU);
@@ -1726,6 +1740,29 @@ int main(int argc, char ** argv)
   printf("CPU workers joined\n");
   fflush(stdout);
 
+  const int dummyWGs =
+      (options.gpu_cus > numWGs) ? (options.gpu_cus - numWGs) : 0;
+  hipStream_t dummyStream = NULL;
+  float *dummyOutput = NULL;
+  if (dummyWGs > 0) {
+    const size_t dummyThreads =
+        static_cast<size_t>(dummyWGs) * NUM_WIS_PER_WG;
+    hipHostMalloc(&dummyOutput, sizeof(float) * dummyThreads);
+    hipError_t streamErr =
+        hipStreamCreateWithFlags(&dummyStream, hipStreamNonBlocking);
+    checkError(streamErr, "hipStreamCreateWithFlags (dummy)");
+    hipLaunchKernelGGL(gpuOccupancyDummyKernel, dim3(dummyWGs),
+                       dim3(NUM_WIS_PER_WG), 0, dummyStream, dummyOutput,
+                       NUM_ITERS, NUM_LDST);
+    hipError_t dummyLaunchErr = hipGetLastError();
+    checkError(dummyLaunchErr, "gpuOccupancyDummyKernel launch");
+    if (options.debug_log) {
+      printf("Launched %d dummy GPU workgroups to fill unused CUs\n",
+             dummyWGs);
+      fflush(stdout);
+    }
+  }
+
   switch (syncPrim) {
     case 0: // atomic tree barrier
       invokeAtomicTreeBarrier(storage, perCUBarriers, NUM_ITERS);
@@ -1842,6 +1879,12 @@ int main(int argc, char ** argv)
 
   // NOTE: Can end simulation here if don't care about output checking
   hipDeviceSynchronize();
+  if (dummyStream != NULL) {
+    hipStreamDestroy(dummyStream);
+  }
+  if (dummyOutput != NULL) {
+    hipHostFree(dummyOutput);
+  }
 
 #if defined(GEM5_FUSION)
   m5_work_end(0, 0);

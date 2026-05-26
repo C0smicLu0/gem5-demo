@@ -108,10 +108,16 @@ using namespace std;
 // use a single global variable to avoid bugs with nthreads and numThreads below
 int overallThreads = 1;
 static HaccExecutionOptions haccExecution = {0, 0, false, false, false};
+static const int kMaxHaccGpuStreams = 16;
+static const int kHaccDummyBlocksPerCu = 8;
+static const int kHaccDummyThreadsPerBlock = 256;
+static const int kHaccDummyRounds = 64;
 
 void configureHaccExecution(const HaccExecutionOptions& options)
 {
   haccExecution = options;
+  int requestedStreams = options.gpuCus > 0 ? options.gpuCus : 1;
+  overallThreads = std::max(1, std::min(requestedStreams, kMaxHaccGpuStreams));
 }
 
 namespace {
@@ -196,6 +202,28 @@ hacc_cpu_shared_load_entry(void *opaque)
 #define ALIGNY(n) ((n+TILEY-1)/TILEY*TILEY)  //Rounds an integer to align with TILEY
 
 cudaDeviceSelector __selector__;
+
+__global__ void
+hacc_dummy_fill_kernel(const POSVEL_T *xx, const POSVEL_T *yy,
+                       const POSVEL_T *zz, const POSVEL_T *mass,
+                       ID_T particleCount, POSVEL_T *out, int rounds)
+{
+  const unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  POSVEL_T accum = 0.0;
+
+  if (particleCount <= 0) {
+    out[tid] = accum;
+    return;
+  }
+
+  for (int round = 0; round < rounds; ++round) {
+    ID_T particle = static_cast<ID_T>((tid + round) % particleCount);
+    accum += (xx[particle] + yy[particle] + zz[particle] + mass[particle]) *
+             static_cast<POSVEL_T>(0.000001);
+  }
+
+  out[tid] = accum;
+}
 #endif
 
 #ifdef __HIPCC__
@@ -1097,7 +1125,8 @@ static inline void nbody1(ID_T count, ID_T count1, const POSVEL_T*  xx, const PO
   hipLaunchKernelGGL(Step10_cuda_kernel, dim3(blocks), dim3(threads), 0, stream, count,count1,xx,yy,zz,mass,xx1,yy1,zz1,mass1, vx, vy, vz, fsrrmax2, rsm2, fcoeff);
   cudaCheckError();
 
-  hipStreamSynchronize(stream);
+  // Let callers queue several batched launches across multiple streams and
+  // synchronize once after the full GPU replay.
   //exit(0);
 #else
 
@@ -1632,6 +1661,7 @@ void RCBForceTree<TDPTS>::runCpuForceTask(
 template <int TDPTS>
 void RCBForceTree<TDPTS>::runGpuForceTaskRange(
     const std::vector<ForceTask> &tasks, size_t beginTask, size_t endTask,
+    int streamIndex,
     const std::vector<InteractionList> &lists)
 {
   const ForceTask &task = tasks[beginTask];
@@ -1642,7 +1672,7 @@ void RCBForceTree<TDPTS>::runGpuForceTaskRange(
            xx + task.target, yy + task.target,
            zz + task.target, mass + task.target, list.x, list.y, list.z,
            list.mass, vx + task.target, vy + task.target, vz + task.target,
-           m_fl, m_fcoeff, fsrrmax, rsm, stream_v[0]);
+           m_fl, m_fcoeff, fsrrmax, rsm, stream_v[streamIndex]);
 #else
   for (size_t current = beginTask; current < endTask; ++current) {
     runCpuForceTask(tasks[current], lists);
@@ -1700,6 +1730,9 @@ void RCBForceTree<TDPTS>::runInternodeForceTasks(
   const bool runGpu = !haccExecution.cpuOnly;
   const size_t activeCpuWorkers = haccExecution.gpuOnly ? 0 :
     static_cast<size_t>(haccExecution.cpuWorkers);
+#ifdef __HIPCC__
+  POSVEL_T *dummyOut = NULL;
+#endif
   if (haccExecution.debugLog) {
     fprintf(stdout,
             "HACC split: particles=%zu force_tasks=%zu cpu_requested=%d "
@@ -1795,6 +1828,25 @@ void RCBForceTree<TDPTS>::runInternodeForceTasks(
   if (runGpu) {
     printf("Before GPU force task replay\n");
     fflush(stdout);
+    const int gpuStreams = std::max(1, std::min(numThreads,
+      static_cast<int>(tasks.size())));
+    int nextStream = 0;
+    int dummyBlocks = 0;
+    int dummyThreads = 0;
+    size_t dummyCount = 0;
+#ifdef __HIPCC__
+    if (haccExecution.gpuCus > 0) {
+      dummyBlocks = std::max(1, haccExecution.gpuCus) * kHaccDummyBlocksPerCu;
+      dummyThreads = kHaccDummyThreadsPerBlock;
+      dummyCount = static_cast<size_t>(gpuStreams) *
+                   static_cast<size_t>(dummyBlocks) *
+                   static_cast<size_t>(dummyThreads);
+      hipMallocManaged(&dummyOut, sizeof(POSVEL_T) * dummyCount);
+      for (size_t i = 0; i < dummyCount; ++i) {
+        dummyOut[i] = 0;
+      }
+    }
+#endif
     size_t beginTask = 0;
     while (beginTask < tasks.size()) {
       size_t endTask = beginTask + 1;
@@ -1806,7 +1858,22 @@ void RCBForceTree<TDPTS>::runInternodeForceTasks(
                tasks[endTask - 1].target + 1) {
         ++endTask;
       }
-      runGpuForceTaskRange(tasks, beginTask, endTask, lists);
+      runGpuForceTaskRange(tasks, beginTask, endTask, nextStream, lists);
+#ifdef __HIPCC__
+      if (dummyOut != NULL) {
+        const int dummyStream = gpuStreams > 1 ?
+          ((nextStream + 1) % gpuStreams) : nextStream;
+        POSVEL_T *dummyBase = dummyOut +
+          (static_cast<size_t>(dummyStream) *
+           static_cast<size_t>(dummyBlocks) *
+           static_cast<size_t>(dummyThreads));
+        hipLaunchKernelGGL(hacc_dummy_fill_kernel,
+                           dim3(dummyBlocks), dim3(dummyThreads), 0,
+                           stream_v[dummyStream], xx, yy, zz, mass,
+                           particleCount, dummyBase, kHaccDummyRounds);
+      }
+#endif
+      nextStream = (nextStream + 1) % gpuStreams;
       beginTask = endTask;
     }
     printf("After GPU force task replay\n");
@@ -1819,6 +1886,9 @@ void RCBForceTree<TDPTS>::runInternodeForceTasks(
   hipDeviceSynchronize();
   printf("After hipDeviceSynchronize\n");
   fflush(stdout);
+  if (dummyOut != NULL) {
+    hipFree(dummyOut);
+  }
 #endif
 
 #if defined(GEM5_FUSION)

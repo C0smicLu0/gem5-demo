@@ -184,6 +184,7 @@ protected:
                        const std::vector<InteractionList> &lists);
   void runGpuForceTaskRange(const std::vector<ForceTask> &tasks,
                             size_t beginTask, size_t endTask,
+                            int streamIndex,
                             const std::vector<InteractionList> &lists);
 
 protected:

@@ -78,10 +78,12 @@ __global__ void color1(int *row, int *col, int *node_value, int *color_array,
                        const int range_begin, const int range_end,
                        const int num_nodes, const int num_edges)
 {
-    // Get my thread workitem id
+    // Overdecompose the launch so small graphs can still fan out across many
+    // CUs. Each thread walks a strided slice of the vertex range.
     int tid = range_begin + hipBlockIdx_x * hipBlockDim_x + hipThreadIdx_x;
+    int stride = hipGridDim_x * hipBlockDim_x;
 
-    if (tid < range_end && tid < num_nodes) {
+    for (; tid < range_end && tid < num_nodes; tid += stride) {
         // If the vertex is still not colored
         if (color_array[tid] == -1) {
 
@@ -124,10 +126,10 @@ __global__ void color2(int *node_value, int *color_array, int *max_d,
                        const int range_end, const int num_nodes,
                        const int num_edges)
 {
-    // Get my workitem id
     int tid = range_begin + hipBlockIdx_x * hipBlockDim_x + hipThreadIdx_x;
+    int stride = hipGridDim_x * hipBlockDim_x;
 
-    if (tid < range_end && tid < num_nodes) {
+    for (; tid < range_end && tid < num_nodes; tid += stride) {
         // If the vertex is still not colored
         if (color_array[tid] == -1) {
             if (node_value[tid] >= max_d[tid])
@@ -135,7 +137,6 @@ __global__ void color2(int *node_value, int *color_array, int *max_d,
                 color_array[tid] = color;
         }
     }
-
 }
 
 #endif // KERNEL_MAX_H

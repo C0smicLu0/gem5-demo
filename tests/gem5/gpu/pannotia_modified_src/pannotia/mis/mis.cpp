@@ -1,4 +1,5 @@
 #include "hip/hip_runtime.h"
+#include <atomic>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,36 +24,51 @@ void dump2file(int *adjmatrix, int num_nodes);
 void print_vector(int *vector, int num);
 void print_vectorf(float *vector, int num);
 
-static void
-cpu_shared_load(const csr_array *csr, const int *node_value, int num_nodes,
-                int num_edges, int worker_id, int worker_count,
-                bool debug_log)
+struct CpuLoadPlan
 {
+    const csr_array *csr = NULL;
+    const int *node_value = NULL;
+    int num_nodes = 0;
+    int num_edges = 0;
+    std::atomic<bool> start;
+    int actual_workers = 0;
+    bool debug_log = false;
+};
+
+static void
+cpu_shared_load(const CpuLoadPlan *plan, int worker_id)
+{
+    while (!plan->start.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+
     fprintf(stderr, "CPU worker %d start\n", worker_id);
     fflush(stderr);
     long long local_sum = 0;
     // Split the vertex set into contiguous blocks so each worker touches a
     // stable region of the shared graph inputs without writing any MIS state.
-    int worker_begin = (num_nodes * worker_id) / worker_count;
-    int worker_end = (num_nodes * (worker_id + 1)) / worker_count;
+    int worker_begin = (plan->num_nodes * worker_id) / plan->actual_workers;
+    int worker_end =
+        (plan->num_nodes * (worker_id + 1)) / plan->actual_workers;
     for (int tid = worker_begin; tid < worker_end; ++tid) {
-        int start = csr->row_array[tid];
-        int end = (tid + 1 < num_nodes) ? csr->row_array[tid + 1]
-                                        : num_edges;
-        local_sum += node_value[tid];
-        for (int edge = start; edge < end; ++edge) {
-            local_sum += csr->col_array[edge] & 1;
+        int start = plan->csr->row_array[tid];
+        int end = (tid + 1 < plan->num_nodes) ? plan->csr->row_array[tid + 1]
+                                              : plan->num_edges;
+        int cpu_end = start + ((end - start) < 32 ? (end - start) : 32);
+        local_sum += plan->node_value[tid];
+        for (int edge = start; edge < cpu_end; ++edge) {
+            local_sum += plan->csr->col_array[edge] & 1;
         }
     }
 
-    fprintf(stderr, "CPU worker %d finish sum=%lld\n", worker_id, local_sum);
-    fflush(stderr);
-
-    if (debug_log) {
+    if (plan->debug_log) {
         fprintf(stdout, "CPU worker %d finished MIS shared load sum=%lld\n",
                 worker_id, local_sum);
         fflush(stdout);
     }
+
+    fprintf(stderr, "CPU worker %d finish sum=%lld\n", worker_id, local_sum);
+    fflush(stderr);
 }
 
 static int *
@@ -177,8 +193,16 @@ main(int argc, char **argv)
     }
 
     std::vector<std::thread> cpu_threads;
+    CpuLoadPlan cpu_plan;
     if (use_cpu) {
         cpu_threads.reserve(cpu_workers);
+        cpu_plan.csr = csr;
+        cpu_plan.node_value = shared_node_value;
+        cpu_plan.num_nodes = num_nodes;
+        cpu_plan.num_edges = num_edges;
+        cpu_plan.start.store(false, std::memory_order_relaxed);
+        cpu_plan.actual_workers = 0;
+        cpu_plan.debug_log = options.debug_log;
     }
 
 #ifdef GEM5_FUSION
@@ -199,9 +223,11 @@ main(int argc, char **argv)
         for (int worker = 0; worker < cpu_workers; ++worker) {
             fprintf(stderr, "Launching CPU worker %d\n", worker);
             fflush(stderr);
-            cpu_threads.emplace_back(cpu_shared_load, csr, shared_node_value,
-                                     num_nodes, num_edges, worker,
-                                     cpu_workers, options.debug_log);
+            cpu_threads.emplace_back(cpu_shared_load, &cpu_plan, worker);
+        }
+        cpu_plan.actual_workers = cpu_workers;
+        if (cpu_workers > 0) {
+            cpu_plan.start.store(true, std::memory_order_release);
         }
         for (int worker = 0; worker < cpu_workers; ++worker) {
             fprintf(stderr, "Joining CPU worker %d\n", worker);
