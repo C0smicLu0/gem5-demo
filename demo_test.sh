@@ -114,10 +114,54 @@ run_workload_background()
 
     local extra_args=("$@")
 
-    printf '\n==> Running %s (tag=%s) in background\n' "$workload" "$tag"
+    printf '\n[START] %s (tag=%s)\n' "$workload" "$tag"
     bash "$WORKLOAD_RUNNER" run "$workload" "$tag" "${extra_args[@]}" &
     background_pids+=("$!")
     background_labels+=("${workload}:${tag}")
+}
+
+monitor_background_runs()
+{
+    local -a pending_pids=("${background_pids[@]}")
+    local -a pending_labels=("${background_labels[@]}")
+    local completed=0
+    local failed=0
+
+    printf '\nMonitoring %d background runs...\n' "${#pending_pids[@]}"
+
+    while ((${#pending_pids[@]} > 0)); do
+        local index
+
+        for index in "${!pending_pids[@]}"; do
+            local pid="${pending_pids[$index]}"
+            local label="${pending_labels[$index]}"
+
+            if kill -0 "$pid" 2>/dev/null; then
+                continue
+            fi
+
+            if wait "$pid"; then
+                completed=$((completed + 1))
+                printf '[DONE] %s (%d/%d)\n' \
+                    "$label" "$completed" "${#background_pids[@]}"
+            else
+                failed=$((failed + 1))
+                printf '[FAIL] %s (%d failed)\n' "$label" "$failed" >&2
+            fi
+
+            unset 'pending_pids[index]'
+            unset 'pending_labels[index]'
+            pending_pids=("${pending_pids[@]}")
+            pending_labels=("${pending_labels[@]}")
+            break
+        done
+
+        sleep 1
+    done
+
+    if ((failed > 0)); then
+        die "${failed} background run(s) failed"
+    fi
 }
 
 load_core_profiles()
@@ -204,10 +248,6 @@ for profile_name in "${core_profiles[@]}"; do
         --profile "cores.${profile_name}" "${runner_args[@]}"
 done
 
-for index in "${!background_pids[@]}"; do
-    if ! wait "${background_pids[$index]}"; then
-        die "background run failed: ${background_labels[$index]}"
-    fi
-done
+monitor_background_runs
 
 printf '\nDemo test completed.\n'

@@ -133,6 +133,8 @@ ell_array *csr2ell(csr_array *csr, int num_nodes, int num_edges, int fill)
 
 csr_array *parseMetis(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool directed)
 {
+    fprintf(stderr, "CHK parseMetis entry\n");
+    fflush(stderr);
     int cnt = 0;
     unsigned int lineno = 0;
     char *line = NULL;
@@ -172,6 +174,9 @@ csr_array *parseMetis(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool di
 
             printf("Read from file: num_nodes = %d, num_edges = %d\n", num_nodes, num_edges);
             tuple_array = (CooTuple *)malloc(sizeof(CooTuple) * num_edges);
+            fprintf(stderr, "CHK parseMetis allocated tuple_array edges=%d\n",
+                    num_edges);
+            fflush(stderr);
         } else if (lineno > 0) { //from the second line
 
             char *pch;
@@ -215,6 +220,9 @@ csr_array *parseMetis(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool di
     int *row_array = (int *)malloc((num_nodes + 1) * sizeof(int));
     int *col_array = (int *)malloc(num_edges * sizeof(int));
     int *data_array = (int *)malloc(num_edges * sizeof(int));
+    fprintf(stderr, "CHK parseMetis allocated csr arrays nodes=%d edges=%d cnt=%d\n",
+            num_nodes, num_edges, cnt);
+    fflush(stderr);
 
     int row_cnt = 0;
     int prev = -1;
@@ -237,9 +245,13 @@ csr_array *parseMetis(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool di
     csr->col_array = col_array;
     csr->data_array = data_array;
 
+    fprintf(stderr, "CHK parseMetis before cleanup\n");
+    fflush(stderr);
     free(tuple_array);
     free(line);
     fclose(stream);
+    fprintf(stderr, "CHK parseMetis return\n");
+    fflush(stderr);
 
     return csr;
 }
@@ -247,9 +259,11 @@ csr_array *parseMetis(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool di
 
 csr_array *parseCOO(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool directed)
 {
+    fprintf(stderr, "CHK parseCOO entry\n");
+    fflush(stderr);
     int cnt = 0;
     unsigned int lineno = 0;
-    char sp[2], a, p;
+    char sp[3], a, p;
     char *line = NULL;
     int num_nodes = 0, num_edges = 0;
     size_t len = 128;
@@ -261,17 +275,30 @@ csr_array *parseCOO(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool dire
         fprintf(stderr, "Error when opening file: %s\n", tmpchar);
         exit(1);
     }
+    fprintf(stderr, "CHK parseCOO fopen ok\n");
+    fflush(stderr);
     CooTuple *tuple_array = NULL;
 
     printf("Opening file: %s\n", tmpchar);
+    fflush(stdout);
+    fprintf(stderr, "CHK parseCOO before getline loop\n");
+    fflush(stderr);
 
     while ((nread = getline(&line, &len, stream)) != -1) {
+        fprintf(stderr, "CHK parseCOO line firstchar=%d lineno=%u\n",
+                line[0], lineno);
+        fflush(stderr);
         int head, tail, weight;
         switch (line[0]) {
         case 'c':
             break;
         case 'p':
-            sscanf(line, "%c %s %d %d", &p, sp, p_num_nodes, p_num_edges);
+            fprintf(stderr, "CHK parseCOO before sscanf header\n");
+            fflush(stderr);
+            sscanf(line, "%c %2s %d %d", &p, sp, p_num_nodes, p_num_edges);
+            fprintf(stderr, "CHK parseCOO after sscanf header sp=%s nodes=%d edges=%d\n",
+                    sp, *p_num_nodes, *p_num_edges);
+            fflush(stderr);
 
             if (!directed) {
                 *p_num_edges = *p_num_edges * 2;
@@ -285,6 +312,9 @@ csr_array *parseCOO(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool dire
 
             printf("Read from file: num_nodes = %d, num_edges = %d\n", num_nodes, num_edges);
             tuple_array = (CooTuple *)malloc(sizeof(CooTuple) * num_edges);
+            fprintf(stderr, "CHK parseCOO allocated tuple_array edges=%d\n",
+                    num_edges);
+            fflush(stderr);
             break;
         case 'a':
             sscanf(line, "%c %d %d %d", &a, &head, &tail, &weight);
@@ -325,6 +355,9 @@ csr_array *parseCOO(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool dire
     int *row_array = (int *)malloc((num_nodes + 1) * sizeof(int));
     int *col_array = (int *)malloc(num_edges * sizeof(int));
     int *data_array = (int *)malloc(num_edges * sizeof(int));
+    fprintf(stderr, "CHK parseCOO allocated csr arrays nodes=%d edges=%d cnt=%d\n",
+            num_nodes, num_edges, cnt);
+    fflush(stderr);
 
     int row_cnt = 0;
     int prev = -1;
@@ -352,6 +385,8 @@ csr_array *parseCOO(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool dire
     csr->col_array = col_array;
     csr->data_array = data_array;
 
+    fprintf(stderr, "CHK parseCOO before cleanup\n");
+    fflush(stderr);
     return csr;
 
 }
@@ -462,7 +497,7 @@ double_edges *parseCOO_doubleEdge(char* tmpchar, int *p_num_nodes, int *p_num_ed
 {
     int cnt = 0;
     unsigned int lineno = 0;
-    char sp[2], a, p;
+    char sp[3], a, p;
     char *line = NULL;
     int num_nodes = 0, num_edges = 0;
     size_t len = 128;
@@ -485,7 +520,7 @@ double_edges *parseCOO_doubleEdge(char* tmpchar, int *p_num_nodes, int *p_num_ed
         case 'c':
             break;
         case 'p':
-            sscanf(line, "%c %s %d %d", &p, sp, p_num_nodes, p_num_edges);
+            sscanf(line, "%c %2s %d %d", &p, sp, p_num_nodes, p_num_edges);
 
             if (!directed) {
                 *p_num_edges = *p_num_edges * 2;
@@ -814,7 +849,7 @@ csr_array *parseCOO_transpose(char* tmpchar, int *p_num_nodes, int *p_num_edges,
 {
     int cnt = 0;
     unsigned int lineno = 0;
-    char sp[2], a, p;
+    char sp[3], a, p;
     char *line = NULL;
     int num_nodes = 0, num_edges = 0;
     size_t len = 128;
@@ -839,7 +874,7 @@ csr_array *parseCOO_transpose(char* tmpchar, int *p_num_nodes, int *p_num_edges,
         case 'p':
             fflush(stdout);
 
-            sscanf(line, "%c %s %d %d", &p, sp, p_num_nodes, p_num_edges);
+            sscanf(line, "%c %2s %d %d", &p, sp, p_num_nodes, p_num_edges);
 
             if (!directed) {
                 *p_num_edges = *p_num_edges * 2;
