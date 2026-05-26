@@ -1360,6 +1360,9 @@ int main(int argc, char ** argv)
   const char * syncPrim_str = argv[1];
   NUM_LDST = atoi(argv[2]);
   numWGs = atoi(argv[3]);
+  if (options.gpu_cus > 0 && numWGs < options.gpu_cus) {
+    numWGs = options.gpu_cus;
+  }
   assert(numWGs <= MAX_WGS);
   const int NUM_ITERS = atoi(argv[4]);
   const int numWGs_perCU = (int)ceil((float)numWGs / NUM_CU);

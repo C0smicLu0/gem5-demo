@@ -56,21 +56,6 @@
  *                                                                                  *
 \************************************************************************************/
 
-#include "hip/hip_runtime.h"
-#include <stdio.h>
-#include <stdlib.h>
-
-static void checkedHipMallocManagedInt(int **ptr, size_t count,
-                                       const char *name)
-{
-    hipError_t err = hipMallocManaged((void **)ptr, count * sizeof(int));
-    if (err != hipSuccess) {
-        fprintf(stderr, "ERROR: hipMallocManaged %s %s\n", name,
-                hipGetErrorString(err));
-        exit(1);
-    }
-}
-
 typedef struct csr_array_t {
 
     int *row_array;
@@ -82,95 +67,6 @@ typedef struct csr_array_t {
     int *data_array_t;
 
 } csr_array;
-
-static csr_array *allocateCSR(int num_nodes, int num_edges, const char *name)
-{
-    csr_array *csr = (csr_array *)calloc(1, sizeof(csr_array));
-    if (!csr) {
-        fprintf(stderr, "ERROR: malloc csr %s\n", name);
-        exit(1);
-    }
-
-    char buffer[128];
-    snprintf(buffer, sizeof(buffer), "%s.row_array", name);
-    checkedHipMallocManagedInt(&csr->row_array, num_nodes + 1, buffer);
-    snprintf(buffer, sizeof(buffer), "%s.col_array", name);
-    checkedHipMallocManagedInt(&csr->col_array, num_edges, buffer);
-    snprintf(buffer, sizeof(buffer), "%s.data_array", name);
-    checkedHipMallocManagedInt(&csr->data_array, num_edges, buffer);
-
-    snprintf(buffer, sizeof(buffer), "%s.row_array_t", name);
-    checkedHipMallocManagedInt(&csr->row_array_t, num_nodes + 1, buffer);
-    snprintf(buffer, sizeof(buffer), "%s.col_array_t", name);
-    checkedHipMallocManagedInt(&csr->col_array_t, num_edges, buffer);
-    snprintf(buffer, sizeof(buffer), "%s.data_array_t", name);
-    checkedHipMallocManagedInt(&csr->data_array_t, num_edges, buffer);
-
-    return csr;
-}
-
-static void checkedHipMemcpyInt(int *dst, const int *src, size_t count,
-                                const char *name)
-{
-    hipError_t err =
-        hipMemcpy(dst, src, count * sizeof(int), hipMemcpyDefault);
-    if (err != hipSuccess) {
-        fprintf(stderr, "ERROR: hipMemcpy %s %s\n", name,
-                hipGetErrorString(err));
-        exit(1);
-    }
-}
-
-static void copyCSR(csr_array *dst, const csr_array *src, int num_nodes,
-                    int num_edges)
-{
-    checkedHipMemcpyInt(dst->row_array, src->row_array, num_nodes + 1,
-                        "row_array");
-    checkedHipMemcpyInt(dst->col_array, src->col_array, num_edges,
-                        "col_array");
-    checkedHipMemcpyInt(dst->data_array, src->data_array, num_edges,
-                        "data_array");
-    checkedHipMemcpyInt(dst->row_array_t, src->row_array_t, num_nodes + 1,
-                        "row_array_t");
-    checkedHipMemcpyInt(dst->col_array_t, src->col_array_t, num_edges,
-                        "col_array_t");
-    checkedHipMemcpyInt(dst->data_array_t, src->data_array_t, num_edges,
-                        "data_array_t");
-
-    hipError_t err = hipDeviceSynchronize();
-    if (err != hipSuccess) {
-        fprintf(stderr, "ERROR: hipDeviceSynchronize copyCSR %s\n",
-                hipGetErrorString(err));
-        exit(1);
-    }
-}
-
-static void freeCSR(csr_array *csr)
-{
-    if (!csr) {
-        return;
-    }
-
-    if (csr->row_array) {
-        hipFree(csr->row_array);
-    }
-    if (csr->col_array) {
-        hipFree(csr->col_array);
-    }
-    if (csr->data_array) {
-        hipFree(csr->data_array);
-    }
-    if (csr->row_array_t) {
-        hipFree(csr->row_array_t);
-    }
-    if (csr->col_array_t) {
-        hipFree(csr->col_array_t);
-    }
-    if (csr->data_array_t) {
-        hipFree(csr->data_array_t);
-    }
-    free(csr);
-}
 
 
 typedef struct cooedgetuple {
@@ -302,18 +198,33 @@ csr_array * parseCOO(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool dir
     std::stable_sort(tuple_array,   tuple_array   + num_edges, compare);
     std::stable_sort(tuple_array_t, tuple_array_t + num_edges, compare);
 
-    csr_array *csr = allocateCSR(num_nodes, num_edges, "cpu_csr");
+    int *row_array = (int *)malloc((num_nodes + 1) * sizeof(int));
+    int *col_array = (int *)malloc(num_edges * sizeof(int));
+    int *data_array = (int *)malloc(num_edges * sizeof(int));
 
-    transform(tuple_array,   num_edges, csr->row_array,   csr->col_array,
-              csr->data_array);
-    transform(tuple_array_t, num_edges, csr->row_array_t, csr->col_array_t,
-              csr->data_array_t);
+    int *row_array_t = (int *)malloc((num_nodes + 1) * sizeof(int));
+    int *col_array_t = (int *)malloc(num_edges * sizeof(int));
+    int *data_array_t = (int *)malloc(num_edges * sizeof(int));
+
+    transform(tuple_array,   num_edges, row_array,   col_array, data_array);
+    transform(tuple_array_t, num_edges, row_array_t, col_array_t, data_array_t);
 
     fclose(fptr);
     free(tuple_array);
     free(tuple_array_t);
 
+    csr_array *csr = (csr_array *)malloc(sizeof(csr_array));
+
+    csr -> row_array = row_array;
+    csr -> col_array = col_array;
+    csr -> data_array = data_array;
+
+    csr -> row_array_t  = row_array_t;
+    csr -> col_array_t  = col_array_t;
+    csr -> data_array_t = data_array_t;
+
     free(line);
 
     return csr;
 }
+

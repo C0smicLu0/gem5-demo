@@ -19,8 +19,6 @@
 #endif
 
 #define RANGE 2048
-#define CPU_EDGE_STRIDE 8
-
 void dump2file(int *adjmatrix, int num_nodes);
 void print_vector(int *vector, int num);
 void print_vectorf(float *vector, int num);
@@ -30,22 +28,28 @@ cpu_shared_load(const csr_array *csr, const int *node_value, int num_nodes,
                 int num_edges, int worker_id, int worker_count,
                 bool debug_log)
 {
+    fprintf(stderr, "CPU worker %d start\n", worker_id);
+    fflush(stderr);
     long long local_sum = 0;
-    // Spread workers across the vertex set so every worker touches the same
-    // shared graph inputs without writing any MIS state.
-    for (int tid = worker_id; tid < num_nodes; tid += worker_count) {
+    // Split the vertex set into contiguous blocks so each worker touches a
+    // stable region of the shared graph inputs without writing any MIS state.
+    int worker_begin = (num_nodes * worker_id) / worker_count;
+    int worker_end = (num_nodes * (worker_id + 1)) / worker_count;
+    for (int tid = worker_begin; tid < worker_end; ++tid) {
         int start = csr->row_array[tid];
         int end = (tid + 1 < num_nodes) ? csr->row_array[tid + 1]
                                         : num_edges;
         local_sum += node_value[tid];
-        for (int edge = start; edge < end; edge += CPU_EDGE_STRIDE) {
+        for (int edge = start; edge < end; ++edge) {
             local_sum += csr->col_array[edge] & 1;
         }
     }
 
+    fprintf(stderr, "CPU worker %d finish sum=%lld\n", worker_id, local_sum);
+    fflush(stderr);
+
     if (debug_log) {
-        fprintf(stdout,
-                "CPU worker %d finished MIS shared load sum=%lld\n",
+        fprintf(stdout, "CPU worker %d finished MIS shared load sum=%lld\n",
                 worker_id, local_sum);
         fflush(stdout);
     }
@@ -64,9 +68,6 @@ copy_to_managed(const int *src, size_t count, const char *name)
 int
 main(int argc, char **argv)
 {
-    fprintf(stderr, "CHK main entry\n");
-    fflush(stderr);
-
     char *tmpchar;
     int num_nodes;
     int num_edges;
@@ -85,8 +86,6 @@ main(int argc, char **argv)
     }
 
     srand(7);
-    fprintf(stderr, "CHK options parsed\n");
-    fflush(stderr);
 
     csr_array *csr;
     if (file_format == 1) {
@@ -97,9 +96,6 @@ main(int argc, char **argv)
         fprintf(stderr, "reserve for future\n");
         exit(1);
     }
-    fprintf(stderr, "CHK after parse\n");
-    fflush(stderr);
-
     int cpu_workers = resolve_cpu_workers(options);
     int gpu_cus = resolve_gpu_cus(options);
     bool use_gpu = !options.cpu_only;
@@ -134,9 +130,6 @@ main(int argc, char **argv)
                                       "shared_col");
     int *shared_node_value = copy_to_managed(node_value, num_nodes,
                                              "shared_node_value");
-    fprintf(stderr, "CHK after shared input copies\n");
-    fflush(stderr);
-
     csr_array shared_csr = {};
     shared_csr.row_array = shared_row;
     shared_csr.col_array = shared_col;
@@ -144,9 +137,6 @@ main(int argc, char **argv)
     csr->freeArrays();
     free(csr);
     csr = &shared_csr;
-    fprintf(stderr, "CHK after original csr free\n");
-    fflush(stderr);
-
     int *c_array_d = nullptr;
     int *c_array_u_d = nullptr;
     int *s_array_d = nullptr;
@@ -190,8 +180,6 @@ main(int argc, char **argv)
     if (use_cpu) {
         cpu_threads.reserve(cpu_workers);
     }
-    fprintf(stderr, "CHK before ROI\n");
-    fflush(stderr);
 
 #ifdef GEM5_FUSION
     m5_work_begin(0, 0);
@@ -202,30 +190,34 @@ main(int argc, char **argv)
     map_m5_mem();
     m5_work_begin_addr(0, 0);
 #endif
-    fprintf(stderr, "CHK after ROI begin\n");
-    fflush(stderr);
 
     // Run the CPU shared-load phase first so CPU and GPU do not touch the
     // shared inputs concurrently, while still keeping both phases inside ROI.
     if (use_cpu) {
-        fprintf(stderr, "CHK before CPU shared phase\n");
+        fprintf(stderr, "CPU shared phase begin workers=%d\n", cpu_workers);
         fflush(stderr);
         for (int worker = 0; worker < cpu_workers; ++worker) {
+            fprintf(stderr, "Launching CPU worker %d\n", worker);
+            fflush(stderr);
             cpu_threads.emplace_back(cpu_shared_load, csr, shared_node_value,
                                      num_nodes, num_edges, worker,
                                      cpu_workers, options.debug_log);
         }
-        for (auto &thread : cpu_threads) {
-            thread.join();
+        for (int worker = 0; worker < cpu_workers; ++worker) {
+            fprintf(stderr, "Joining CPU worker %d\n", worker);
+            fflush(stderr);
+            cpu_threads[worker].join();
+            fprintf(stderr, "Joined CPU worker %d\n", worker);
+            fflush(stderr);
         }
         cpu_threads.clear();
-        fprintf(stderr, "CHK after CPU shared phase\n");
+        fprintf(stderr, "CPU shared phase done\n");
         fflush(stderr);
     }
 
     int iterations = 0;
     if (use_gpu) {
-        fprintf(stderr, "CHK before GPU phase\n");
+        fprintf(stderr, "GPU phase begin\n");
         fflush(stderr);
         // After the CPU phase drains, execute the original GPU MIS path.
         int block_size = 128;
@@ -237,7 +229,7 @@ main(int argc, char **argv)
                            0, s_array_d, c_array_d, c_array_u_d, num_nodes,
                            num_edges);
         hipDeviceSynchronize();
-        fprintf(stderr, "CHK after init kernel\n");
+        fprintf(stderr, "GPU init kernel done\n");
         fflush(stderr);
         err = hipGetLastError();
         if (err != hipSuccess) {
@@ -283,7 +275,7 @@ main(int argc, char **argv)
         }
 
         hipDeviceSynchronize();
-        fprintf(stderr, "CHK after GPU loop iterations=%d\n", iterations);
+        fprintf(stderr, "GPU loop done iterations=%d\n", iterations);
         fflush(stderr);
         err = hipMemcpy(s_array, s_array_d, num_nodes * sizeof(int),
                         hipMemcpyDeviceToHost);
@@ -292,7 +284,7 @@ main(int argc, char **argv)
                     hipGetErrorString(err));
             return -1;
         }
-        fprintf(stderr, "CHK after result copyback\n");
+        fprintf(stderr, "GPU result copyback done\n");
         fflush(stderr);
     }
 
@@ -308,7 +300,7 @@ main(int argc, char **argv)
     m5_work_end_addr(0, 0);
     unmap_m5_mem();
 #endif
-    fprintf(stderr, "CHK after ROI end\n");
+    fprintf(stderr, "ROI done\n");
     fflush(stderr);
 
     printf("number of iterations: %d\n", iterations);

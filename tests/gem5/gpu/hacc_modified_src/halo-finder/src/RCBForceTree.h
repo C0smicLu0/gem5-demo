@@ -182,8 +182,9 @@ protected:
                               const std::vector<InteractionList> &lists);
   void runCpuForceTask(const ForceTask &task,
                        const std::vector<InteractionList> &lists);
-  void runGpuForceTask(const ForceTask &task,
-                       const std::vector<InteractionList> &lists);
+  void runGpuForceTaskRange(const std::vector<ForceTask> &tasks,
+                            size_t beginTask, size_t endTask,
+                            const std::vector<InteractionList> &lists);
 
 protected:
   ID_T   particleCount;         // Total particles

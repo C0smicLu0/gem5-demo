@@ -1630,17 +1630,23 @@ void RCBForceTree<TDPTS>::runCpuForceTask(
 }
 
 template <int TDPTS>
-void RCBForceTree<TDPTS>::runGpuForceTask(
-    const ForceTask &task, const std::vector<InteractionList> &lists)
+void RCBForceTree<TDPTS>::runGpuForceTaskRange(
+    const std::vector<ForceTask> &tasks, size_t beginTask, size_t endTask,
+    const std::vector<InteractionList> &lists)
 {
+  const ForceTask &task = tasks[beginTask];
+  const size_t taskCount = endTask - beginTask;
 #ifdef __HIPCC__
   const InteractionList &list = lists[task.list];
-  ::nbody1(1, list.count, xx + task.target, yy + task.target,
+  ::nbody1(static_cast<ID_T>(taskCount), list.count,
+           xx + task.target, yy + task.target,
            zz + task.target, mass + task.target, list.x, list.y, list.z,
            list.mass, vx + task.target, vy + task.target, vz + task.target,
            m_fl, m_fcoeff, fsrrmax, rsm, stream_v[0]);
 #else
-  runCpuForceTask(task, lists);
+  for (size_t current = beginTask; current < endTask; ++current) {
+    runCpuForceTask(tasks[current], lists);
+  }
 #endif
 }
 
@@ -1789,8 +1795,19 @@ void RCBForceTree<TDPTS>::runInternodeForceTasks(
   if (runGpu) {
     printf("Before GPU force task replay\n");
     fflush(stdout);
-    for (size_t task = 0; task < tasks.size(); ++task) {
-      runGpuForceTask(tasks[task], lists);
+    size_t beginTask = 0;
+    while (beginTask < tasks.size()) {
+      size_t endTask = beginTask + 1;
+      // Leaf construction emits contiguous targets for the same interaction
+      // list, so batch those runs into a single GPU launch.
+      while (endTask < tasks.size() &&
+             tasks[endTask].list == tasks[beginTask].list &&
+             tasks[endTask].target ==
+               tasks[endTask - 1].target + 1) {
+        ++endTask;
+      }
+      runGpuForceTaskRange(tasks, beginTask, endTask, lists);
+      beginTask = endTask;
     }
     printf("After GPU force task replay\n");
     fflush(stdout);
