@@ -11,6 +11,23 @@ DEFAULT_GEM5_OPT_ARGS="-re"
 DEFAULT_CONFIG_ARGS="--reg-alloc-policy=dynamic --l1d_size=512B --l1i_size=512B --l1d_assoc=2 --l1i_assoc=2 --l2_size=1KiB --l2_assoc=2 --l2-latency=50 --l2-hit-latency=18 --cpu-to-dir-latency=120 --recycle-latency=10 --l3-data-latency=20 --l3-tag-latency=15 --num-tbes=256 --num-subcaches=4 --network=garnet --router-latency=1 --link-latency=1 -n3 -u237"
 DEFAULT_WORKLOAD_ARGS="--download-resource square-gpu-test --download-resource-version 1.0.0 --download-dir /gem5/tests/gem5/resources -c /gem5/tests/gem5/resources/square-gpu-test-1.0.0"
 
+split_shell_words() {
+  local input="$1"
+  local -n out_ref="$2"
+  out_ref=()
+
+  mapfile -d '' -t out_ref < <(
+    python3 - "$input" <<'PY'
+import shlex
+import sys
+
+for token in shlex.split(sys.argv[1]):
+    sys.stdout.buffer.write(token.encode("utf-8"))
+    sys.stdout.buffer.write(b"\0")
+PY
+  )
+}
+
 resolve_path() {
   local input="$1"
   if [ -z "$input" ]; then
@@ -47,6 +64,10 @@ build_run_cmd() {
   local gem5_opt_extra="$DEFAULT_GEM5_OPT_ARGS"
   local config_args="$DEFAULT_CONFIG_ARGS"
   local workload_args="$DEFAULT_WORKLOAD_ARGS"
+  local -a gem5_opt_args_arr=()
+  local -a config_args_arr=()
+  local -a workload_args_arr=()
+  local -a full_cmd=()
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -74,12 +95,31 @@ build_run_cmd() {
     return 1
   fi
 
-  local full_cmd="docker run ${docker_run_args[*]} -u $(id -u):$(id -g) -v ${REPO_ROOT}:/gem5 -w /gem5 ghcr.io/gem5/gcn-gpu:v25-1 ${gem5_opt_bin} -d ${run_dir_in_container} ${gem5_opt_extra} ${config_py} ${config_args} ${workload_args}"
-  cat > "${run_dir}/run_cmd.sh" <<EOF
-#!/bin/bash
-set -e
-${full_cmd}
-EOF
+  split_shell_words "$gem5_opt_extra" gem5_opt_args_arr
+  split_shell_words "$config_args" config_args_arr
+  split_shell_words "$workload_args" workload_args_arr
+
+  full_cmd=(
+    docker
+    "${docker_run_args[@]}"
+    -u "$(id -u):$(id -g)"
+    -v "${REPO_ROOT}:/gem5"
+    -w /gem5
+    ghcr.io/gem5/gcn-gpu:v25-1
+    "${gem5_opt_bin}"
+    -d "${run_dir_in_container}"
+    "${gem5_opt_args_arr[@]}"
+    "${config_py}"
+    "${config_args_arr[@]}"
+    "${workload_args_arr[@]}"
+  )
+
+  {
+    echo "#!/bin/bash"
+    echo "set -e"
+    printf '%q ' "${full_cmd[@]}"
+    echo
+  } > "${run_dir}/run_cmd.sh"
   chmod +x "${run_dir}/run_cmd.sh"
 }
 

@@ -109,6 +109,7 @@ using namespace std;
 int overallThreads = 1;
 static HaccExecutionOptions haccExecution = {0, 0, false, false, false};
 static const int kMaxHaccGpuStreams = 16;
+static const int kHaccEstimatedRealCus = 3;
 static const int kHaccDummyBlocksPerCu = 8;
 static const int kHaccDummyThreadsPerBlock = 256;
 static const int kHaccDummyRounds = 64;
@@ -116,8 +117,11 @@ static const int kHaccDummyRounds = 64;
 void configureHaccExecution(const HaccExecutionOptions& options)
 {
   haccExecution = options;
-  int requestedStreams = options.gpuCus > 0 ? options.gpuCus : 1;
-  overallThreads = std::max(1, std::min(requestedStreams, kMaxHaccGpuStreams));
+  if (options.gpuCus > 1) {
+    overallThreads = 2;
+  } else {
+    overallThreads = 1;
+  }
 }
 
 namespace {
@@ -1125,8 +1129,7 @@ static inline void nbody1(ID_T count, ID_T count1, const POSVEL_T*  xx, const PO
   hipLaunchKernelGGL(Step10_cuda_kernel, dim3(blocks), dim3(threads), 0, stream, count,count1,xx,yy,zz,mass,xx1,yy1,zz1,mass1, vx, vy, vz, fsrrmax2, rsm2, fcoeff);
   cudaCheckError();
 
-  // Let callers queue several batched launches across multiple streams and
-  // synchronize once after the full GPU replay.
+  hipStreamSynchronize(stream);
   //exit(0);
 #else
 
@@ -1659,24 +1662,18 @@ void RCBForceTree<TDPTS>::runCpuForceTask(
 }
 
 template <int TDPTS>
-void RCBForceTree<TDPTS>::runGpuForceTaskRange(
-    const std::vector<ForceTask> &tasks, size_t beginTask, size_t endTask,
-    int streamIndex,
-    const std::vector<InteractionList> &lists)
+void RCBForceTree<TDPTS>::runGpuForceTask(
+    const ForceTask &task, const std::vector<InteractionList> &lists)
 {
-  const ForceTask &task = tasks[beginTask];
-  const size_t taskCount = endTask - beginTask;
 #ifdef __HIPCC__
   const InteractionList &list = lists[task.list];
-  ::nbody1(static_cast<ID_T>(taskCount), list.count,
+  ::nbody1(1, list.count,
            xx + task.target, yy + task.target,
            zz + task.target, mass + task.target, list.x, list.y, list.z,
            list.mass, vx + task.target, vy + task.target, vz + task.target,
-           m_fl, m_fcoeff, fsrrmax, rsm, stream_v[streamIndex]);
+           m_fl, m_fcoeff, fsrrmax, rsm, stream_v[0]);
 #else
-  for (size_t current = beginTask; current < endTask; ++current) {
-    runCpuForceTask(tasks[current], lists);
-  }
+  runCpuForceTask(task, lists);
 #endif
 }
 
@@ -1828,53 +1825,36 @@ void RCBForceTree<TDPTS>::runInternodeForceTasks(
   if (runGpu) {
     printf("Before GPU force task replay\n");
     fflush(stdout);
-    const int gpuStreams = std::max(1, std::min(numThreads,
-      static_cast<int>(tasks.size())));
-    int nextStream = 0;
-    int dummyBlocks = 0;
-    int dummyThreads = 0;
-    size_t dummyCount = 0;
 #ifdef __HIPCC__
-    if (haccExecution.gpuCus > 0) {
-      dummyBlocks = std::max(1, haccExecution.gpuCus) * kHaccDummyBlocksPerCu;
-      dummyThreads = kHaccDummyThreadsPerBlock;
-      dummyCount = static_cast<size_t>(gpuStreams) *
-                   static_cast<size_t>(dummyBlocks) *
-                   static_cast<size_t>(dummyThreads);
+    if (haccExecution.gpuCus > 1 && !tasks.empty()) {
+      const int estimatedRealCus = std::max(1, std::min(
+        haccExecution.gpuCus, kHaccEstimatedRealCus));
+      const int estimatedIdleCus =
+        std::max(0, haccExecution.gpuCus - estimatedRealCus);
+      const int dummyBlocks =
+        std::max(1, estimatedIdleCus) * kHaccDummyBlocksPerCu;
+      const int dummyThreads = kHaccDummyThreadsPerBlock;
+      const size_t dummyCount =
+        static_cast<size_t>(dummyBlocks) * static_cast<size_t>(dummyThreads);
+
       hipMallocManaged(&dummyOut, sizeof(POSVEL_T) * dummyCount);
       for (size_t i = 0; i < dummyCount; ++i) {
         dummyOut[i] = 0;
       }
-    }
-#endif
-    size_t beginTask = 0;
-    while (beginTask < tasks.size()) {
-      size_t endTask = beginTask + 1;
-      // Leaf construction emits contiguous targets for the same interaction
-      // list, so batch those runs into a single GPU launch.
-      while (endTask < tasks.size() &&
-             tasks[endTask].list == tasks[beginTask].list &&
-             tasks[endTask].target ==
-               tasks[endTask - 1].target + 1) {
-        ++endTask;
-      }
-      runGpuForceTaskRange(tasks, beginTask, endTask, nextStream, lists);
-#ifdef __HIPCC__
-      if (dummyOut != NULL) {
-        const int dummyStream = gpuStreams > 1 ?
-          ((nextStream + 1) % gpuStreams) : nextStream;
-        POSVEL_T *dummyBase = dummyOut +
-          (static_cast<size_t>(dummyStream) *
-           static_cast<size_t>(dummyBlocks) *
-           static_cast<size_t>(dummyThreads));
+
+      if (estimatedIdleCus > 0 && numThreads > 1) {
         hipLaunchKernelGGL(hacc_dummy_fill_kernel,
                            dim3(dummyBlocks), dim3(dummyThreads), 0,
-                           stream_v[dummyStream], xx, yy, zz, mass,
-                           particleCount, dummyBase, kHaccDummyRounds);
+                           stream_v[1], xx, yy, zz, mass,
+                           particleCount, dummyOut, kHaccDummyRounds);
+      } else {
+        hipFree(dummyOut);
+        dummyOut = NULL;
       }
+    }
 #endif
-      nextStream = (nextStream + 1) % gpuStreams;
-      beginTask = endTask;
+    for (size_t task = 0; task < tasks.size(); ++task) {
+      runGpuForceTask(tasks[task], lists);
     }
     printf("After GPU force task replay\n");
     fflush(stdout);

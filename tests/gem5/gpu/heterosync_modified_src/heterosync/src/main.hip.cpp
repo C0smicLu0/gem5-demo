@@ -66,6 +66,16 @@ struct CpuWorkerState
   int worker_id = 0;
 };
 
+struct DummyGpuFill
+{
+  hipStream_t stream = nullptr;
+  float *output = NULL;
+  int workgroups = 0;
+  bool enabled = false;
+};
+
+static DummyGpuFill g_dummy_gpu_fill;
+
 static bool parseNonNegativeInt(const char *value, int *parsed)
 {
   char *end = NULL;
@@ -174,17 +184,57 @@ __global__ void gpuOccupancyDummyKernel(float *output, int iterations,
                                         int num_ldst)
 {
   const int tid = hipBlockIdx_x * hipBlockDim_x + hipThreadIdx_x;
-  float value = static_cast<float>(tid);
+  float value = static_cast<float>(tid) * 0.25f + 1.0f;
 
-  for (int repeat = 0; repeat < NUM_REPEATS; ++repeat) {
-    for (int iter = 0; iter < iterations; ++iter) {
-      for (int step = 0; step < num_ldst; ++step) {
-        value = value * MAD_MUL + MAD_ADD + static_cast<float>(step);
-      }
+  for (int iter = 0; iter < iterations; ++iter) {
+    for (int step = 0; step < num_ldst; ++step) {
+      value = value * MAD_MUL + MAD_ADD + static_cast<float>(step);
     }
   }
 
   output[tid] = value;
+}
+
+static void initDummyGpuFill(int gpu_cus)
+{
+  if (gpu_cus <= numWGs) {
+    return;
+  }
+
+  const int dummyWGs = gpu_cus - numWGs;
+  const size_t dummyElems =
+      static_cast<size_t>(dummyWGs) * static_cast<size_t>(NUM_WIS_PER_WG);
+
+  hipHostMalloc(&g_dummy_gpu_fill.output, sizeof(float) * dummyElems);
+  hipStreamCreateWithFlags(&g_dummy_gpu_fill.stream, hipStreamNonBlocking);
+  g_dummy_gpu_fill.workgroups = dummyWGs;
+  g_dummy_gpu_fill.enabled = true;
+}
+
+static inline void launchDummyGpuFill(int iterations)
+{
+  if (!g_dummy_gpu_fill.enabled) {
+    return;
+  }
+
+  hipLaunchKernelGGL(HIP_KERNEL_NAME(gpuOccupancyDummyKernel),
+                     dim3(g_dummy_gpu_fill.workgroups),
+                     dim3(NUM_WIS_PER_WG), 0, g_dummy_gpu_fill.stream,
+                     g_dummy_gpu_fill.output, iterations, NUM_LDST);
+}
+
+static void destroyDummyGpuFill()
+{
+  if (!g_dummy_gpu_fill.enabled) {
+    return;
+  }
+
+  hipStreamDestroy(g_dummy_gpu_fill.stream);
+  hipHostFree(g_dummy_gpu_fill.output);
+  g_dummy_gpu_fill.stream = nullptr;
+  g_dummy_gpu_fill.output = NULL;
+  g_dummy_gpu_fill.workgroups = 0;
+  g_dummy_gpu_fill.enabled = false;
 }
 
 /*
@@ -1043,6 +1093,7 @@ void invokeFBSTreeBarrier(float * storage_d, unsigned int * perCUBarriers_d,
 
   for (int repeat = 0; repeat < NUM_REPEATS; ++repeat)
   {
+    launchDummyGpuFill(numIters);
     hipLaunchKernelGGL(HIP_KERNEL_NAME(kernelFBSTreeBarrierUniq), dim3(WGs), dim3(NUM_WIS_PER_WG), 0, 0,
         storage_d, cpuLockData, perCUBarriers_d, numIters, NUM_LDST, NUM_CU,
         MAX_WGS);
@@ -1063,6 +1114,7 @@ void invokeFBSTreeBarrierLocalExch(float * storage_d,
 
   for (int repeat = 0; repeat < NUM_REPEATS; ++repeat)
   {
+    launchDummyGpuFill(numIters);
     hipLaunchKernelGGL(HIP_KERNEL_NAME(kernelFBSTreeBarrierUniqLocalExch), dim3(WGs), dim3(NUM_WIS_PER_WG), 0, 0,
         storage_d, cpuLockData, perCUBarriers_d, numIters, NUM_LDST, NUM_CU,
         MAX_WGS);
@@ -1740,27 +1792,11 @@ int main(int argc, char ** argv)
   printf("CPU workers joined\n");
   fflush(stdout);
 
-  const int dummyWGs =
-      (options.gpu_cus > numWGs) ? (options.gpu_cus - numWGs) : 0;
-  hipStream_t dummyStream = NULL;
-  float *dummyOutput = NULL;
-  if (dummyWGs > 0) {
-    const size_t dummyThreads =
-        static_cast<size_t>(dummyWGs) * NUM_WIS_PER_WG;
-    hipHostMalloc(&dummyOutput, sizeof(float) * dummyThreads);
-    hipError_t streamErr =
-        hipStreamCreateWithFlags(&dummyStream, hipStreamNonBlocking);
-    checkError(streamErr, "hipStreamCreateWithFlags (dummy)");
-    hipLaunchKernelGGL(gpuOccupancyDummyKernel, dim3(dummyWGs),
-                       dim3(NUM_WIS_PER_WG), 0, dummyStream, dummyOutput,
-                       NUM_ITERS, NUM_LDST);
-    hipError_t dummyLaunchErr = hipGetLastError();
-    checkError(dummyLaunchErr, "gpuOccupancyDummyKernel launch");
-    if (options.debug_log) {
-      printf("Launched %d dummy GPU workgroups to fill unused CUs\n",
-             dummyWGs);
-      fflush(stdout);
-    }
+  initDummyGpuFill(options.gpu_cus);
+  if (options.debug_log && g_dummy_gpu_fill.enabled) {
+    printf("Enabled dummy GPU fill for %d extra workgroups\n",
+           g_dummy_gpu_fill.workgroups);
+    fflush(stdout);
   }
 
   switch (syncPrim) {
@@ -1879,12 +1915,7 @@ int main(int argc, char ** argv)
 
   // NOTE: Can end simulation here if don't care about output checking
   hipDeviceSynchronize();
-  if (dummyStream != NULL) {
-    hipStreamDestroy(dummyStream);
-  }
-  if (dummyOutput != NULL) {
-    hipHostFree(dummyOutput);
-  }
+  destroyDummyGpuFill();
 
 #if defined(GEM5_FUSION)
   m5_work_end(0, 0);
