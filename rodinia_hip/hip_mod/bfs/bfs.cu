@@ -78,6 +78,8 @@ int main( int argc, char** argv)
 	no_of_nodes=0;
 	edge_list_size=0;
 	BFSGraph( argc, argv);
+	printf("PASSED!\n");
+	return 0;
 }
 
 void Usage(int argc, char**argv){

@@ -64,9 +64,6 @@ collect_bins() {
       local base out
       base="$(basename "$exe")"
       out="${BIN_DIR}/${base}"
-      if [ -e "$out" ]; then
-        out="${BIN_DIR}/${workload}__${base}"
-      fi
       cp -f "$exe" "$out"
     fi
   done < <(find "$workdir" -maxdepth 3 -type f -perm -111 \

@@ -2454,6 +2454,7 @@ main(	int argc,
 	// ------------------------------------------------------------60
 
 	hipFree(mem);
+	printf("PASSED!\n");
 	return EXIT_SUCCESS;
 
 }

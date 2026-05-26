@@ -1,7 +1,7 @@
 {
   "base_run_root": "tests/testing-results",
   "gem5_opt_args": "-re",
-  "config_args": "--reg-alloc-policy=dynamic --stats-dump-mode=full",
+  "config_args": "--reg-alloc-policy=dynamic --stats-dump-mode=full --mem-size=8GB",
   "config_profiles": {
     "pressure": {
       "default": "",

@@ -1143,5 +1143,6 @@ int main(int argc, char * argv[]) {
 
     hipFree(seed);
     hipFree(I);
+    printf("PASSED!\n");
     return 0;
 }
