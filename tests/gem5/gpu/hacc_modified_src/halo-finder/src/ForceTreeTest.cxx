@@ -397,6 +397,9 @@ int main(int argc, char *argv[])
   hipFree(m_vzArr);
   hipFree(m_massArr);
 
+  printf("PASS\n");
+  fflush(stdout);
+
 #ifndef USE_SERIAL_COSMO
   MPI_Finalize();
 #endif

@@ -7,6 +7,7 @@ set -euo pipefail
 readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly GEM5_ROOT="$SCRIPT_DIR"
 readonly GEM5_BUILD_SCRIPT="$GEM5_ROOT/test_scripts/build_gem5_vega_x86.sh"
+readonly M5_UTIL_DIR="$GEM5_ROOT/util/m5"
 readonly GPU_ROOT="$GEM5_ROOT/tests/gem5/gpu"
 readonly SQUARE_BUILD_SCRIPT="$GPU_ROOT/square_modified_src/build_square.sh"
 readonly HACC_BUILD_SCRIPT="$GPU_ROOT/hacc_modified_src/build_hacc.sh"
@@ -30,7 +31,8 @@ Usage:
 
 Build order:
   1. test_scripts/build_gem5_vega_x86.sh
-  2. tests/gem5/gpu/{square,hacc,pannotia,heterosync}_modified_src/build_*.sh
+  2. util/m5/build/x86/out/m5
+  3. tests/gem5/gpu/{square,hacc,pannotia,heterosync}_modified_src/build_*.sh
 
 Options:
   --gem5-only           Build only gem5.
@@ -90,6 +92,29 @@ run_step()
     "$@"
 }
 
+build_libm5()
+{
+    local -a scons_cmd=(scons build/x86/out/m5)
+
+    if [[ -n "$JOBS_OVERRIDE" ]]; then
+        scons_cmd+=(-j "$JOBS_OVERRIDE")
+    fi
+
+    if (( GPU_IN_CONTAINER )); then
+        (
+            cd -- "$M5_UTIL_DIR"
+            "${scons_cmd[@]}"
+        )
+    else
+        local image="${DOCKER_IMAGE_OVERRIDE:-ghcr.io/gem5/gcn-gpu:v25-1}"
+        docker run --rm \
+            -v "$GEM5_ROOT":"$GEM5_ROOT" \
+            -w "$M5_UTIL_DIR" \
+            "$image" \
+            "${scons_cmd[@]}"
+    fi
+}
+
 while (($#)); do
     case "$1" in
         --gem5-only)
@@ -146,6 +171,7 @@ require_script "$SQUARE_BUILD_SCRIPT"
 require_script "$HACC_BUILD_SCRIPT"
 require_script "$PANNOTIA_BUILD_SCRIPT"
 require_script "$HETEROSYNC_BUILD_SCRIPT"
+[[ -d "$M5_UTIL_DIR" ]] || die "util/m5 directory not found: $M5_UTIL_DIR"
 
 if (( RUN_GEM5 )) && ! command -v docker >/dev/null 2>&1; then
     echo "error: docker not found in PATH" >&2
@@ -173,6 +199,8 @@ if (( RUN_GEM5 )); then
 fi
 
 if (( RUN_GPU )); then
+    run_step "Building util/m5 libm5" build_libm5
+
     gpu_args=()
     if (( GPU_IN_CONTAINER )); then
         gpu_args+=(--in-container)

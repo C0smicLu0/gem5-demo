@@ -84,18 +84,6 @@ init(int *s_array, int *c_array, int *cu_array, int num_nodes, int num_edges)
     }
 }
 
-__global__ void
-init_range(int *s_array, int *c_array, int *cu_array, int range_begin,
-           int range_end, int num_nodes, int num_edges)
-{
-    int tid = range_begin + hipBlockDim_x * hipBlockIdx_x + hipThreadIdx_x;
-    if (tid < range_end && tid < num_nodes) {
-        c_array[tid] = -1;
-        cu_array[tid] = -1;
-        s_array[tid] = 0;
-    }
-}
-
 /**
 * mis1 kernel
 * @param row          csr pointer array
@@ -128,36 +116,6 @@ mis1(int *row, int *col, int *node_value, int *s_array, int *c_array,
             }
 
             // Navigate the neighbor list and find the min
-            int min = BIGNUM;
-            for (int edge = start; edge < end; edge++) {
-                if (c_array[col[edge]] == -1) {
-                    if (node_value[col[edge]] < min) {
-                        min = node_value[col[edge]];
-                    }
-                }
-            }
-            min_array[tid] = min;
-        }
-    }
-}
-
-__global__ void
-mis1_range(int *row, int *col, int *node_value, int *s_array, int *c_array,
-           int *min_array, int *stop, int range_begin, int range_end,
-           int num_nodes, int num_edges)
-{
-    int tid = range_begin + hipBlockDim_x * hipBlockIdx_x + hipThreadIdx_x;
-    if (tid < range_end && tid < num_nodes) {
-        if (c_array[tid] == -1) {
-            *stop = 1;
-            int start = row[tid];
-            int end;
-            if (tid + 1 < num_nodes) {
-                end = row[tid + 1];
-            } else {
-                end = num_edges;
-            }
-
             int min = BIGNUM;
             for (int edge = start; edge < end; edge++) {
                 if (c_array[col[edge]] == -1) {
@@ -207,43 +165,12 @@ mis2(int *row, int *col, int *node_value, int *s_array, int *c_array,
             }
 
             // Set the status to inactive
-            cu_array[tid] = -2;
+            c_array[tid] = -2;
 
             // Mark all the neighbors inactive
             for (int edge = start; edge < end; edge++) {
                 if (c_array[col[edge]] == -1) {
                     //use status update array to avoid race
-                    cu_array[col[edge]] = -2;
-                }
-            }
-        }
-    }
-}
-
-__global__ void
-mis2_range(int *row, int *col, int *node_value, int *s_array, int *c_array,
-           int *cu_array, int *min_array, int range_begin, int range_end,
-           int num_nodes, int num_edges)
-{
-    int tid = range_begin + hipBlockDim_x * hipBlockIdx_x + hipThreadIdx_x;
-
-    if (tid < range_end && tid < num_nodes) {
-        if (node_value[tid] <= min_array[tid]  && c_array[tid] == -1) {
-            s_array[tid] = 2;
-
-            int start = row[tid];
-            int end;
-
-            if (tid + 1 < num_nodes) {
-                end = row[tid + 1];
-            } else {
-                end = num_edges;
-            }
-
-            cu_array[tid] = -2;
-
-            for (int edge = start; edge < end; edge++) {
-                if (c_array[col[edge]] == -1) {
                     cu_array[col[edge]] = -2;
                 }
             }
@@ -265,17 +192,6 @@ mis3(int *cu_array, int *c_array, int num_nodes)
 
     //set the status array
     if (tid < num_nodes && cu_array[tid] == -2) {
-        c_array[tid] = cu_array[tid];
-    }
-}
-
-__global__ void
-mis3_range(int *cu_array, int *c_array, int range_begin, int range_end,
-           int num_nodes)
-{
-    int tid = range_begin + hipBlockDim_x * hipBlockIdx_x + hipThreadIdx_x;
-
-    if (tid < range_end && tid < num_nodes && cu_array[tid] == -2) {
         c_array[tid] = cu_array[tid];
     }
 }

@@ -117,12 +117,13 @@ FORCE_SOURCES += ForceLaw.cxx
 FORCE_SOURCES += BHForceTree.cxx
 FORCE_SOURCES += RCOForceTree.cxx
 FORCE_SOURCES += RCBForceTree.cxx
-FORCE_SOURCES_C += BGQStep16.c
 FORCE_SOURCES_C += BGQCM.c
+# BGQStep16 is a BG/Q-specific short-force kernel and is not used by the
+# gem5-fusion HIP build.
 FORCE_OBJLIST = $(FORCE_SOURCES:.cxx=.o)
 FORCE_OBJLIST_C = $(FORCE_SOURCES_C:.c=.o)
 FORCE_OBJECTS := $(addprefix $(OBJDIR)/,$(FORCE_OBJLIST) $(FORCE_OBJLIST_C))
-$(OBJDIR)/libBHForceTree.a: $(OBJDIR)/libBHForceTree.a($(FORCE_OBJECTS) $(FORCE_OBJLIST_C))
+$(OBJDIR)/libBHForceTree.a: $(OBJDIR)/libBHForceTree.a($(FORCE_OBJECTS))
 	ranlib $@
 
 $(OBJDIR)/libbigchunk.a: $(OBJDIR)/libbigchunk.a($(OBJDIR)/bigchunk.o)

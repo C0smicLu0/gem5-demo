@@ -31,9 +31,10 @@ Run/all options:
   --debug-flags <csv>  Append gem5 --debug-flags=<csv>.
 
 Modified Square/Pannotia workloads derive their workload resource options from
-the merged gem5 config args. The final -n/--num-cpus becomes
---cpu-workers max(0, N - 3); the final -u/--num-compute-units becomes
---gpu-cus N.
+the merged gem5 config args. By default, the final -n/--num-cpus becomes
+--cpu-workers max(0, N - 2). A small profile-specific override table may use
+max(0, N - 3) for selected workload/profile combinations. The final
+-u/--num-compute-units becomes --gpu-cus N.
 EOF
 }
 
@@ -414,7 +415,9 @@ add_resource_workload_args() {
   local workload_args="$2"
   local cpus="$3"
   local gpu_cus="$4"
+  local selected_profiles="${5:-}"
   local cpu_workers
+  local cpu_offset=2
 
   if ! resource_aware_workload "$workload"; then
     echo "$workload_args"
@@ -426,7 +429,20 @@ add_resource_workload_args() {
     return 1
   fi
 
-  cpu_workers=$(( cpus > 3 ? cpus - 3 : 0 ))
+  case "$workload" in
+    square)
+      case " ${selected_profiles} " in
+        *" cores.args2 "*|*" args2 "*)
+          cpu_offset=3
+          ;;
+      esac
+      ;;
+  esac
+
+  cpu_workers=$(( cpus - cpu_offset ))
+  if (( cpu_workers < 0 )); then
+    cpu_workers=0
+  fi
   append_options_tokens "$workload_args" \
     --cpu-workers "$cpu_workers" --gpu-cus "$gpu_cus"
 }
@@ -612,7 +628,7 @@ run_test() {
     resource_cpus="$(extract_config_resource cpus "$config_args")"
     resource_gpu_cus="$(extract_config_resource gpu_cus "$config_args")"
     workload_args="$(add_resource_workload_args "$workload" "$workload_args" \
-      "$resource_cpus" "$resource_gpu_cus")"
+      "$resource_cpus" "$resource_gpu_cus" "$selected_profiles")"
   fi
 
   local cfg_num_cpus

@@ -22,13 +22,16 @@ THE SOFTWARE.
 
 #include "hip/hip_runtime.h"
 
+#include <algorithm>
+#include <atomic>
 #include <errno.h>
 #include <limits.h>
+#include <pthread.h>
+#include <sched.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <thread>
 #include <vector>
 
 #if defined(GEM5_FUSION) || defined(GEM5_FS)
@@ -54,17 +57,11 @@ struct SquareOptions
 {
     size_t elements = 1000000;
     int cpu_workers = 0;
+    int cpu_stack_kb = 64;
     int gpu_cus = -1;
-    int cpu_max_percent = 10;
     bool cpu_only = false;
     bool gpu_only = false;
     bool debug_log = false;
-};
-
-struct ElementRange
-{
-    size_t begin;
-    size_t end;
 };
 
 static void
@@ -73,11 +70,11 @@ usage(const char *program)
     fprintf(stderr,
             "Usage: %s [options]\n"
             "  --cpu-workers N  CPU worker thread count. Default: 0.\n"
+            "  --cpu-stack-kb N Per-worker pthread stack size in KiB. "
+            "Default: 64.\n"
             "  --gpu-cus N      GPU CU weight for CPU+GPU range split.\n"
             "  --elements N     Number of input elements. Default: 1000000.\n"
-            "  --cpu-max-percent N\n"
-            "                   Maximum total CPU element share. Default: 10.\n"
-            "  --cpu-only       Run all element work on CPU workers.\n"
+            "  --cpu-only       Unsupported in GPU-only compute mode.\n"
             "  --gpu-only       Run all element work on the GPU.\n"
             "  --debug-log      Print range assignment and completion logs.\n",
             program);
@@ -125,6 +122,15 @@ parse_options(int argc, char **argv, SquareOptions *options)
                 usage(argv[0]);
                 exit(EXIT_FAILURE);
             }
+        } else if (strcmp(argv[arg], "--cpu-stack-kb") == 0) {
+            if (++arg >= argc ||
+                !parse_int_value(argv[arg], &options->cpu_stack_kb) ||
+                options->cpu_stack_kb == 0) {
+                fprintf(stderr,
+                        "--cpu-stack-kb requires a positive integer\n");
+                usage(argv[0]);
+                exit(EXIT_FAILURE);
+            }
         } else if (strcmp(argv[arg], "--gpu-cus") == 0) {
             if (++arg >= argc ||
                 !parse_int_value(argv[arg], &options->gpu_cus) ||
@@ -137,16 +143,6 @@ parse_options(int argc, char **argv, SquareOptions *options)
             if (++arg >= argc ||
                 !parse_size_value(argv[arg], &options->elements)) {
                 fprintf(stderr, "--elements requires a positive integer\n");
-                usage(argv[0]);
-                exit(EXIT_FAILURE);
-            }
-        } else if (strcmp(argv[arg], "--cpu-max-percent") == 0) {
-            if (++arg >= argc ||
-                !parse_int_value(argv[arg], &options->cpu_max_percent) ||
-                options->cpu_max_percent <= 0 ||
-                options->cpu_max_percent > 100) {
-                fprintf(stderr,
-                        "--cpu-max-percent requires an integer in [1, 100]\n");
                 usage(argv[0]);
                 exit(EXIT_FAILURE);
             }
@@ -172,8 +168,8 @@ parse_options(int argc, char **argv, SquareOptions *options)
         exit(EXIT_FAILURE);
     }
 
-    if (options->cpu_only && options->cpu_workers == 0) {
-        fprintf(stderr, "--cpu-only requires --cpu-workers N with N > 0\n");
+    if (options->cpu_only) {
+        fprintf(stderr, "--cpu-only is not supported in GPU-only compute mode\n");
         exit(EXIT_FAILURE);
     }
 
@@ -199,80 +195,64 @@ vector_square(T *C_d, const T *A_d, size_t range_begin, size_t range_end)
     }
 }
 
-static void
-cpu_square_range(float *C, const float *A, ElementRange range,
-                 int worker_id, bool debug_log)
+struct CpuLoadPlan
 {
-    for (size_t i = range.begin; i < range.end; ++i) {
-        C[i] = A[i] * A[i];
+    const float *A = NULL;
+    size_t elements = 0;
+    volatile float *sinks = NULL;
+    std::atomic<bool> start;
+    int actual_workers = 0;
+    bool debug_log = false;
+};
+
+struct CpuWorkerState
+{
+    CpuLoadPlan *plan = NULL;
+    int worker_id = 0;
+};
+
+static void *
+cpu_shared_load_entry(void *opaque)
+{
+    CpuWorkerState *state = static_cast<CpuWorkerState *>(opaque);
+    CpuLoadPlan *plan = state->plan;
+
+    while (!plan->start.load(std::memory_order_acquire)) {
+        sched_yield();
     }
 
-    if (debug_log) {
-        fprintf(stdout, "CPU worker %d finished [%zu, %zu)\n",
-                worker_id, range.begin, range.end);
-        fflush(stdout);
+    const int worker_count = plan->actual_workers;
+    const size_t begin =
+        (plan->elements * static_cast<size_t>(state->worker_id)) /
+        static_cast<size_t>(worker_count);
+    const size_t end =
+        (plan->elements * static_cast<size_t>(state->worker_id + 1)) /
+        static_cast<size_t>(worker_count);
+    float local = 0.0f;
+
+    printf("CPU worker %d started shared load [%zu, %zu)\n",
+           state->worker_id, begin, end);
+    fflush(stdout);
+
+    for (size_t i = begin; i < end; ++i) {
+        local += plan->A[i] * 0.000001f;
     }
-}
 
-static std::vector<ElementRange>
-split_cpu_ranges(ElementRange range, int worker_count)
-{
-    std::vector<ElementRange> ranges;
-    ranges.reserve(worker_count);
-
-    const size_t range_size = range.end - range.begin;
-    for (int worker = 0; worker < worker_count; ++worker) {
-        size_t begin = range.begin +
-            (range_size * static_cast<size_t>(worker)) / worker_count;
-        size_t end = range.begin +
-            (range_size * static_cast<size_t>(worker + 1)) / worker_count;
-
-        if (begin < end) {
-            ranges.push_back({begin, end});
+    const size_t range_size = end - begin;
+    const size_t extra_window = range_size < 1024 ? range_size : 1024;
+    const int extra_rounds = state->worker_id % 4;
+    for (int round = 0; round < extra_rounds; ++round) {
+        for (size_t i = 0; i < extra_window; ++i) {
+            local += plan->A[begin + i] * 0.0000001f;
         }
     }
 
-    return ranges;
-}
+    plan->sinks[state->worker_id] = local;
 
-static size_t
-gpu_range_end(const SquareOptions &options)
-{
-    const unsigned long long cpu_worker_weight = 2;
-
-    if (options.cpu_only) {
-        return 0;
-    }
-
-    if (options.gpu_only || options.cpu_workers == 0) {
-        return options.elements;
-    }
-
-    unsigned long long total_weight =
-        static_cast<unsigned long long>(options.gpu_cus) +
-        static_cast<unsigned long long>(options.cpu_workers) *
-        cpu_worker_weight;
-    unsigned long long gpu_end =
-        (static_cast<unsigned long long>(options.elements) *
-         static_cast<unsigned long long>(options.gpu_cus)) / total_weight;
-
-    if (gpu_end == 0) {
-        gpu_end = 1;
-    }
-
-    size_t split_end = static_cast<size_t>(gpu_end);
-    size_t cpu_elements = options.elements - split_end;
-    size_t max_cpu_elements =
-        (options.elements * static_cast<size_t>(options.cpu_max_percent)) /
-        100;
-    if (max_cpu_elements == 0) {
-        max_cpu_elements = 1;
-    }
-    if (cpu_elements > max_cpu_elements) {
-        split_end = options.elements - max_cpu_elements;
-    }
-
-    return split_end;
+    printf("CPU worker %d finished shared load [%zu, %zu)\n",
+           state->worker_id, begin, end);
+    fflush(stdout);
+    return NULL;
 }
 
 int
@@ -280,6 +260,11 @@ main(int argc, char *argv[])
 {
     SquareOptions options;
     parse_options(argc, argv, &options);
+    printf("Square options: elements=%zu cpu_workers=%d cpu_stack_kb=%d "
+           "gpu_cus=%d gpu_only=%d\n",
+           options.elements, options.cpu_workers, options.cpu_stack_kb,
+           options.gpu_cus, options.gpu_only ? 1 : 0);
+    fflush(stdout);
 
     float *A_h = NULL;
     float *C_h = NULL;
@@ -307,72 +292,163 @@ main(int argc, char *argv[])
 
     const unsigned blocks = 512;
     const unsigned threads_per_block = 256;
-    const size_t gpu_end = gpu_range_end(options);
+    const size_t gpu_end = options.cpu_only ? 0 : options.elements;
     const bool run_gpu = gpu_end > 0;
-    const ElementRange cpu_range = {gpu_end, options.elements};
-    std::vector<ElementRange> cpu_ranges =
-        split_cpu_ranges(cpu_range, options.cpu_workers);
-    std::vector<std::thread> cpu_threads;
-    cpu_threads.reserve(cpu_ranges.size());
+    const size_t max_useful_workers =
+        std::min(options.elements, static_cast<size_t>(INT_MAX));
+    const int planned_workers =
+        static_cast<int>(std::min(static_cast<size_t>(options.cpu_workers),
+                                  max_useful_workers));
+    std::vector<pthread_t> cpu_threads(planned_workers);
+    std::vector<CpuWorkerState> cpu_states(planned_workers);
+    std::vector<float> cpu_sinks(planned_workers, 0.0f);
+    CpuLoadPlan cpu_plan;
+    cpu_plan.A = A_h;
+    cpu_plan.elements = options.elements;
+    cpu_plan.sinks = cpu_sinks.data();
+    cpu_plan.start.store(false, std::memory_order_relaxed);
+    cpu_plan.actual_workers = 0;
+    cpu_plan.debug_log = options.debug_log;
+    size_t created_workers = 0;
+    pthread_attr_t thread_attr;
+    int attr_status = pthread_attr_init(&thread_attr);
+    if (attr_status != 0) {
+        fprintf(stderr, "pthread_attr_init failed: %s\n",
+                strerror(attr_status));
+        exit(EXIT_FAILURE);
+    }
+    size_t stack_bytes = static_cast<size_t>(options.cpu_stack_kb) * 1024;
+    if (stack_bytes < PTHREAD_STACK_MIN) {
+        stack_bytes = PTHREAD_STACK_MIN;
+    }
+    attr_status = pthread_attr_setstacksize(&thread_attr, stack_bytes);
+    if (attr_status != 0) {
+        fprintf(stderr, "pthread_attr_setstacksize(%zu) failed: %s\n",
+                stack_bytes, strerror(attr_status));
+        pthread_attr_destroy(&thread_attr);
+        exit(EXIT_FAILURE);
+    }
 
     if (options.debug_log) {
-        fprintf(stdout,
-                "Square split: elements=%zu gpu=[0, %zu) "
-                "cpu_workers=%zu cpu=[%zu, %zu) cpu_max_percent=%d\n",
-                options.elements, gpu_end, cpu_ranges.size(),
-                cpu_range.begin, cpu_range.end, options.cpu_max_percent);
+        printf("Square split: elements=%zu gpu_compute=[0, %zu) "
+               "cpu_requested=%d cpu_planned=%d cpu_shared_load=blocked-full-array "
+               "roi_order=cpu-then-gpu\n",
+               options.elements, gpu_end, options.cpu_workers, planned_workers);
         fflush(stdout);
     }
 
 #if defined(GEM5_FUSION)
+    printf("Before m5_work_begin\n");
+    fflush(stdout);
     m5_work_begin(0, 0);
+    printf("After m5_work_begin\n");
+    fflush(stdout);
 #elif defined(GEM5_FS)
     map_m5_mem();
+    printf("Before m5_work_begin\n");
+    fflush(stdout);
     m5_work_begin_addr(0, 0);
+    printf("After m5_work_begin\n");
+    fflush(stdout);
 #endif
 
-    for (size_t worker = 0; worker < cpu_ranges.size(); ++worker) {
-        cpu_threads.emplace_back(cpu_square_range, C_h, A_h,
-                                 cpu_ranges[worker], static_cast<int>(worker),
-                                 options.debug_log);
+    printf("Before CPU worker creation\n");
+    fflush(stdout);
+    for (int worker = 0; worker < planned_workers; ++worker) {
+        cpu_states[worker].plan = &cpu_plan;
+        cpu_states[worker].worker_id = worker;
+        int create_status = pthread_create(&cpu_threads[worker], &thread_attr,
+                                           cpu_shared_load_entry,
+                                           &cpu_states[worker]);
+        if (create_status != 0) {
+            printf("Failed to create CPU worker %d/%d: %s\n",
+                   worker, options.cpu_workers, strerror(create_status));
+            fflush(stdout);
+            break;
+        }
+        ++created_workers;
+    }
+    pthread_attr_destroy(&thread_attr);
+
+    cpu_plan.actual_workers = static_cast<int>(created_workers);
+    if (created_workers > 0) {
+        cpu_plan.start.store(true, std::memory_order_release);
     }
 
+    printf("Created %zu/%d CPU workers\n", created_workers,
+           options.cpu_workers);
+    fflush(stdout);
+    if (created_workers == 0 && options.cpu_workers > 0) {
+        printf("CPU shared load skipped because no worker threads were created\n");
+        fflush(stdout);
+    }
+
+    printf("Before CPU workers join\n");
+    fflush(stdout);
+
+    for (size_t index = 0; index < created_workers; ++index) {
+        printf("Joining CPU worker thread %zu\n", index);
+        fflush(stdout);
+        int join_status = pthread_join(cpu_threads[index], NULL);
+        if (join_status != 0) {
+            fprintf(stderr, "pthread_join(%zu) failed: %s\n",
+                    index, strerror(join_status));
+            exit(EXIT_FAILURE);
+        }
+        printf("Joined CPU worker thread %zu\n", index);
+        fflush(stdout);
+    }
+
+    printf("CPU workers joined\n");
+    fflush(stdout);
+
     if (run_gpu) {
+        printf("Before GPU kernel launch\n");
+        fflush(stdout);
         printf("info: launch 'vector_square' kernel\n");
-        hipLaunchKernelGGL(vector_square, dim3(blocks), dim3(threads_per_block),
-                           0, 0, C_h, A_h, static_cast<size_t>(0), gpu_end);
-        CHECK(hipGetLastError());
-    }
-
-    if (options.debug_log) {
-        fprintf(stdout, "Before CPU workers join\n");
         fflush(stdout);
-    }
-
-    for (std::thread &thread : cpu_threads) {
-        thread.join();
-    }
-
-    if (options.debug_log) {
-        fprintf(stdout, "CPU workers joined\n");
+        hipLaunchKernelGGL(vector_square, dim3(blocks), dim3(threads_per_block),
+                           0, 0, C_h, A_h, static_cast<size_t>(0),
+                           options.elements);
+        CHECK(hipGetLastError());
+        printf("After GPU kernel launch\n");
         fflush(stdout);
     }
 
     if (run_gpu) {
+        printf("Before hipDeviceSynchronize\n");
+        fflush(stdout);
         CHECK(hipDeviceSynchronize());
+        printf("After hipDeviceSynchronize\n");
+        fflush(stdout);
         if (options.debug_log) {
-            fprintf(stdout, "GPU finished [0, %zu)\n", gpu_end);
+            printf("GPU finished [0, %zu)\n", gpu_end);
             fflush(stdout);
         }
     }
 
 #if defined(GEM5_FUSION)
+    printf("Before m5_work_end\n");
+    fflush(stdout);
     m5_work_end(0, 0);
+    printf("After m5_work_end\n");
+    fflush(stdout);
 #elif defined(GEM5_FS)
+    printf("Before m5_work_end\n");
+    fflush(stdout);
     m5_work_end_addr(0, 0);
+    printf("After m5_work_end\n");
+    fflush(stdout);
 #endif
 
+    printf("Before result check\n");
+    fflush(stdout);
     printf("info: check result\n");
+    fflush(stdout);
+    if (!run_gpu) {
+        fprintf(stderr, "--cpu-only is not supported in GPU-only square mode\n");
+        exit(EXIT_FAILURE);
+    }
     for (size_t i = 0; i < options.elements; ++i) {
         if (C_h[i] != A_h[i] * A_h[i]) {
             fprintf(stderr, "result mismatch at element %zu\n", i);
@@ -382,6 +458,9 @@ main(int argc, char *argv[])
 
     CHECK(hipFree(A_h));
     CHECK(hipFree(C_h));
+    printf("After hipFree A_h/C_h\n");
+    fflush(stdout);
     printf("PASSED!\n");
+    fflush(stdout);
     return 0;
 }

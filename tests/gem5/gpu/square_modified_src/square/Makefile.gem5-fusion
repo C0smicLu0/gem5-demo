@@ -2,8 +2,11 @@ HIP_PATH ?= /opt/rocm/hip
 HIPCC = $(HIP_PATH)/bin/hipcc
 CXXFLAGS += -pthread
 
+THIS_MAKEFILE := $(lastword $(MAKEFILE_LIST))
+THIS_DIR := $(dir $(abspath $(THIS_MAKEFILE)))
+
 # Needed for m5ops.
-GEM5_ROOT ?= ../../../../..
+GEM5_ROOT ?= $(abspath $(THIS_DIR)/../../../../..)
 CFLAGS += -I$(GEM5_ROOT)/include
 LDFLAGS += -L$(GEM5_ROOT)/util/m5/build/x86/out -lm5 -pthread
 
