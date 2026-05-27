@@ -1825,6 +1825,23 @@ void RCBForceTree<TDPTS>::runInternodeForceTasks(
   if (runGpu) {
     printf("Before GPU force task replay\n");
     fflush(stdout);
+    printf("HACC GPU replay config: tasks=%zu gpu_cus=%d streams=%d estimated_real_cus=%d\n",
+           tasks.size(), haccExecution.gpuCus, numThreads,
+           kHaccEstimatedRealCus);
+    fflush(stdout);
+    for (size_t task = 0; task < tasks.size(); ++task) {
+      if (task < 4 || ((task % 64) == 0) || (task + 1 == tasks.size())) {
+        const InteractionList &taskList = lists[tasks[task].list];
+        printf("HACC GPU replay progress: task=%zu/%zu target=%d list=%zu list_count=%d\n",
+               task + 1, tasks.size(), tasks[task].target, tasks[task].list,
+               taskList.count);
+        fflush(stdout);
+      }
+      runGpuForceTask(tasks[task], lists);
+    }
+    printf("After GPU force task replay\n");
+    fflush(stdout);
+
 #ifdef __HIPCC__
     if (haccExecution.gpuCus > 1 && !tasks.empty()) {
       const int estimatedRealCus = std::max(1, std::min(
@@ -1837,27 +1854,29 @@ void RCBForceTree<TDPTS>::runInternodeForceTasks(
       const size_t dummyCount =
         static_cast<size_t>(dummyBlocks) * static_cast<size_t>(dummyThreads);
 
-      hipMallocManaged(&dummyOut, sizeof(POSVEL_T) * dummyCount);
-      for (size_t i = 0; i < dummyCount; ++i) {
-        dummyOut[i] = 0;
-      }
-
       if (estimatedIdleCus > 0 && numThreads > 1) {
+        printf("Before GPU dummy fill\n");
+        fflush(stdout);
+        printf("HACC GPU dummy config: estimated_idle_cus=%d dummy_blocks=%d dummy_threads=%d dummy_count=%zu rounds=%d\n",
+               estimatedIdleCus, dummyBlocks, dummyThreads, dummyCount,
+               kHaccDummyRounds);
+        fflush(stdout);
+        hipMalloc(&dummyOut, sizeof(POSVEL_T) * dummyCount);
+        hipMemset(dummyOut, 0, sizeof(POSVEL_T) * dummyCount);
+
         hipLaunchKernelGGL(hacc_dummy_fill_kernel,
                            dim3(dummyBlocks), dim3(dummyThreads), 0,
                            stream_v[1], xx, yy, zz, mass,
                            particleCount, dummyOut, kHaccDummyRounds);
+        printf("After GPU dummy fill launch\n");
+        fflush(stdout);
       } else {
-        hipFree(dummyOut);
-        dummyOut = NULL;
+        printf("Skipping GPU dummy fill: estimated_idle_cus=%d streams=%d\n",
+               estimatedIdleCus, numThreads);
+        fflush(stdout);
       }
     }
 #endif
-    for (size_t task = 0; task < tasks.size(); ++task) {
-      runGpuForceTask(tasks[task], lists);
-    }
-    printf("After GPU force task replay\n");
-    fflush(stdout);
   }
 
 #ifdef __HIPCC__

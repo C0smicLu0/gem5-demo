@@ -101,6 +101,7 @@ build_run_cmd() {
 
   full_cmd=(
     docker
+    run
     "${docker_run_args[@]}"
     -u "$(id -u):$(id -g)"
     -v "${REPO_ROOT}:/gem5"

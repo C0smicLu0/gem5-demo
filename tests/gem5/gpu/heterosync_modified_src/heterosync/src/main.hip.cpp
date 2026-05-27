@@ -1421,11 +1421,20 @@ int main(int argc, char ** argv)
 
   fprintf(stdout, "# CU: %d, Max Thrs/WG: %d, Max WG/CU: %d, Max # WG: %d\n",
           NUM_CU, deviceProp.maxThreadsPerBlock, maxWGPerCU, MAX_WGS);
+  fflush(stdout);
 
+  fprintf(stderr, "CHK before hipGetLastError(Begin)\n");
+  fflush(stderr);
   hipError_t hipErr = hipGetLastError();
+  fprintf(stderr, "CHK after hipGetLastError(Begin)\n");
+  fflush(stderr);
   checkError(hipErr, "Begin");
+  fprintf(stderr, "CHK after checkError(Begin)\n");
+  fflush(stderr);
 
   // parse input args
+  fprintf(stderr, "CHK before parse positional args\n");
+  fflush(stderr);
   const char * syncPrim_str = argv[1];
   NUM_LDST = atoi(argv[2]);
   numWGs = atoi(argv[3]);
@@ -1433,6 +1442,11 @@ int main(int argc, char ** argv)
   const int NUM_ITERS = atoi(argv[4]);
   const int numWGs_perCU = (int)ceil((float)numWGs / NUM_CU);
   assert(numWGs_perCU > 0);
+  fprintf(stderr,
+          "CHK after parse positional args: syncPrim=%s numLdSt=%d numWGs=%d "
+          "numCSIters=%d numWGs_perCU=%d\n",
+          syncPrim_str, NUM_LDST, numWGs, NUM_ITERS, numWGs_perCU);
+  fflush(stderr);
 
   unsigned int syncPrim = 9999;
   // set the syncPrim variable to the appropriate value based on the inputted
@@ -1477,13 +1491,23 @@ int main(int argc, char ** argv)
             syncPrim_str);
     exit(-1);
   }
+  fprintf(stderr, "CHK after syncPrim decode: syncPrim=%u\n", syncPrim);
+  fflush(stderr);
 
   // multiply number of mutexes, semaphores by NUM_CU to
   // allow per-core locks
+  fprintf(stderr, "CHK before hipLocksInit\n");
+  fflush(stderr);
   hipLocksInit(MAX_WGS, 8 * NUM_CU, 24 * NUM_CU, pageAlign, NUM_CU, NUM_REPEATS, NUM_ITERS);
+  fprintf(stderr, "CHK after hipLocksInit\n");
+  fflush(stderr);
 
   hipErr = hipGetLastError();
+  fprintf(stderr, "CHK after hipGetLastError(After hipLocksInit)\n");
+  fflush(stderr);
   checkError(hipErr, "After hipLocksInit");
+  fprintf(stderr, "CHK after checkError(After hipLocksInit)\n");
+  fflush(stderr);
 
   /*
     The barriers need a per-CU barrier that is not part of the global synch
@@ -1495,7 +1519,11 @@ int main(int argc, char ** argv)
     requirements so we can reuse the same locations.
   */
   unsigned int * perCUBarriers;
+  fprintf(stderr, "CHK before hipHostMalloc(perCUBarriers)\n");
+  fflush(stderr);
   hipHostMalloc(&perCUBarriers, sizeof(unsigned int) * (NUM_CU * MAX_WGS * 2));
+  fprintf(stderr, "CHK after hipHostMalloc(perCUBarriers)\n");
+  fflush(stderr);
 
   int numLocsMult = 0;
   // barriers and unique semaphores have numWGs WGs accessing unique locations
@@ -1525,9 +1553,17 @@ int main(int argc, char ** argv)
   int numStorageLocs = (numLocsMult * numUniqLocsAccPerWG);
   assert(numStorageLocs > 0);
   float * storage;
+  fprintf(stderr,
+          "CHK before hipHostMalloc(storage): numLocsMult=%d "
+          "numUniqLocsAccPerWG=%d numStorageLocs=%d\n",
+          numLocsMult, numUniqLocsAccPerWG, numStorageLocs);
+  fflush(stderr);
   hipHostMalloc(&storage, sizeof(float) * numStorageLocs);
+  fprintf(stderr, "CHK after hipHostMalloc(storage)\n");
+  fflush(stderr);
 
   fprintf(stdout, "# WGs: %d, # Ld/St: %d, # Locs Mult: %d, # Uniq Locs/WG: %d, # Storage Locs: %d\n", numWGs, NUM_LDST, numLocsMult, numUniqLocsAccPerWG, numStorageLocs);
+  fflush(stdout);
 
   // initialize storage
   for (int i = 0; i < numStorageLocs; ++i) { storage[i] = i; }
@@ -1545,6 +1581,8 @@ int main(int argc, char ** argv)
                   spinSem2_uniq, eboSem2_uniq,
                   spinSem10_uniq, eboSem10_uniq,
                   spinSem120_uniq, eboSem120_uniq;
+  fprintf(stderr, "CHK before primitive create switch\n");
+  fflush(stderr);
   switch (syncPrim) {
     case 0: // atomic tree barrier doesn't require any special fields to be
             // created
@@ -1684,6 +1722,8 @@ int main(int argc, char ** argv)
       exit(-1);
       break;
   }
+  fprintf(stderr, "CHK after primitive create switch\n");
+  fflush(stderr);
 
   // # WGs must be < maxBufferSize or sleep mutex ring buffer won't work
   if ((syncPrim == 6) || (syncPrim == 22)) {

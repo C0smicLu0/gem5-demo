@@ -60,7 +60,6 @@ struct BcOptions
     int cpu_workers = 0;
     int cpu_stack_kb = 64;
     int gpu_cus = -1;
-    int source_batch = 0;
     bool cpu_only = false;
     bool gpu_only = false;
     bool debug_log = false;
@@ -75,7 +74,6 @@ usage(const char *program)
             "  --cpu-stack-kb N Per-worker pthread stack size in KiB. "
             "Default: 64.\n"
             "  --gpu-cus N      GPU CU count for CPU+GPU compatibility.\n"
-            "  --source-batch N Number of GPU sources to process in parallel.\n"
             "  --cpu-only       Unsupported in GPU-only BC mode.\n"
             "  --gpu-only       Run the original GPU BC path only.\n"
             "  --debug-log      Print phase and completion logs.\n",
@@ -124,14 +122,6 @@ parse_options(int argc, char **argv, BcOptions *options)
                 !parse_int_value(argv[arg], &options->gpu_cus) ||
                 options->gpu_cus == 0) {
                 fprintf(stderr, "--gpu-cus requires a positive integer\n");
-                usage(argv[0]);
-                exit(EXIT_FAILURE);
-            }
-        } else if (strcmp(argv[arg], "--source-batch") == 0) {
-            if (++arg >= argc ||
-                !parse_int_value(argv[arg], &options->source_batch) ||
-                options->source_batch == 0) {
-                fprintf(stderr, "--source-batch requires a positive integer\n");
                 usage(argv[0]);
                 exit(EXIT_FAILURE);
             }
@@ -256,9 +246,9 @@ main(int argc, char **argv)
     BcOptions options;
     parse_options(argc, argv, &options);
     printf("BC options: cpu_workers=%d cpu_stack_kb=%d gpu_cus=%d "
-           "source_batch=%d gpu_only=%d\n",
+           "gpu_only=%d\n",
            options.cpu_workers, options.cpu_stack_kb, options.gpu_cus,
-           options.source_batch, options.gpu_only ? 1 : 0);
+           options.gpu_only ? 1 : 0);
     fflush(stdout);
 
     int num_nodes;
@@ -319,25 +309,23 @@ main(int argc, char **argv)
     fflush(stdout);
 
     const int max_sources = std::min(num_nodes, MAX_ITERS);
-    int gpu_parallel_sources = 1;
+    const int gpu_dummy_rounds = 16;
+    int gpu_dummy_blocks = 0;
     if (run_gpu) {
-        int default_batch = props.multiProcessorCount > 0 ?
-            props.multiProcessorCount : 1;
-        if (options.gpu_cus > 0) {
-            default_batch = options.gpu_cus;
-        }
-        gpu_parallel_sources = options.source_batch > 0 ?
-            options.source_batch : default_batch;
-        gpu_parallel_sources =
-            std::max(1, std::min(gpu_parallel_sources, max_sources));
+        const int local_worksize = 128;
+        const int real_blocks =
+            (num_nodes + local_worksize - 1) / local_worksize;
+        const int gpu_capacity =
+            options.gpu_cus > 0 ? options.gpu_cus : props.multiProcessorCount;
+        gpu_dummy_blocks = std::max(0, gpu_capacity - real_blocks);
     }
 
     if (options.debug_log) {
         printf("BC split: sources=%d gpu_compute=[0, %d) "
                "cpu_requested=%d cpu_planned=%d cpu_shared_load=graph-read-only "
-               "gpu_source_batch=%d roi_order=cpu-then-gpu\n",
+               "gpu_dummy_blocks=%d gpu_dummy_rounds=%d roi_order=cpu-then-gpu\n",
                num_nodes, max_sources, options.cpu_workers, planned_workers,
-               gpu_parallel_sources);
+               gpu_dummy_blocks, gpu_dummy_rounds);
         fflush(stdout);
     }
 
@@ -350,15 +338,14 @@ main(int argc, char **argv)
     int *col_d = NULL;
     int *row_trans_d = NULL;
     int *col_trans_d = NULL;
-    const size_t gpu_state_entries =
-        static_cast<size_t>(std::max(1, gpu_parallel_sources)) *
-        static_cast<size_t>(num_nodes);
+    unsigned int *gpu_dummy_d = NULL;
+    int gpu_dummy_entries = 0;
 
     if (run_gpu) {
         CHECK(hipMalloc(&bc_d, num_nodes * sizeof(float)));
-        CHECK(hipMalloc(&dist_d, gpu_state_entries * sizeof(int)));
-        CHECK(hipMalloc(&sigma_d, gpu_state_entries * sizeof(float)));
-        CHECK(hipMalloc(&rho_d, gpu_state_entries * sizeof(float)));
+        CHECK(hipMalloc(&dist_d, num_nodes * sizeof(int)));
+        CHECK(hipMalloc(&sigma_d, num_nodes * sizeof(float)));
+        CHECK(hipMalloc(&rho_d, num_nodes * sizeof(float)));
         CHECK(hipMalloc(&stop_d, sizeof(int)));
         CHECK(hipMalloc(&row_d, (num_nodes + 1) * sizeof(int)));
         CHECK(hipMalloc(&col_d, num_edges * sizeof(int)));
@@ -450,58 +437,108 @@ main(int argc, char **argv)
 
         int local_worksize = 128;
         dim3 threads(local_worksize, 1, 1);
-        int num_blocks = (num_nodes + local_worksize - 1) / local_worksize;
-        dim3 grid(num_blocks, 1, 1);
+        int real_blocks = (num_nodes + local_worksize - 1) / local_worksize;
+        int launch_blocks = std::max(real_blocks, gpu_dummy_blocks);
+        dim3 grid(launch_blocks, 1, 1);
+        gpu_dummy_entries = launch_blocks * local_worksize;
+        if (gpu_dummy_entries > num_nodes) {
+            CHECK(hipMalloc(&gpu_dummy_d,
+                            gpu_dummy_entries * sizeof(unsigned int)));
+            CHECK(hipMemset(gpu_dummy_d, 0,
+                            gpu_dummy_entries * sizeof(unsigned int)));
+        }
 
         printf("Before GPU kernel launch\n");
         fflush(stdout);
+        if (options.debug_log) {
+            printf("GPU launch config: real_blocks=%d launch_blocks=%d "
+                   "dummy_blocks=%d dummy_entries=%d dummy_rounds=%d\n",
+                   real_blocks, launch_blocks, gpu_dummy_blocks,
+                   gpu_dummy_entries, gpu_dummy_rounds);
+            fflush(stdout);
+        }
         hipLaunchKernelGGL(HIP_KERNEL_NAME(clean_bc), dim3(grid),
-                           dim3(threads), 0, 0, bc_d, num_nodes);
+                           dim3(threads), 0, 0, bc_d, num_nodes,
+                           gpu_dummy_d, gpu_dummy_entries,
+                           gpu_dummy_rounds);
+        CHECK(hipDeviceSynchronize());
+        if (options.debug_log) {
+            printf("Completed clean_bc\n");
+            fflush(stdout);
+        }
 
-        // Keep more CUs busy by processing a contiguous batch of sources in one
-        // GPU phase instead of draining the entire BC pipeline source-by-source.
-        for (int source_base = 0; source_base < max_sources;
-             source_base += gpu_parallel_sources) {
-            const int active_sources =
-                std::min(gpu_parallel_sources, max_sources - source_base);
-            const int total_states = active_sources * num_nodes;
-            const int batch_blocks =
-                (total_states + local_worksize - 1) / local_worksize;
-            dim3 batch_grid(batch_blocks, 1, 1);
-
-            hipLaunchKernelGGL(HIP_KERNEL_NAME(clean_1d_array_batched),
-                               dim3(batch_grid), dim3(threads), 0, 0,
-                               source_base, active_sources, dist_d, sigma_d,
-                               rho_d, num_nodes);
+        // Preserve the original single-source BC traversal while padding the
+        // launch grid with dummy-only blocks so otherwise idle CUs can execute
+        // independent work during each GPU phase.
+        for (int source = 0; source < max_sources; ++source) {
+            if (options.debug_log) {
+                printf("Starting iteration %d\n", source);
+                fflush(stdout);
+            }
+            hipLaunchKernelGGL(HIP_KERNEL_NAME(clean_1d_array), dim3(grid),
+                               dim3(threads), 0, 0, source, dist_d, sigma_d,
+                               rho_d, num_nodes, gpu_dummy_d,
+                               gpu_dummy_entries, gpu_dummy_rounds);
+            CHECK(hipDeviceSynchronize());
+            if (options.debug_log) {
+                printf("Iteration %d: completed clean_1d_array\n", source);
+                fflush(stdout);
+            }
 
             int dist = 0;
             int stop = 1;
             do {
                 stop = 0;
+                if (options.debug_log) {
+                    printf("Iteration %d: launching bfs dist=%d\n",
+                           source, dist);
+                    fflush(stdout);
+                }
                 CHECK(hipMemcpy(stop_d, &stop, sizeof(int),
                                 hipMemcpyHostToDevice));
-                hipLaunchKernelGGL(HIP_KERNEL_NAME(bfs_kernel_batched),
-                                   dim3(batch_grid), dim3(threads), 0, 0,
-                                   row_d, col_d, dist_d, rho_d, stop_d,
-                                   num_nodes, num_edges, dist, active_sources);
+                hipLaunchKernelGGL(HIP_KERNEL_NAME(bfs_kernel), dim3(grid),
+                                   dim3(threads), 0, 0, row_d, col_d, dist_d,
+                                   rho_d, stop_d, num_nodes, num_edges, dist,
+                                   gpu_dummy_d, gpu_dummy_entries,
+                                   gpu_dummy_rounds);
+                CHECK(hipDeviceSynchronize());
                 CHECK(hipMemcpy(&stop, stop_d, sizeof(int),
                                 hipMemcpyDeviceToHost));
+                if (options.debug_log) {
+                    printf("Iteration %d: completed bfs dist=%d stop=%d\n",
+                           source, dist, stop);
+                    fflush(stdout);
+                }
                 dist++;
             } while (stop);
 
-            CHECK(hipDeviceSynchronize());
+            if (options.debug_log) {
+                printf("Iteration %d: bfs finished with dist=%d\n",
+                       source, dist);
+                fflush(stdout);
+            }
 
             while (dist) {
-                hipLaunchKernelGGL(HIP_KERNEL_NAME(backtrack_kernel_batched),
-                                   dim3(batch_grid), dim3(threads), 0, 0,
+                if (options.debug_log) {
+                    printf("Iteration %d: launching backtrack dist=%d\n",
+                           source, dist);
+                    fflush(stdout);
+                }
+                hipLaunchKernelGGL(HIP_KERNEL_NAME(backtrack_kernel),
+                                   dim3(grid), dim3(threads), 0, 0,
                                    row_trans_d, col_trans_d, dist_d, rho_d,
-                                   sigma_d, num_nodes, num_edges, dist,
-                                   source_base, active_sources, bc_d);
+                                   sigma_d, num_nodes, num_edges, dist, source,
+                                   bc_d, gpu_dummy_d, gpu_dummy_entries,
+                                   gpu_dummy_rounds);
+                CHECK(hipDeviceSynchronize());
+                if (options.debug_log) {
+                    printf("Iteration %d: completed backtrack dist=%d\n",
+                           source, dist);
+                    fflush(stdout);
+                }
                 dist--;
             }
-            CHECK(hipDeviceSynchronize());
-            fprintf(stdout, "Completed source batch [%d, %d)\n", source_base,
-                    source_base + active_sources);
+            fprintf(stdout, "Completed iteration %d\n", source);
             fflush(stdout);
         }
 
@@ -551,6 +588,9 @@ main(int argc, char **argv)
         hipFree(col_d);
         hipFree(row_trans_d);
         hipFree(col_trans_d);
+        if (gpu_dummy_d) {
+            hipFree(gpu_dummy_d);
+        }
     }
 
     printf("PASS\n");
