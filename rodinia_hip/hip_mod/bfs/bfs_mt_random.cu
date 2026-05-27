@@ -117,7 +117,7 @@ void *cpu_shared_worker(void *arg)
         int write_idx = a->start + (int)(bfs_xorshift32(&state) %
                                          (unsigned int)own_count);
         int v = g_cost_shared[write_idx];
-        g_cost_shared[write_idx] = v;
+        sum += v;
     }
 
     for (int n = 0; n < sample_count; n++) {
@@ -180,9 +180,9 @@ void BFSGraph(int argc, char** argv)
 
     int num_cus = 0;
     for (int ai = 5; ai < argc; ai++) {
-        if (strcmp(argv[ai], "--mt-cpu-threads") == 0 && ai + 1 < argc) {
+        if (strcmp(argv[ai], "--cpu-workers") == 0 && ai + 1 < argc) {
             g_num_cpu_threads = atoi(argv[++ai]);
-        } else if (strcmp(argv[ai], "--num-cus") == 0 && ai + 1 < argc) {
+        } else if (strcmp(argv[ai], "--gpu-cus") == 0 && ai + 1 < argc) {
             num_cus = atoi(argv[++ai]);
         }
     }

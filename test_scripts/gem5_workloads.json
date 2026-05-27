@@ -45,9 +45,6 @@
     "pannotia-mis-hip-1k-128k": {
       "workload_args": "--mem-size=8GiB -c /gem5/tests/gem5/gpu/pannotia_modified_src/pannotia/mis/bin/mis_hip.gem5 --options '/gem5/tests/gem5/gpu/pannotia_modified_src/pannotia/datasets/1k_128k.gr 0'"
     },
-    "rodinia-btree": {
-      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin_mod/b+tree.out --options 'file /gem5/tests/gem5/resources/rodinia_hip/data/b+tree/mil.txt command /gem5/tests/gem5/resources/rodinia_hip/data/b+tree/command.txt'"
-    },
     "rodinia-bfs": {
       "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin_mod/bfs.out --options '/gem5/tests/gem5/resources/rodinia_hip/data/bfs/graph65536.txt'"
     },

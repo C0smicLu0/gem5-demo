@@ -96,9 +96,9 @@ void BFSGraph( int argc, char** argv)
     char *input_f;
 	int num_cus = 0;
 	for (int ai = 2; ai < argc; ai++) {
-		if (strcmp(argv[ai], "--mt-cpu-threads") == 0 && ai + 1 < argc) {
+		if (strcmp(argv[ai], "--cpu-workers") == 0 && ai + 1 < argc) {
 			ai++;  // skip value (no-op, no rodinia_mt)
-		} else if (strcmp(argv[ai], "--num-cus") == 0 && ai + 1 < argc) {
+		} else if (strcmp(argv[ai], "--gpu-cus") == 0 && ai + 1 < argc) {
 			num_cus = atoi(argv[++ai]);
 		}
 	}

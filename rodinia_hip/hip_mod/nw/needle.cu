@@ -58,7 +58,7 @@ static int rodinia_parse_threads_from_cmdline(void) {
         size_t len = strlen(arg);
         if (len == 0) break;
 
-        if (strcmp(arg, "--mt-cpu-threads") == 0) {
+        if (strcmp(arg, "--cpu-workers") == 0) {
             size_t j = i + len + 1;
             if (j < nread) {
                 int v = atoi(&buf[j]);
@@ -70,7 +70,7 @@ static int rodinia_parse_threads_from_cmdline(void) {
                 int v = atoi(&buf[j]);
                 if (v > 0) return v;
             }
-        } else if (strncmp(arg, "--mt-cpu-threads=", 17) == 0) {
+        } else if (strncmp(arg, "--cpu-workers=", 17) == 0) {
             int v = atoi(arg + 17);
             if (v > 0) return v;
         }
@@ -85,7 +85,7 @@ static void rodinia_mt_init_cfg(void) {
     const char *s_work = getenv("RODINIA_SHARE_PERCENT");
     const char *s_seed = getenv("RODINIA_SHARE_SEED");
 
-    // Thread count is controlled by workload options arg: --mt-cpu-threads <threads>.
+    // Thread count is controlled by workload options arg: --cpu-workers <threads>.
     int parsed_threads = rodinia_parse_threads_from_cmdline();
     rodinia_mt_threads = (parsed_threads > 0) ? parsed_threads : 1;
 
@@ -156,38 +156,17 @@ static void *rodinia_mt_shared_worker(void *p) {
     for (int i = 0; i < a->iters; i++) {
         size_t idx = (size_t)(rodinia_mt_xorshift32(&s) % (unsigned int)window);
         volatile unsigned char v = a->shared[idx];
-        a->shared[idx] = v;
+        (void)v;
     }
     return NULL;
 }
 
 static void rodinia_mt_cpu_phase_shared(void *shared, size_t shared_bytes) {
-    rodinia_mt_init_cfg();
-    if (rodinia_mt_work_percent <= 0 || shared == NULL || shared_bytes == 0) return;
-
-    int n = rodinia_mt_threads;
-    pthread_t *ths = (pthread_t *)malloc((size_t)n * sizeof(pthread_t));
-    rodinia_mt_shared_arg_t *args =
-        (rodinia_mt_shared_arg_t *)malloc((size_t)n * sizeof(rodinia_mt_shared_arg_t));
-
-    int base_iters = 256 * rodinia_mt_work_percent;
-    if (base_iters < 1) base_iters = 1;
-
-    for (int t = 0; t < n; t++) {
-        args[t].tid = t;
-        args[t].iters = base_iters;
-        args[t].seed = rodinia_mt_seed ^ (unsigned int)(t + 1) * 0x9e3779b9u;
-        args[t].shared = (unsigned char *)shared;
-        args[t].shared_bytes = shared_bytes;
-        pthread_create(&ths[t], NULL, rodinia_mt_shared_worker, &args[t]);
-    }
-    for (int t = 0; t < n; t++) {
-        pthread_join(ths[t], NULL);
-    }
-
-    free(ths);
-    free(args);
+    (void)shared;
+    (void)shared_bytes;
+    rodinia_mt_cpu_phase();
 }
+
 
 // ---- end injected MT helpers ----
 
@@ -203,6 +182,7 @@ float init_time = 0, mem_alloc_time = 0, h2d_time = 0, kernel_time = 0,
       d2h_time = 0, close_time = 0, total_time = 0;
 #endif
 #ifndef TIMING
+static inline void rodinia_mt_set_threads(int n) { (void)n; }
 static inline void rodinia_mt_cpu_phase(void) {}
 static inline void rodinia_mt_cpu_phase_shared(void *shared, size_t shared_bytes) { (void)shared; (void)shared_bytes; }
 #endif
@@ -276,7 +256,7 @@ main( int argc, char** argv)
 
 void usage(int argc, char **argv)
 {
-	fprintf(stderr, "Usage: %s <max_rows/max_cols> <penalty> [--mt-cpu-threads N|-n N|-t N] [--num-cus N|-u N]\n", argv[0]);
+	fprintf(stderr, "Usage: %s <max_rows/max_cols> <penalty> [--cpu-workers N] [--gpu-cus N]\n", argv[0]);
 	fprintf(stderr, "\t<dimension>  - x and y dimensions\n");
 	fprintf(stderr, "\t<penalty> - penalty(positive integer)\n");
 	exit(1);
@@ -320,18 +300,18 @@ void runTest( int argc, char** argv)
     }
 
     for (int i = 3; i < argc; i++) {
-        if (strcmp(argv[i], "--mt-cpu-threads") == 0 || strcmp(argv[i], "-n") == 0 || strcmp(argv[i], "-t") == 0) {
+        if (strcmp(argv[i], "--cpu-workers") == 0) {
             if (i + 1 >= argc) usage(argc, argv);
             mt_threads = parse_positive_int_opt(argv[++i]);
             if (mt_threads <= 0) usage(argc, argv);
-        } else if (strncmp(argv[i], "--mt-cpu-threads=", 17) == 0) {
+        } else if (strncmp(argv[i], "--cpu-workers=", 17) == 0) {
             mt_threads = parse_positive_int_opt(argv[i] + 17);
             if (mt_threads <= 0) usage(argc, argv);
-        } else if (strcmp(argv[i], "--num-cus") == 0 || strcmp(argv[i], "-u") == 0) {
+        } else if (strcmp(argv[i], "--gpu-cus") == 0) {
             if (i + 1 >= argc) usage(argc, argv);
             num_cus = parse_positive_int_opt(argv[++i]);
             if (num_cus <= 0) usage(argc, argv);
-        } else if (strncmp(argv[i], "--num-cus=", 10) == 0) {
+        } else if (strncmp(argv[i], "--gpu-cus=", 10) == 0) {
             num_cus = parse_positive_int_opt(argv[i] + 10);
             if (num_cus <= 0) usage(argc, argv);
         } else {

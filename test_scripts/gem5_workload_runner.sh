@@ -112,229 +112,9 @@ join_trim() {
   echo "$*" | xargs
 }
 
-extract_num_cpus_from_config_args() {
-  local cfg="$1"
-  read -r -a arr <<< "$cfg"
-  local i tok
-  for ((i=0; i<${#arr[@]}; i++)); do
-    tok="${arr[$i]}"
-    if [[ "$tok" == "-n" || "$tok" == "--num-cpus" ]]; then
-      if (( i + 1 < ${#arr[@]} )); then
-        echo "${arr[$((i+1))]}"
-        return 0
-      fi
-    elif [[ "$tok" =~ ^-n[0-9]+$ ]]; then
-      echo "${tok#-n}"
-      return 0
-    elif [[ "$tok" == --num-cpus=* ]]; then
-      echo "${tok#--num-cpus=}"
-      return 0
-    fi
-  done
-  echo ""
-}
-
-extract_num_cus_from_config_args() {
-  local cfg="$1"
-  read -r -a arr <<< "$cfg"
-  local i tok
-  for ((i=0; i<${#arr[@]}; i++)); do
-    tok="${arr[$i]}"
-    if [[ "$tok" == "-u" || "$tok" == "--num-compute-units" ]]; then
-      if (( i + 1 < ${#arr[@]} )); then
-        echo "${arr[$((i+1))]}"
-        return 0
-      fi
-    elif [[ "$tok" =~ ^-u[0-9]+$ ]]; then
-      echo "${tok#-u}"
-      return 0
-    elif [[ "$tok" == --num-compute-units=* ]]; then
-      echo "${tok#--num-compute-units=}"
-      return 0
-    fi
-  done
-  echo ""
-}
-
-inject_mt_threads_into_workload_args() {
-  local workload_args="$1"
-  local num_cpus="$2"
-  if [[ -z "$num_cpus" ]]; then
-    echo "$workload_args"
-    return 0
-  fi
-
-  python3 - "$workload_args" "$num_cpus" <<'PY2'
-import shlex
-import sys
-
-workload_args = sys.argv[1]
-num_cpus = sys.argv[2]
-
-if not workload_args.strip():
-    print(workload_args)
-    sys.exit(0)
-
-tokens = shlex.split(workload_args)
-
-def rewrite_options(opt_str: str) -> str:
-    opt_tokens = shlex.split(opt_str)
-    out = []
-    i = 0
-    while i < len(opt_tokens):
-        t = opt_tokens[i]
-        if t == "--mt-cpu-threads":
-            i += 2 if i + 1 < len(opt_tokens) else 1
-            continue
-        if t.startswith("--mt-cpu-threads="):
-            i += 1
-            continue
-        out.append(t)
-        i += 1
-    out += ["--mt-cpu-threads", num_cpus]
-    return shlex.join(out)
-
-if "--options" in tokens:
-    idx = tokens.index("--options")
-    if idx + 1 < len(tokens):
-        tokens[idx + 1] = rewrite_options(tokens[idx + 1])
-    else:
-        tokens += ["--mt-cpu-threads", num_cpus]
-else:
-    tokens += ["--options", shlex.join(["--mt-cpu-threads", num_cpus])]
-
-print(shlex.join(tokens))
-PY2
-}
-
-inject_num_cus_into_workload_args() {
-  local workload_args="$1"
-  local num_cus="$2"
-  if [[ -z "$num_cus" ]]; then
-    echo "$workload_args"
-    return 0
-  fi
-
-  python3 - "$workload_args" "$num_cus" <<'PY3'
-import shlex
-import sys
-
-workload_args = sys.argv[1]
-num_cus = sys.argv[2]
-
-if not workload_args.strip():
-    print(workload_args)
-    sys.exit(0)
-
-tokens = shlex.split(workload_args)
-
-def rewrite_options(opt_str: str) -> str:
-    opt_tokens = shlex.split(opt_str)
-    out = []
-    i = 0
-    while i < len(opt_tokens):
-        t = opt_tokens[i]
-        if t == "--num-cus":
-            i += 2 if i + 1 < len(opt_tokens) else 1
-            continue
-        if t.startswith("--num-cus="):
-            i += 1
-            continue
-        out.append(t)
-        i += 1
-    out += ["--num-cus", num_cus]
-    # If workload uses -np, scale it to num_cus * 64 so each block has ~64 real particles
-    num_cus_int = int(num_cus)
-    if num_cus_int > 0:
-        target_np = num_cus_int * 64
-        for j, t in enumerate(out):
-            if t == "-np" and j + 1 < len(out):
-                existing_np = int(out[j + 1])
-                if existing_np < target_np:
-                    out[j + 1] = str(target_np)
-                break
-    return shlex.join(out)
-
-if "--options" in tokens:
-    idx = tokens.index("--options")
-    if idx + 1 < len(tokens):
-        tokens[idx + 1] = rewrite_options(tokens[idx + 1])
-    else:
-        tokens += ["--num-cus", num_cus]
-else:
-    tokens += ["--options", shlex.join(["--num-cus", num_cus])]
-
-print(shlex.join(tokens))
-PY3
-}
-
-
-
-option_overridden() {
-  # 判断某个 token 是否属于会被覆盖的关键选项（当前只处理 -u/-n 两组）
-  local opt="$1"
-  local tok="$2"
-  case "$opt" in
-    u)
-      [[ "$tok" == "-u" || "$tok" == --num-compute-units || "$tok" =~ ^-u[0-9]+$ || "$tok" == --num-compute-units=* ]]
-      ;;
-    n)
-      [[ "$tok" == "-n" || "$tok" == --num-cpus || "$tok" =~ ^-n[0-9]+$ || "$tok" == --num-cpus=* ]]
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-}
-
-merge_config_with_overrides() {
-  # 按“override 覆盖 base”合并参数串：
-  # 当 override 中出现 -u/-n 时，先从 base 删除对应旧值，再追加 override。
-  local base="$1"
-  local override="$2"
-  if [[ -z "$override" ]]; then
-    echo "$base"
-    return 0
-  fi
-
-  read -r -a base_arr <<< "$base"
-  read -r -a override_arr <<< "$override"
-  local rm_u=0 rm_n=0
-  local i
-
-  for ((i=0; i<${#override_arr[@]}; i++)); do
-    if option_overridden "u" "${override_arr[$i]}"; then
-      rm_u=1
-    fi
-    if option_overridden "n" "${override_arr[$i]}"; then
-      rm_n=1
-    fi
-  done
-
-  local merged=()
-  for ((i=0; i<${#base_arr[@]}; i++)); do
-    local tok="${base_arr[$i]}"
-    if (( rm_u )) && option_overridden "u" "$tok"; then
-      if [[ "$tok" == "-u" || "$tok" == --num-compute-units ]]; then
-        ((i++))
-      fi
-      continue
-    fi
-    if (( rm_n )) && option_overridden "n" "$tok"; then
-      if [[ "$tok" == "-n" || "$tok" == --num-cpus ]]; then
-        ((i++))
-      fi
-      continue
-    fi
-    merged+=("$tok")
-  done
-  merged+=("${override_arr[@]}")
-  echo "${merged[*]}"
-}
-
 resource_aware_workload() {
   case "$1" in
-    square|sleepMutex|lfTreeBarrUniq|hacc|pannotia-bc-*|pannotia-color-max-*|pannotia-color-maxmin-*|pannotia-mis-hip-*)
+    square|sleepMutex|lfTreeBarrUniq|hacc|pannotia-bc-*|pannotia-color-max-*|pannotia-color-maxmin-*|pannotia-mis-hip-*| rodinia-bfs|rodinia-dwt2d|rodinia-gaussian|rodinia-hotspot|rodinia-lavaMD|rodinia-nw|rodinia-particlefilter)
       return 0
       ;;
     *)
@@ -637,27 +417,16 @@ run_test() {
     workload_args="$(add_resource_workload_args "$workload" "$workload_args" \
       "$resource_cpus" "$resource_gpu_cus" "$selected_profiles")"
   fi
-
-  local cfg_num_cpus
-  cfg_num_cpus="$(extract_num_cpus_from_config_args "$config_args")"
-  if [[ "$workload" == rodinia-* && -n "$cfg_num_cpus" ]]; then
-    workload_args="$(inject_mt_threads_into_workload_args "$workload_args" "$cfg_num_cpus")"
-  fi
-
-  local cfg_num_cus
-  cfg_num_cus="$(extract_num_cus_from_config_args "$config_args")"
-  if [[ "$workload" == rodinia-* && -n "$cfg_num_cus" ]]; then
-    workload_args="$(inject_num_cus_into_workload_args "$workload_args" "$cfg_num_cus")"
-  fi
-
-  echo "run_dir=${run_dir}"
+  
+  
+    echo "run_dir=${run_dir}"
   if [[ -n "$selected_profiles" ]]; then
     echo "profile=${selected_profiles}"
   fi
   echo "workload_args=${workload_args}"
   if [[ "$workload" == rodinia-* ]]; then
-    echo "forwarded_mt_threads=${cfg_num_cpus:-unset} (as --mt-cpu-threads in --options)"
-    echo "forwarded_num_cus=${cfg_num_cus:-unset} (as --num-cus in --options)"
+    echo "forwarded_cpu_workers=${resource_cpus:-unset} (as --cpu-workers in --options)"
+    echo "forwarded_gpu_cus=${resource_gpu_cus:-unset} (as --gpu-cus in --options)"
   fi
   if [[ -n "$resource_cpus" || -n "$resource_gpu_cus" ]]; then
     echo "resources=cpus:${resource_cpus} gpu_cus:${resource_gpu_cus} (from config_args)"

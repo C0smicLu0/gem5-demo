@@ -64,13 +64,13 @@ static int rodinia_parse_threads_from_cmdline(void) {
         size_t len = strlen(arg);
         if (len == 0) break;
 
-        if (strcmp(arg, "--mt-cpu-threads") == 0) {
+        if (strcmp(arg, "--cpu-workers") == 0) {
             size_t j = i + len + 1;
             if (j < nread) {
                 int v = atoi(&buf[j]);
                 if (v > 0) return v;
             }
-        } else if (strncmp(arg, "--mt-cpu-threads=", 17) == 0) {
+        } else if (strncmp(arg, "--cpu-workers=", 17) == 0) {
             int v = atoi(arg + 17);
             if (v > 0) return v;
         }
@@ -131,7 +131,7 @@ static void rodinia_mt_cap_threads(void) {
     if (max_threads < 1) max_threads = 1;
 
     if (rodinia_mt_threads > max_threads) {
-        printf("[rodinia_mt][pf] clamp mt-cpu-threads from %d to %d (visible_cpus=%d, reserve=2)\n",
+        printf("[rodinia_mt][pf] clamp cpu-workers from %d to %d (visible_cpus=%d, reserve=2)\n",
                rodinia_mt_threads, max_threads, visible);
         fflush(stdout);
         rodinia_mt_threads = max_threads;
@@ -142,21 +142,8 @@ static void *rodinia_mt_worker(void *p) {
     rodinia_mt_arg_t *a = (rodinia_mt_arg_t *)p;
     unsigned int s = a->seed ^ (unsigned int)(a->tid + 1) * 0x9e3779b9u;
 
-#ifdef __linux__
-    cpu_set_t cpuset;
-    CPU_ZERO(&cpuset);
-    CPU_SET(a->tid, &cpuset);
-    int aff_rc = pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
-    int run_cpu = sched_getcpu();
-    printf("[rodinia_mt][pf] tid=%d affinity_rc=%d run_cpu=%d\n",
-           a->tid, aff_rc, run_cpu);
-    fflush(stdout);
-#else
-    printf("[rodinia_mt][pf] tid=%d affinity_rc=NA run_cpu=NA\n", a->tid);
-    fflush(stdout);
-#endif
 
-    while (!rodinia_mt_stop) {
+    for (int outer = 0; outer < 256 && !rodinia_mt_stop; outer++) {
         int base_iters = 128 * rodinia_mt_work_percent;
         if (base_iters < 1) base_iters = 1;
 
@@ -168,7 +155,7 @@ static void *rodinia_mt_worker(void *p) {
             for (int i = 0; i < base_iters; i++) {
                 size_t idx = (size_t)(rodinia_mt_xorshift32(&s) % (unsigned int)shared_bytes);
                 volatile unsigned char v = shared[idx];
-                shared[idx] = v;
+                acc += (unsigned int)v;
                 acc += (unsigned int)v;
             }
         } else {
@@ -235,10 +222,11 @@ static void rodinia_mt_cpu_phase(void) {
 }
 
 static void rodinia_mt_cpu_phase_shared(void *shared, size_t shared_bytes) {
-    rodinia_mt_shared = (volatile unsigned char *)shared;
-    rodinia_mt_shared_bytes = shared_bytes;
-    rodinia_mt_start_pool();
+    (void)shared;
+    (void)shared_bytes;
+    rodinia_mt_cpu_phase();
 }
+
 
 // ---- end injected MT helpers ----
 
@@ -856,7 +844,7 @@ void particleFilter(int * I, int IszX, int IszY, int Nfr, int * seed, int Nparti
 }
 int main(int argc, char * argv[]){
 	
-	char* usage = "naive.out -x <dimX> -y <dimY> -z <Nfr> -np <Nparticles> --mt-cpu-threads <N> --num-cus <M>";
+	char* usage = "naive.out -x <dimX> -y <dimY> -z <Nfr> -np <Nparticles> --cpu-workers <N> --gpu-cus <M>";
 	//check number of arguments
 	if(argc != 13)
 	{
@@ -915,26 +903,26 @@ int main(int argc, char * argv[]){
 		return 0;
 	}
 
-	if (strcmp(argv[9], "--mt-cpu-threads")) {
+	if (strcmp(argv[9], "--cpu-workers")) {
 		printf("%s\n", usage);
 		return 0;
 	}
 	int mt_threads = 0;
 	sscanf(argv[10], "%d", &mt_threads);
 	if (mt_threads <= 0) {
-		printf("mt-cpu-threads must be > 0\n");
+		printf("cpu-workers must be > 0\n");
 		return 0;
 	}
 	rodinia_mt_set_threads(mt_threads);
 
-	if (strcmp(argv[11], "--num-cus")) {
+	if (strcmp(argv[11], "--gpu-cus")) {
 		printf("%s\n", usage);
 		return 0;
 	}
 	int num_cus = 0;
 	sscanf(argv[12], "%d", &num_cus);
 	if (num_cus <= 0) {
-		printf("num-cus must be > 0\n");
+		printf("gpu-cus must be > 0\n");
 		return 0;
 	}
 	//establish seed
