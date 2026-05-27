@@ -309,15 +309,12 @@ main(int argc, char **argv)
     fflush(stdout);
 
     const int max_sources = std::min(num_nodes, MAX_ITERS);
-    const int gpu_dummy_rounds = 16;
+    const int gpu_dummy_rounds = 8;
     int gpu_dummy_blocks = 0;
     if (run_gpu) {
-        const int local_worksize = 128;
-        const int real_blocks =
-            (num_nodes + local_worksize - 1) / local_worksize;
         const int gpu_capacity =
             options.gpu_cus > 0 ? options.gpu_cus : props.multiProcessorCount;
-        gpu_dummy_blocks = std::max(0, gpu_capacity - real_blocks);
+        gpu_dummy_blocks = std::max(1, gpu_capacity);
     }
 
     if (options.debug_log) {
@@ -438,29 +435,24 @@ main(int argc, char **argv)
         int local_worksize = 128;
         dim3 threads(local_worksize, 1, 1);
         int real_blocks = (num_nodes + local_worksize - 1) / local_worksize;
-        int launch_blocks = std::max(real_blocks, gpu_dummy_blocks);
-        dim3 grid(launch_blocks, 1, 1);
-        gpu_dummy_entries = launch_blocks * local_worksize;
-        if (gpu_dummy_entries > num_nodes) {
-            CHECK(hipMalloc(&gpu_dummy_d,
-                            gpu_dummy_entries * sizeof(unsigned int)));
-            CHECK(hipMemset(gpu_dummy_d, 0,
-                            gpu_dummy_entries * sizeof(unsigned int)));
-        }
+        dim3 grid(real_blocks, 1, 1);
+        gpu_dummy_entries = gpu_dummy_blocks * local_worksize;
+        CHECK(hipMalloc(&gpu_dummy_d,
+                        gpu_dummy_entries * sizeof(unsigned int)));
+        CHECK(hipMemset(gpu_dummy_d, 0,
+                        gpu_dummy_entries * sizeof(unsigned int)));
 
         printf("Before GPU kernel launch\n");
         fflush(stdout);
         if (options.debug_log) {
-            printf("GPU launch config: real_blocks=%d launch_blocks=%d "
+            printf("GPU launch config: real_blocks=%d "
                    "dummy_blocks=%d dummy_entries=%d dummy_rounds=%d\n",
-                   real_blocks, launch_blocks, gpu_dummy_blocks,
+                   real_blocks, gpu_dummy_blocks,
                    gpu_dummy_entries, gpu_dummy_rounds);
             fflush(stdout);
         }
         hipLaunchKernelGGL(HIP_KERNEL_NAME(clean_bc), dim3(grid),
-                           dim3(threads), 0, 0, bc_d, num_nodes,
-                           gpu_dummy_d, gpu_dummy_entries,
-                           gpu_dummy_rounds);
+                           dim3(threads), 0, 0, bc_d, num_nodes);
         CHECK(hipDeviceSynchronize());
         if (options.debug_log) {
             printf("Completed clean_bc\n");
@@ -498,9 +490,7 @@ main(int argc, char **argv)
                                 hipMemcpyHostToDevice));
                 hipLaunchKernelGGL(HIP_KERNEL_NAME(bfs_kernel), dim3(grid),
                                    dim3(threads), 0, 0, row_d, col_d, dist_d,
-                                   rho_d, stop_d, num_nodes, num_edges, dist,
-                                   gpu_dummy_d, gpu_dummy_entries,
-                                   gpu_dummy_rounds);
+                                   rho_d, stop_d, num_nodes, num_edges, dist);
                 CHECK(hipDeviceSynchronize());
                 CHECK(hipMemcpy(&stop, stop_d, sizeof(int),
                                 hipMemcpyDeviceToHost));
@@ -528,8 +518,7 @@ main(int argc, char **argv)
                                    dim3(grid), dim3(threads), 0, 0,
                                    row_trans_d, col_trans_d, dist_d, rho_d,
                                    sigma_d, num_nodes, num_edges, dist, source,
-                                   bc_d, gpu_dummy_d, gpu_dummy_entries,
-                                   gpu_dummy_rounds);
+                                   bc_d);
                 CHECK(hipDeviceSynchronize());
                 if (options.debug_log) {
                     printf("Iteration %d: completed backtrack dist=%d\n",
@@ -541,6 +530,23 @@ main(int argc, char **argv)
             fprintf(stdout, "Completed iteration %d\n", source);
             fflush(stdout);
         }
+
+        printf("Before GPU dummy fill\n");
+        fflush(stdout);
+        if (options.debug_log) {
+            printf("BC GPU dummy config: dummy_blocks=%d dummy_threads=%d "
+                   "dummy_entries=%d dummy_rounds=%d\n",
+                   gpu_dummy_blocks, local_worksize,
+                   gpu_dummy_entries, gpu_dummy_rounds);
+            fflush(stdout);
+        }
+        hipLaunchKernelGGL(HIP_KERNEL_NAME(bc_dummy_fill_kernel),
+                           dim3(gpu_dummy_blocks), dim3(threads), 0, 0,
+                           row_d, col_d, num_nodes, num_edges, gpu_dummy_d,
+                           gpu_dummy_entries, gpu_dummy_rounds);
+        CHECK(hipDeviceSynchronize());
+        printf("After GPU dummy fill\n");
+        fflush(stdout);
 
         CHECK(hipDeviceSynchronize());
         printf("After hipDeviceSynchronize\n");

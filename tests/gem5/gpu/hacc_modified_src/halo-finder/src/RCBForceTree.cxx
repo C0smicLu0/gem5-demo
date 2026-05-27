@@ -109,10 +109,8 @@ using namespace std;
 int overallThreads = 1;
 static HaccExecutionOptions haccExecution = {0, 0, false, false, false};
 static const int kMaxHaccGpuStreams = 16;
-static const int kHaccEstimatedRealCus = 3;
-static const int kHaccDummyBlocksPerCu = 8;
 static const int kHaccDummyThreadsPerBlock = 256;
-static const int kHaccDummyRounds = 64;
+static const int kHaccDummyRounds = 8;
 
 void configureHaccExecution(const HaccExecutionOptions& options)
 {
@@ -1825,9 +1823,8 @@ void RCBForceTree<TDPTS>::runInternodeForceTasks(
   if (runGpu) {
     printf("Before GPU force task replay\n");
     fflush(stdout);
-    printf("HACC GPU replay config: tasks=%zu gpu_cus=%d streams=%d estimated_real_cus=%d\n",
-           tasks.size(), haccExecution.gpuCus, numThreads,
-           kHaccEstimatedRealCus);
+    printf("HACC GPU replay config: tasks=%zu gpu_cus=%d streams=%d\n",
+           tasks.size(), haccExecution.gpuCus, numThreads);
     fflush(stdout);
     for (size_t task = 0; task < tasks.size(); ++task) {
       if (task < 4 || ((task % 64) == 0) || (task + 1 == tasks.size())) {
@@ -1844,21 +1841,16 @@ void RCBForceTree<TDPTS>::runInternodeForceTasks(
 
 #ifdef __HIPCC__
     if (haccExecution.gpuCus > 1 && !tasks.empty()) {
-      const int estimatedRealCus = std::max(1, std::min(
-        haccExecution.gpuCus, kHaccEstimatedRealCus));
-      const int estimatedIdleCus =
-        std::max(0, haccExecution.gpuCus - estimatedRealCus);
-      const int dummyBlocks =
-        std::max(1, estimatedIdleCus) * kHaccDummyBlocksPerCu;
+      const int dummyBlocks = std::max(1, haccExecution.gpuCus);
       const int dummyThreads = kHaccDummyThreadsPerBlock;
       const size_t dummyCount =
         static_cast<size_t>(dummyBlocks) * static_cast<size_t>(dummyThreads);
 
-      if (estimatedIdleCus > 0 && numThreads > 1) {
+      if (numThreads > 1) {
         printf("Before GPU dummy fill\n");
         fflush(stdout);
-        printf("HACC GPU dummy config: estimated_idle_cus=%d dummy_blocks=%d dummy_threads=%d dummy_count=%zu rounds=%d\n",
-               estimatedIdleCus, dummyBlocks, dummyThreads, dummyCount,
+        printf("HACC GPU dummy config: dummy_blocks=%d dummy_threads=%d dummy_count=%zu rounds=%d\n",
+               dummyBlocks, dummyThreads, dummyCount,
                kHaccDummyRounds);
         fflush(stdout);
         hipMalloc(&dummyOut, sizeof(POSVEL_T) * dummyCount);
@@ -1871,8 +1863,7 @@ void RCBForceTree<TDPTS>::runInternodeForceTasks(
         printf("After GPU dummy fill launch\n");
         fflush(stdout);
       } else {
-        printf("Skipping GPU dummy fill: estimated_idle_cus=%d streams=%d\n",
-               estimatedIdleCus, numThreads);
+        printf("Skipping GPU dummy fill: streams=%d\n", numThreads);
         fflush(stdout);
       }
     }

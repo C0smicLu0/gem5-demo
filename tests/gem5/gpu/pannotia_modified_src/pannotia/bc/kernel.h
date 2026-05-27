@@ -59,21 +59,6 @@
 #ifndef KERNEL_H_
 #define KERNEL_H_
 
-__device__ __forceinline__
-void run_dummy_gpu_work(unsigned int *dummy, const int dummy_count,
-                        const int tid, const int dummy_rounds)
-{
-    if (dummy == NULL || tid < 0 || tid >= dummy_count || dummy_rounds <= 0)
-        return;
-
-    unsigned int value = dummy[tid];
-    for (int round = 0; round < dummy_rounds; ++round) {
-        value = value * 1664525u + 1013904223u +
-            static_cast<unsigned int>(round + tid);
-    }
-    dummy[tid] = value;
-}
-
 #include "hip/hip_runtime.h"
 
 /**
@@ -91,9 +76,7 @@ void run_dummy_gpu_work(unsigned int *dummy, const int dummy_count,
 
 __global__ void
 bfs_kernel(int *row, int *col, int *d, float *rho, int *cont,
-           const int num_nodes, const int num_edges, const int dist,
-           unsigned int *dummy, const int dummy_count,
-           const int dummy_rounds)
+           const int num_nodes, const int num_edges, const int dist)
 {
     int tid = hipBlockIdx_x * hipBlockDim_x + hipThreadIdx_x;
 
@@ -123,8 +106,6 @@ bfs_kernel(int *row, int *col, int *d, float *rho, int *cont,
                 atomicAdd(&rho[w], rho[tid]);
             }
         }
-    } else {
-        run_dummy_gpu_work(dummy, dummy_count, tid, dummy_rounds);
     }
 }
 
@@ -147,8 +128,7 @@ bfs_kernel(int *row, int *col, int *d, float *rho, int *cont,
 __global__ void
 backtrack_kernel(int *row, int *col, int *d, float *rho, float *sigma,
                  const int num_nodes, const int num_edges, const int dist,
-                 const int s, float* bc, unsigned int *dummy,
-                 const int dummy_count, const int dummy_rounds)
+                 const int s, float* bc)
 {
     int tid = hipBlockIdx_x * hipBlockDim_x + hipThreadIdx_x;
 
@@ -174,8 +154,6 @@ backtrack_kernel(int *row, int *col, int *d, float *rho, float *sigma,
         // Update the BC value
         if (tid != s)
             bc[tid] = bc[tid] + sigma[tid];
-    } else {
-        run_dummy_gpu_work(dummy, dummy_count, tid, dummy_rounds);
     }
 
 }
@@ -214,8 +192,7 @@ back_sum_kernel(const int s, const int dist, int *d, float *sigma, float *bc,
  */
 __global__ void
 clean_1d_array(const int source, int *dist_array, float *sigma, float *rho,
-               const int num_nodes, unsigned int *dummy,
-               const int dummy_count, const int dummy_rounds)
+               const int num_nodes)
 {
     int tid = hipBlockIdx_x * hipBlockDim_x + hipThreadIdx_x;
 
@@ -232,8 +209,6 @@ clean_1d_array(const int source, int *dist_array, float *sigma, float *rho,
             rho[tid] = 0;
             dist_array[tid] = -1;
         }
-    } else {
-        run_dummy_gpu_work(dummy, dummy_count, tid, dummy_rounds);
     }
 }
 
@@ -370,15 +345,34 @@ __global__ void clean_2d_array(int *p, const int num_nodes)
  * @param   num_nodes   Number of vertices
  */
 __global__ void clean_bc(float *bc_d, const int num_nodes,
-                         unsigned int *dummy, const int dummy_count,
-                         const int dummy_rounds)
+                         )
 {
     int tid = hipBlockIdx_x * hipBlockDim_x + hipThreadIdx_x;
 
     if (tid < num_nodes)
         bc_d[tid] = 0;
-    else
-        run_dummy_gpu_work(dummy, dummy_count, tid, dummy_rounds);
+}
+
+__global__ void
+bc_dummy_fill_kernel(const int *row, const int *col, const int num_nodes,
+                     const int num_edges, unsigned int *dummy,
+                     const int dummy_count, const int dummy_rounds)
+{
+    int tid = hipBlockIdx_x * hipBlockDim_x + hipThreadIdx_x;
+
+    if (dummy == NULL || tid < 0 || tid >= dummy_count || dummy_rounds <= 0)
+        return;
+
+    unsigned int value = dummy[tid];
+    for (int round = 0; round < dummy_rounds; ++round) {
+        int vertex = (tid + round) % num_nodes;
+        int edge = num_edges > 0 ? ((tid + round) % num_edges) : 0;
+        value += static_cast<unsigned int>(row[vertex]);
+        if (num_edges > 0)
+            value ^= static_cast<unsigned int>(col[edge] + round + 1);
+        value = value * 1664525u + 1013904223u;
+    }
+    dummy[tid] = value;
 }
 
 #endif // KERNEL_H_
