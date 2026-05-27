@@ -469,8 +469,7 @@ main(int argc, char **argv)
             }
             hipLaunchKernelGGL(HIP_KERNEL_NAME(clean_1d_array), dim3(grid),
                                dim3(threads), 0, 0, source, dist_d, sigma_d,
-                               rho_d, num_nodes, gpu_dummy_d,
-                               gpu_dummy_entries, gpu_dummy_rounds);
+                               rho_d, num_nodes);
             CHECK(hipDeviceSynchronize());
             if (options.debug_log) {
                 printf("Iteration %d: completed clean_1d_array\n", source);

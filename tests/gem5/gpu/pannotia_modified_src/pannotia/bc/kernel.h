@@ -344,8 +344,7 @@ __global__ void clean_2d_array(int *p, const int num_nodes)
  * @param   bc_d        Betweeness Centrality array
  * @param   num_nodes   Number of vertices
  */
-__global__ void clean_bc(float *bc_d, const int num_nodes,
-                         )
+__global__ void clean_bc(float *bc_d, const int num_nodes)
 {
     int tid = hipBlockIdx_x * hipBlockDim_x + hipThreadIdx_x;
 
