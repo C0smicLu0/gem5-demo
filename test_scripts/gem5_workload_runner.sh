@@ -217,14 +217,14 @@ add_resource_workload_args() {
     square)
       case " ${selected_profiles} " in
         *" cores.args2 "*|*" args2 "*)
-          cpu_offset=3
+          cpu_offset=2
           ;;
       esac
       ;;
     pannotia-color-max-*|pannotia-color-maxmin-*)
       case " ${selected_profiles} " in
         *" cores.args2 "*|*" args2 "*|*" cores.args3 "*|*" args3 "*|*" cores.args4 "*|*" args4 "*|*" cores.args5 "*|*" args5 "*)
-          cpu_offset=0
+          cpu_offset=1
           ;;
       esac
       ;;

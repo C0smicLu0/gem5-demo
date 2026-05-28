@@ -1775,6 +1775,16 @@ machine(MachineType:Directory, "AMD Baseline protocol")
     pt_popTriggerQueue;
   }
 
+  transition(I, Evict) {
+    allocDirEntry;
+    v_allocateTBE;
+    w_sendResponseWBAck;
+    wada_wakeUpAllDependentsAddr;
+    dt_deallocateTBE;
+    deallocDirEntry;
+    p_popRequestQueue;
+  }
+
   // S 收到 Evict：L1/L2 要驅逐乾淨共享塊，分配 TBE，回 WBAck，寫回數據到內存，移除一個 sharer(如果 sharers 清空轉 I)，進入 S_V
   transition(S, Evict, S_V) {L3TagArrayRead, L3DataArrayWrite} {
     v_allocateTBE;
