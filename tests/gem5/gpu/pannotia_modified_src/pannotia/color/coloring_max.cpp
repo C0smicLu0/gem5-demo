@@ -1,6 +1,7 @@
 #include "hip/hip_runtime.h"
 
 #include <algorithm>
+#include <atomic>
 #include <errno.h>
 #include <limits.h>
 #include <pthread.h>
@@ -36,7 +37,6 @@
 }
 
 #define RANGE 2048
-#define CPU_SHARED_LOAD_ROUNDS 4
 
 void print_vector(int *vector, int num);
 
@@ -44,9 +44,9 @@ struct CpuLoadPlan
 {
     const csr_array *csr = NULL;
     const int *node_value = NULL;
-    int num_nodes = 0;
-    int num_edges = 0;
+    size_t elements = 0;
     volatile long long *sinks = NULL;
+    std::atomic<bool> start;
     int actual_workers = 0;
     bool debug_log = false;
 };
@@ -62,35 +62,43 @@ cpu_shared_load_entry(void *opaque)
 {
     CpuWorkerState *state = static_cast<CpuWorkerState *>(opaque);
     CpuLoadPlan *plan = state->plan;
+
+    while (!plan->start.load(std::memory_order_acquire)) {
+        sched_yield();
+    }
+
     const int worker_count = plan->actual_workers;
-    const int begin =
-        (plan->num_nodes * state->worker_id) / worker_count;
-    const int end =
-        (plan->num_nodes * (state->worker_id + 1)) / worker_count;
+    const size_t begin =
+        (plan->elements * static_cast<size_t>(state->worker_id)) /
+        static_cast<size_t>(worker_count);
+    const size_t end =
+        (plan->elements * static_cast<size_t>(state->worker_id + 1)) /
+        static_cast<size_t>(worker_count);
     long long local = 0;
 
-    printf("CPU worker %d started shared load [%d, %d)\n",
-           state->worker_id, begin, end);
-    fflush(stdout);
+    for (size_t tid = begin; tid < end; ++tid) {
+        int row_start = plan->csr->row_array[tid];
+        int row_next =
+            (tid + 1 < plan->elements) ? plan->csr->row_array[tid + 1]
+                                       : plan->csr->row_array[plan->elements];
+        local += plan->node_value[tid] + row_start + row_next;
+    }
 
-    // Spread workers across the vertex set so every worker touches a stable
-    // contiguous slice of the shared inputs without depending on CSR edge
-    // spans. This keeps the CPU phase closer to square's simple range walk.
-    for (int round = 0; round < CPU_SHARED_LOAD_ROUNDS; ++round) {
-        for (int tid = begin; tid < end; ++tid) {
+    const size_t range_size = end - begin;
+    const size_t extra_window = range_size < 1024 ? range_size : 1024;
+    const int extra_rounds = state->worker_id % 4;
+    for (int round = 0; round < extra_rounds; ++round) {
+        for (size_t offset = 0; offset < extra_window; ++offset) {
+            size_t tid = begin + offset;
             int row_start = plan->csr->row_array[tid];
             int row_next =
-                (tid + 1 < plan->num_nodes) ? plan->csr->row_array[tid + 1]
-                                            : plan->num_edges;
+                (tid + 1 < plan->elements) ? plan->csr->row_array[tid + 1]
+                                           : plan->csr->row_array[plan->elements];
             local += plan->node_value[tid] + row_start + row_next + round;
         }
     }
 
     plan->sinks[state->worker_id] = local;
-
-    printf("CPU worker %d finished shared load [%d, %d)\n",
-           state->worker_id, begin, end);
-    fflush(stdout);
     return NULL;
 }
 
@@ -136,11 +144,15 @@ int main(int argc, char **argv)
         fprintf(stderr, "host malloc failed\n");
         exit(EXIT_FAILURE);
     }
+    fprintf(stderr, "CHK color_max after host malloc\n");
+    fflush(stderr);
 
     for (int i = 0; i < num_nodes; ++i) {
         color[i] = -1;
         node_value[i] = rand() % RANGE;
     }
+    fprintf(stderr, "CHK color_max after host init\n");
+    fflush(stderr);
 
     int cpu_workers = resolve_cpu_workers(options);
     const int planned_workers = std::min(cpu_workers, num_nodes);
@@ -154,12 +166,26 @@ int main(int argc, char **argv)
     int *stop_d = NULL;
 
     if (run_gpu) {
+        fprintf(stderr, "CHK color_max before hipMalloc row_d\n");
+        fflush(stderr);
         CHECK(hipMalloc(&row_d, num_nodes * sizeof(int)));
+        fprintf(stderr, "CHK color_max after hipMalloc row_d\n");
+        fflush(stderr);
         CHECK(hipMalloc(&col_d, num_edges * sizeof(int)));
+        fprintf(stderr, "CHK color_max after hipMalloc col_d\n");
+        fflush(stderr);
         CHECK(hipMalloc(&stop_d, sizeof(int)));
+        fprintf(stderr, "CHK color_max after hipMalloc stop_d\n");
+        fflush(stderr);
         CHECK(hipMalloc(&color_d, num_nodes * sizeof(int)));
+        fprintf(stderr, "CHK color_max after hipMalloc color_d\n");
+        fflush(stderr);
         CHECK(hipMalloc(&node_value_d, num_nodes * sizeof(int)));
+        fprintf(stderr, "CHK color_max after hipMalloc node_value_d\n");
+        fflush(stderr);
         CHECK(hipMalloc(&max_d, num_nodes * sizeof(int)));
+        fprintf(stderr, "CHK color_max after hipMalloc max_d\n");
+        fflush(stderr);
     }
 
     std::vector<pthread_t> cpu_threads(planned_workers);
@@ -168,12 +194,30 @@ int main(int argc, char **argv)
     CpuLoadPlan cpu_plan;
     cpu_plan.csr = csr;
     cpu_plan.node_value = node_value;
-    cpu_plan.num_nodes = num_nodes;
-    cpu_plan.num_edges = num_edges;
+    cpu_plan.elements = static_cast<size_t>(num_nodes);
     cpu_plan.sinks = cpu_sinks.data();
+    cpu_plan.start.store(false, std::memory_order_relaxed);
     cpu_plan.actual_workers = planned_workers;
     cpu_plan.debug_log = options.debug_log;
     size_t created_workers = 0;
+    pthread_attr_t thread_attr;
+    int attr_status = pthread_attr_init(&thread_attr);
+    if (attr_status != 0) {
+        fprintf(stderr, "pthread_attr_init failed: %s\n",
+                strerror(attr_status));
+        exit(EXIT_FAILURE);
+    }
+    size_t stack_bytes = static_cast<size_t>(64) * 1024;
+    if (stack_bytes < PTHREAD_STACK_MIN) {
+        stack_bytes = PTHREAD_STACK_MIN;
+    }
+    attr_status = pthread_attr_setstacksize(&thread_attr, stack_bytes);
+    if (attr_status != 0) {
+        fprintf(stderr, "pthread_attr_setstacksize(%zu) failed: %s\n",
+                stack_bytes, strerror(attr_status));
+        pthread_attr_destroy(&thread_attr);
+        exit(EXIT_FAILURE);
+    }
 
     if (options.debug_log) {
         printf("color_max split: nodes=%d gpu_compute=[0, %d) "
@@ -185,18 +229,26 @@ int main(int argc, char **argv)
     }
 
 #if defined(GEM5_FUSION)
+    fprintf(stderr, "CHK color_max before m5_work_begin\n");
+    fflush(stderr);
     printf("Before m5_work_begin\n");
     fflush(stdout);
     m5_work_begin(0, 0);
     printf("After m5_work_begin\n");
     fflush(stdout);
+    fprintf(stderr, "CHK color_max after m5_work_begin\n");
+    fflush(stderr);
 #elif defined(GEM5_FS)
     map_m5_mem();
+    fprintf(stderr, "CHK color_max before m5_work_begin\n");
+    fflush(stderr);
     printf("Before m5_work_begin\n");
     fflush(stdout);
     m5_work_begin_addr(0, 0);
     printf("After m5_work_begin\n");
     fflush(stdout);
+    fprintf(stderr, "CHK color_max after m5_work_begin\n");
+    fflush(stderr);
 #endif
 
     // Run the CPU shared-load phase first so CPU and GPU do not touch the
@@ -206,7 +258,7 @@ int main(int argc, char **argv)
     for (int worker = 0; worker < planned_workers; ++worker) {
         cpu_states[worker].plan = &cpu_plan;
         cpu_states[worker].worker_id = worker;
-        int create_status = pthread_create(&cpu_threads[worker], NULL,
+        int create_status = pthread_create(&cpu_threads[worker], &thread_attr,
                                            cpu_shared_load_entry,
                                            &cpu_states[worker]);
         if (create_status != 0) {
@@ -216,6 +268,11 @@ int main(int argc, char **argv)
             break;
         }
         ++created_workers;
+    }
+    pthread_attr_destroy(&thread_attr);
+    cpu_plan.actual_workers = static_cast<int>(created_workers);
+    if (created_workers > 0) {
+        cpu_plan.start.store(true, std::memory_order_release);
     }
 
     printf("Created %zu/%d CPU workers\n", created_workers, cpu_workers);
@@ -236,6 +293,8 @@ int main(int argc, char **argv)
     }
     printf("CPU workers joined\n");
     fflush(stdout);
+    fprintf(stderr, "CHK color_max after cpu join\n");
+    fflush(stderr);
 
     if (run_gpu) {
         // After the CPU phase drains, execute the original GPU coloring path.
@@ -260,6 +319,9 @@ int main(int argc, char **argv)
         dim3 grid(num_blocks, 1, 1);
         int stop = 1;
         int graph_color = 1;
+        fprintf(stderr, "CHK color_max before gpu loop blocks=%d threads=%d gpu_cus=%d\n",
+                num_blocks, block_size, gpu_cus);
+        fflush(stderr);
 
         printf("Before GPU kernel launch\n");
         fflush(stdout);

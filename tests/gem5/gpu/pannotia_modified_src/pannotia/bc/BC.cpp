@@ -309,7 +309,7 @@ main(int argc, char **argv)
     fflush(stdout);
 
     const int max_sources = std::min(num_nodes, MAX_ITERS);
-    const int gpu_dummy_rounds = 8;
+    const int gpu_dummy_rounds = 4;
     int gpu_dummy_blocks = 0;
     if (run_gpu) {
         const int gpu_capacity =
@@ -459,9 +459,9 @@ main(int argc, char **argv)
             fflush(stdout);
         }
 
-        // Preserve the original single-source BC traversal while padding the
-        // launch grid with dummy-only blocks so otherwise idle CUs can execute
-        // independent work during each GPU phase.
+        // Preserve the original single-source BC traversal first, then launch
+        // a separate dummy-only phase so all configured CUs can execute an
+        // independent GPU filler task after the real BC work completes.
         for (int source = 0; source < max_sources; ++source) {
             if (options.debug_log) {
                 printf("Starting iteration %d\n", source);
