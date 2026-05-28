@@ -73,19 +73,16 @@ cpu_shared_load_entry(void *opaque)
            state->worker_id, begin, end);
     fflush(stdout);
 
-    // Spread workers across the vertex set so every worker touches the same
-    // shared graph inputs without writing any coloring state. Run a few rounds
-    // to give the CPU phase a moderate amount of work before the GPU takes over.
+    // Spread workers across the vertex set so every worker touches a stable
+    // contiguous slice of the shared inputs without depending on CSR edge
+    // spans. This keeps the CPU phase closer to square's simple range walk.
     for (int round = 0; round < CPU_SHARED_LOAD_ROUNDS; ++round) {
         for (int tid = begin; tid < end; ++tid) {
-            int start = plan->csr->row_array[tid];
-            int edge_end =
+            int row_start = plan->csr->row_array[tid];
+            int row_next =
                 (tid + 1 < plan->num_nodes) ? plan->csr->row_array[tid + 1]
                                             : plan->num_edges;
-            local += plan->node_value[tid] + round;
-            for (int edge = start; edge < edge_end; ++edge) {
-                local += plan->csr->col_array[edge] & 1;
-            }
+            local += plan->node_value[tid] + row_start + row_next + round;
         }
     }
 
