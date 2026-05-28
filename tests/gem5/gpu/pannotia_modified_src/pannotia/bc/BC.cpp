@@ -183,6 +183,8 @@ struct CpuLoadPlan
     bool debug_log = false;
 };
 
+static const int CPU_EDGE_SAMPLE_LIMIT = 8;
+
 struct CpuWorkerState
 {
     CpuLoadPlan *plan = NULL;
@@ -217,18 +219,10 @@ cpu_shared_load_entry(void *opaque)
         int stop = (tid + 1 < plan->num_nodes) ?
             plan->csr->row_array[tid + 1] : plan->num_edges;
         local += static_cast<unsigned long long>(start);
-        for (int edge = start; edge < stop; ++edge) {
+        int edge_limit = std::min(stop, start + CPU_EDGE_SAMPLE_LIMIT);
+        for (int edge = start; edge < edge_limit; ++edge) {
             local += static_cast<unsigned long long>(
                 plan->csr->col_array[edge] & 1);
-        }
-
-        int start_t = plan->csr->row_array_t[tid];
-        int stop_t = (tid + 1 < plan->num_nodes) ?
-            plan->csr->row_array_t[tid + 1] : plan->num_edges;
-        local += static_cast<unsigned long long>(start_t);
-        for (int edge = start_t; edge < stop_t; ++edge) {
-            local += static_cast<unsigned long long>(
-                plan->csr->col_array_t[edge] & 1);
         }
     }
 
@@ -257,6 +251,8 @@ main(int argc, char **argv)
 
     csr_array *csr = parseCOO(const_cast<char *>(options.graph_file),
                               &num_nodes, &num_edges, directed);
+    fprintf(stderr, "CHK after parse\n");
+    fflush(stderr);
 
     float *bc_h = static_cast<float *>(malloc(num_nodes * sizeof(float)));
     if (!bc_h) {
@@ -304,7 +300,11 @@ main(int argc, char **argv)
     }
 
     hipDeviceProp_t props;
+    fprintf(stderr, "CHK before hipGetDeviceProperties\n");
+    fflush(stderr);
     CHECK(hipGetDeviceProperties(&props, 0));
+    fprintf(stderr, "CHK after hipGetDeviceProperties\n");
+    fflush(stderr);
     printf("info: running on device %s\n", props.name);
     fflush(stdout);
 

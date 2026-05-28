@@ -36,6 +36,7 @@
 }
 
 #define RANGE 2048
+#define CPU_SHARED_LOAD_ROUNDS 4
 
 void print_vector(int *vector, int num);
 
@@ -73,15 +74,18 @@ cpu_shared_load_entry(void *opaque)
     fflush(stdout);
 
     // Spread workers across the vertex set so every worker touches the same
-    // shared graph inputs without writing any coloring state.
-    for (int tid = begin; tid < end; ++tid) {
-        int start = plan->csr->row_array[tid];
-        int edge_end =
-            (tid + 1 < plan->num_nodes) ? plan->csr->row_array[tid + 1]
-                                        : plan->num_edges;
-        local += plan->node_value[tid];
-        for (int edge = start; edge < edge_end; ++edge) {
-            local += plan->csr->col_array[edge] & 1;
+    // shared graph inputs without writing any coloring state. Run a few rounds
+    // to give the CPU phase a moderate amount of work before the GPU takes over.
+    for (int round = 0; round < CPU_SHARED_LOAD_ROUNDS; ++round) {
+        for (int tid = begin; tid < end; ++tid) {
+            int start = plan->csr->row_array[tid];
+            int edge_end =
+                (tid + 1 < plan->num_nodes) ? plan->csr->row_array[tid + 1]
+                                            : plan->num_edges;
+            local += plan->node_value[tid] + round;
+            for (int edge = start; edge < edge_end; ++edge) {
+                local += plan->csr->col_array[edge] & 1;
+            }
         }
     }
 

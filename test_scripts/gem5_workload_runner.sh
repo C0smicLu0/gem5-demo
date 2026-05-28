@@ -32,8 +32,9 @@ Run/all options:
 
 Modified Square/Pannotia workloads derive their workload resource options from
 the merged gem5 config args. By default, the final -n/--num-cpus becomes
---cpu-workers max(0, N - 2). A small profile-specific override table may use
-max(0, N - 3) for selected workload/profile combinations. The final
+--cpu-workers max(0, N - 2). A small workload/profile-specific override table
+may use a different cpu offset, including max(0, N - 3) for BC and selected
+other workload/profile combinations. The final
 -u/--num-compute-units becomes --gpu-cus N.
 EOF
 }
@@ -210,10 +211,20 @@ add_resource_workload_args() {
   fi
 
   case "$workload" in
+    pannotia-bc-*)
+      cpu_offset=3
+      ;;
     square)
       case " ${selected_profiles} " in
         *" cores.args2 "*|*" args2 "*)
           cpu_offset=3
+          ;;
+      esac
+      ;;
+    pannotia-color-max-*|pannotia-color-maxmin-*)
+      case " ${selected_profiles} " in
+        *" cores.args2 "*|*" args2 "*|*" cores.args3 "*|*" args3 "*|*" cores.args4 "*|*" args4 "*|*" cores.args5 "*|*" args5 "*)
+          cpu_offset=0
           ;;
       esac
       ;;
@@ -482,24 +493,28 @@ rodinia_compile_target() {
 run_compile() {
   local workload="$1"
   local compile_sh="${REPO_ROOT}/rodinia_hip/docker_compile.sh"
-  if [[ ! -x "$compile_sh" ]]; then
-    echo "compile script not found or not executable: $compile_sh"
-    return 1
-  fi
 
   local target=""
   if [[ "$workload" == rodinia-* ]]; then
+    if [[ ! -x "$compile_sh" ]]; then
+      echo "compile script not found or not executable: $compile_sh"
+      return 1
+    fi
     if ! target="$(rodinia_compile_target "$workload")"; then
       echo "unsupported rodinia workload for compile: $workload"
       return 1
     fi
-  else
-    echo "compile currently supports rodinia-* workloads only: $workload"
-    return 1
+    echo "compile_target=${target}"
+    "$compile_sh" "$target"
+    return 0
   fi
 
-  echo "compile_target=${target}"
-  "$compile_sh" "$target"
+  if run_demo_compile "$workload"; then
+    return 0
+  fi
+
+  echo "compile currently supports rodinia-*, square, hacc, color, and bc: $workload"
+  return 1
 }
 
 list_rodinia_workloads() {
@@ -514,6 +529,52 @@ for name in sorted(cfg.get("workloads", {}).keys()):
 PY
 }
 
+list_demo_compile_workloads() {
+  cat <<'EOF'
+square
+hacc
+color
+bc
+EOF
+}
+
+run_demo_compile() {
+  local workload="$1"
+  local script=""
+  local -a args=()
+
+  case "$workload" in
+    square)
+      script="${REPO_ROOT}/tests/gem5/gpu/square_modified_src/build_square.sh"
+      ;;
+    hacc)
+      script="${REPO_ROOT}/tests/gem5/gpu/hacc_modified_src/build_hacc.sh"
+      ;;
+    color)
+      script="${REPO_ROOT}/tests/gem5/gpu/pannotia_modified_src/build_pannotia.sh"
+      args=(color_max color_maxmin)
+      ;;
+    bc)
+      script="${REPO_ROOT}/tests/gem5/gpu/pannotia_modified_src/build_pannotia.sh"
+      args=(bc)
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  if [[ ! -f "$script" ]]; then
+    echo "compile script not found: $script"
+    return 1
+  fi
+
+  echo "compile_script=${script}"
+  if ((${#args[@]} > 0)); then
+    echo "compile_args=${args[*]}"
+  fi
+  bash "$script" "${args[@]}"
+}
+
 cmd="${1:-}"
 case "$cmd" in
   list)
@@ -526,18 +587,26 @@ case "$cmd" in
       exit 1
     fi
     if [[ "$workload" == "all" ]]; then
+      mapfile -t demo_compile_workloads < <(list_demo_compile_workloads)
       mapfile -t rodinia_workloads < <(list_rodinia_workloads)
-      if (( ${#rodinia_workloads[@]} == 0 )); then
-        echo "no rodinia workloads found in config: $CONFIG_FILE"
+      if (( ${#demo_compile_workloads[@]} == 0 && ${#rodinia_workloads[@]} == 0 )); then
+        echo "no compile workloads found"
         exit 1
       fi
+
+      for w in "${demo_compile_workloads[@]}"; do
+        echo "==> compile workload: ${w}"
+        run_compile "$w"
+      done
 
       for w in "${rodinia_workloads[@]}"; do
         echo "==> compile workload: ${w}"
         run_compile "$w"
       done
     else
-      if ! workload_exists "$workload"; then
+      if ! workload_exists "$workload" &&
+         [[ "$workload" != "square" && "$workload" != "hacc" &&
+            "$workload" != "color" && "$workload" != "bc" ]]; then
         echo "unknown workload: $workload"
         echo "available:"
         list_workloads

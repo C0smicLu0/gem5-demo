@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Run the demo Square GPU workload from the repository root.
+# Run the demo GPU workloads from the repository root.
 
 set -euo pipefail
 
@@ -9,6 +9,15 @@ readonly GEM5_ROOT="$SCRIPT_DIR"
 readonly WORKLOAD_RUNNER="$GEM5_ROOT/test_scripts/gem5_workload_runner.sh"
 readonly WORKLOAD_CONFIG="$GEM5_ROOT/test_scripts/gem5_workloads.json"
 readonly DOCKER_HELP_SCRIPT="$GEM5_ROOT/download_docker.sh"
+readonly QUICK_WORKLOAD="square"
+readonly QUICK_PROFILE="cores.args1"
+readonly DEMO_ALL_WORKLOADS=(
+    square
+    hacc
+    pannotia-bc-1k-128k
+    pannotia-color-max-1k-128k
+    pannotia-color-maxmin-1k-128k
+)
 
 MODE="quick"
 RUN_TAG=""
@@ -24,8 +33,9 @@ Usage:
 Modes:
   quick               Run square once with profile cores.args1.
                       This is the default mode.
-  all                 Run square for every configured cores.args* profile.
-                      This mode runs in parallel by default.
+  all                 Run square, hacc, bc, and color for every configured
+                      cores.args* profile, plus all configured rodinia-*
+                      workloads. This mode runs in parallel by default.
 
 Options:
   --run-tag TAG       Use TAG as the run tag prefix. A per-workload suffix is
@@ -184,6 +194,21 @@ for name in names:
 PY
 }
 
+load_rodinia_workloads()
+{
+    python3 - "$WORKLOAD_CONFIG" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    cfg = json.load(fh)
+
+for name in sorted(cfg.get("workloads", {})):
+    if name.startswith("rodinia-"):
+        print(name)
+PY
+}
+
 while (($#)); do
     case "$1" in
         quick|all)
@@ -235,17 +260,25 @@ background_pids=()
 background_labels=()
 
 if [[ "$MODE" == "quick" ]]; then
-    run_workload square "$base_tag" --profile cores.args1 "${runner_args[@]}"
+    run_workload "$QUICK_WORKLOAD" "$base_tag" \
+        --profile "$QUICK_PROFILE" "${runner_args[@]}"
     printf '\nDemo test completed.\n'
     exit 0
 fi
 
 mapfile -t core_profiles < <(load_core_profiles)
 ((${#core_profiles[@]} > 0)) || die "no cores.args* profiles found in $WORKLOAD_CONFIG"
+mapfile -t rodinia_workloads < <(load_rodinia_workloads)
 
-for profile_name in "${core_profiles[@]}"; do
-    run_workload_background square "${base_tag}-${profile_name}" \
-        --profile "cores.${profile_name}" "${runner_args[@]}"
+for workload in "${DEMO_ALL_WORKLOADS[@]}"; do
+    for profile_name in "${core_profiles[@]}"; do
+        run_workload_background "$workload" "${base_tag}-${workload}-${profile_name}" \
+            --profile "cores.${profile_name}" "${runner_args[@]}"
+    done
+done
+
+for workload in "${rodinia_workloads[@]}"; do
+    run_workload_background "$workload" "${base_tag}-${workload}" "${runner_args[@]}"
 done
 
 monitor_background_runs
