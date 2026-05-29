@@ -211,7 +211,7 @@ add_resource_workload_args() {
 
   case "$workload" in
     pannotia-bc-*)
-      cpu_offset=3
+      cpu_offset=2
       ;;
     square)
       case " ${selected_profiles} " in

@@ -20,8 +20,22 @@ RUN_WORKLOADS=1
 WORKLOADS_IN_CONTAINER=0
 DOCKER_IMAGE_OVERRIDE=""
 JOBS_OVERRIDE=""
+DOCKER_SHIM_DIR=""
+DOCKER_INSTALL_SCRIPT=""
 
 declare -a PANNOTIA_BENCHMARKS=()
+
+cleanup()
+{
+    if [[ -n "$DOCKER_SHIM_DIR" && -d "$DOCKER_SHIM_DIR" ]]; then
+        rm -rf -- "$DOCKER_SHIM_DIR"
+    fi
+    if [[ -n "$DOCKER_INSTALL_SCRIPT" && -f "$DOCKER_INSTALL_SCRIPT" ]]; then
+        rm -f -- "$DOCKER_INSTALL_SCRIPT"
+    fi
+}
+
+trap cleanup EXIT
 
 usage()
 {
@@ -86,6 +100,103 @@ See:
   https://docs.docker.com/engine/install/ubuntu/
 EOF
     fi
+}
+
+is_wsl()
+{
+    [[ -n "${WSL_DISTRO_NAME:-}" ]] && return 0
+    grep -qiE '(microsoft|wsl)' /proc/version 2>/dev/null
+}
+
+is_native_linux()
+{
+    [[ "$(uname -s)" == "Linux" ]] && ! is_wsl
+}
+
+setup_docker_sudo_wrapper()
+{
+    local real_docker="$1"
+
+    DOCKER_SHIM_DIR="$(mktemp -d)"
+    cat > "${DOCKER_SHIM_DIR}/docker" <<EOF
+#!/usr/bin/env bash
+exec sudo "${real_docker}" "\$@"
+EOF
+    chmod +x "${DOCKER_SHIM_DIR}/docker"
+    export PATH="${DOCKER_SHIM_DIR}:$PATH"
+}
+
+ensure_docker_access()
+{
+    local real_docker
+
+    real_docker="$(command -v docker)"
+    if "$real_docker" ps >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if command -v sudo >/dev/null 2>&1 && sudo "$real_docker" ps >/dev/null 2>&1; then
+        setup_docker_sudo_wrapper "$real_docker"
+        return 0
+    fi
+
+    return 1
+}
+
+auto_install_docker_linux()
+{
+    local downloader=()
+
+    if ! is_native_linux; then
+        return 1
+    fi
+
+    if command -v curl >/dev/null 2>&1; then
+        downloader=(curl -fsSL https://get.docker.com -o)
+    elif command -v wget >/dev/null 2>&1; then
+        downloader=(wget -qO)
+    else
+        echo "error: need curl or wget to auto-install docker on Linux" >&2
+        return 1
+    fi
+
+    DOCKER_INSTALL_SCRIPT="$(mktemp)"
+    "${downloader[@]}" "$DOCKER_INSTALL_SCRIPT"
+
+    if command -v sudo >/dev/null 2>&1; then
+        sudo sh "$DOCKER_INSTALL_SCRIPT"
+        if command -v systemctl >/dev/null 2>&1; then
+            sudo systemctl enable --now docker >/dev/null 2>&1 || true
+        fi
+    else
+        sh "$DOCKER_INSTALL_SCRIPT"
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl enable --now docker >/dev/null 2>&1 || true
+        fi
+    fi
+
+    return 0
+}
+
+require_docker_for()
+{
+    local purpose="$1"
+
+    if command -v docker >/dev/null 2>&1; then
+        if ensure_docker_access; then
+            return 0
+        fi
+    else
+        echo "docker not found in PATH for ${purpose}; attempting automatic install on Linux..." >&2
+        if auto_install_docker_linux && command -v docker >/dev/null 2>&1 && ensure_docker_access; then
+            return 0
+        fi
+    fi
+
+    echo "error: docker is required for ${purpose}" >&2
+    echo >&2
+    docker_help >&2
+    exit 1
 }
 
 run_step()
@@ -178,16 +289,12 @@ require_script "$PANNOTIA_BUILD_SCRIPT"
 require_script "$HETEROSYNC_BUILD_SCRIPT"
 [[ -d "$M5_UTIL_DIR" ]] || die "util/m5 directory not found: $M5_UTIL_DIR"
 
-if (( RUN_GEM5 )) && ! command -v docker >/dev/null 2>&1; then
-    echo "error: docker not found in PATH" >&2
-    echo "hint: run 'bash $DOCKER_HELP_SCRIPT'" >&2
-    exit 1
+if (( RUN_GEM5 )); then
+    require_docker_for "gem5 build"
 fi
 
-if (( RUN_WORKLOADS && ! WORKLOADS_IN_CONTAINER )) && ! command -v docker >/dev/null 2>&1; then
-    echo "error: docker not found in PATH for workload builds" >&2
-    echo "hint: run 'bash $DOCKER_HELP_SCRIPT' or use --workloads-in-container" >&2
-    exit 1
+if (( RUN_WORKLOADS && ! WORKLOADS_IN_CONTAINER )); then
+    require_docker_for "workload builds"
 fi
 
 if (( RUN_GEM5 )); then

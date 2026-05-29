@@ -175,9 +175,8 @@ parse_options(int argc, char **argv, BcOptions *options)
 struct CpuLoadPlan
 {
     const csr_array *csr = NULL;
-    int num_nodes = 0;
-    int num_edges = 0;
-    volatile unsigned long long *sinks = NULL;
+    size_t elements = 0;
+    volatile long long *sinks = NULL;
     std::atomic<bool> start;
     int actual_workers = 0;
     bool debug_log = false;
@@ -200,47 +199,38 @@ cpu_shared_load_entry(void *opaque)
     }
 
     const int worker_count = plan->actual_workers;
-    const int begin =
-        (plan->num_nodes * state->worker_id) / worker_count;
-    const int end =
-        (plan->num_nodes * (state->worker_id + 1)) / worker_count;
-    unsigned long long local = 0;
+    const size_t begin =
+        (plan->elements * static_cast<size_t>(state->worker_id)) / worker_count;
+    const size_t end =
+        (plan->elements * static_cast<size_t>(state->worker_id + 1)) / worker_count;
+    long long local = 0;
 
-    printf("CPU worker %d started shared load [%d, %d)\n",
-           state->worker_id, begin, end);
-    fflush(stdout);
-
-    // Match the color workload's CPU-side shape: scan a contiguous vertex range
-    // and then rescan a bounded window a few extra rounds, without touching BC
+    // Mirror color-maxmin's CPU-side shape: scan a contiguous vertex range and
+    // then rescan a bounded window a few extra rounds, without touching BC
     // state or GPU-owned results.
-    for (int tid = begin; tid < end; ++tid) {
+    for (size_t tid = begin; tid < end; ++tid) {
         int row_start = plan->csr->row_array[tid];
         int row_next =
-            (tid + 1 < plan->num_nodes) ? plan->csr->row_array[tid + 1]
-                                        : plan->csr->row_array[plan->num_nodes];
-        local += static_cast<unsigned long long>(row_start + row_next);
+            (tid + 1 < plan->elements) ? plan->csr->row_array[tid + 1]
+                                       : plan->csr->row_array[plan->elements];
+        local += row_start + row_next;
     }
 
-    const int range_size = end - begin;
-    const int extra_window = range_size < 1024 ? range_size : 1024;
+    const size_t range_size = end - begin;
+    const size_t extra_window = range_size < 1024 ? range_size : 1024;
     const int extra_rounds = state->worker_id % 4;
     for (int round = 0; round < extra_rounds; ++round) {
-        for (int offset = 0; offset < extra_window; ++offset) {
-            int tid = begin + offset;
+        for (size_t offset = 0; offset < extra_window; ++offset) {
+            size_t tid = begin + offset;
             int row_start = plan->csr->row_array[tid];
             int row_next =
-                (tid + 1 < plan->num_nodes) ? plan->csr->row_array[tid + 1]
-                                            : plan->csr->row_array[plan->num_nodes];
-            local += static_cast<unsigned long long>(
-                row_start + row_next + round);
+                (tid + 1 < plan->elements) ? plan->csr->row_array[tid + 1]
+                                           : plan->csr->row_array[plan->elements];
+            local += row_start + row_next + round;
         }
     }
 
     plan->sinks[state->worker_id] = local;
-
-    printf("CPU worker %d finished shared load [%d, %d)\n",
-           state->worker_id, begin, end);
-    fflush(stdout);
     return NULL;
 }
 
@@ -279,14 +269,13 @@ main(int argc, char **argv)
                                   max_useful_workers));
     std::vector<pthread_t> cpu_threads(planned_workers);
     std::vector<CpuWorkerState> cpu_states(planned_workers);
-    std::vector<unsigned long long> cpu_sinks(planned_workers, 0);
+    std::vector<long long> cpu_sinks(planned_workers, 0);
     CpuLoadPlan cpu_plan;
     cpu_plan.csr = csr;
-    cpu_plan.num_nodes = num_nodes;
-    cpu_plan.num_edges = num_edges;
+    cpu_plan.elements = static_cast<size_t>(num_nodes);
     cpu_plan.sinks = cpu_sinks.data();
     cpu_plan.start.store(false, std::memory_order_relaxed);
-    cpu_plan.actual_workers = 0;
+    cpu_plan.actual_workers = planned_workers;
     cpu_plan.debug_log = options.debug_log;
     size_t created_workers = 0;
 

@@ -20,6 +20,11 @@ The implementation is integrated into gem5 and can be built and tested using the
 
 `demo_build.sh` and `demo_test.sh` use Docker.
 
+When `demo_build.sh` runs on a native Linux host and `docker` is missing, it
+will try to install Docker automatically and then continue the build. Under
+WSL, the script does not auto-install Docker and instead points you to Docker
+Desktop for Windows.
+
 If Docker is not installed yet, print the official install guidance with:
 
 ```bash
