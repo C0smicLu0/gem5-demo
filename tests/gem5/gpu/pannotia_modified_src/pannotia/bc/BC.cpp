@@ -183,8 +183,6 @@ struct CpuLoadPlan
     bool debug_log = false;
 };
 
-static const int CPU_EDGE_SAMPLE_LIMIT = 8;
-
 struct CpuWorkerState
 {
     CpuLoadPlan *plan = NULL;
@@ -212,17 +210,29 @@ cpu_shared_load_entry(void *opaque)
            state->worker_id, begin, end);
     fflush(stdout);
 
-    // Spread workers across the vertex set so every worker touches the same
-    // shared graph inputs without writing any BC state.
+    // Match the color workload's CPU-side shape: scan a contiguous vertex range
+    // and then rescan a bounded window a few extra rounds, without touching BC
+    // state or GPU-owned results.
     for (int tid = begin; tid < end; ++tid) {
-        int start = plan->csr->row_array[tid];
-        int stop = (tid + 1 < plan->num_nodes) ?
-            plan->csr->row_array[tid + 1] : plan->num_edges;
-        local += static_cast<unsigned long long>(start);
-        int edge_limit = std::min(stop, start + CPU_EDGE_SAMPLE_LIMIT);
-        for (int edge = start; edge < edge_limit; ++edge) {
+        int row_start = plan->csr->row_array[tid];
+        int row_next =
+            (tid + 1 < plan->num_nodes) ? plan->csr->row_array[tid + 1]
+                                        : plan->csr->row_array[plan->num_nodes];
+        local += static_cast<unsigned long long>(row_start + row_next);
+    }
+
+    const int range_size = end - begin;
+    const int extra_window = range_size < 1024 ? range_size : 1024;
+    const int extra_rounds = state->worker_id % 4;
+    for (int round = 0; round < extra_rounds; ++round) {
+        for (int offset = 0; offset < extra_window; ++offset) {
+            int tid = begin + offset;
+            int row_start = plan->csr->row_array[tid];
+            int row_next =
+                (tid + 1 < plan->num_nodes) ? plan->csr->row_array[tid + 1]
+                                            : plan->csr->row_array[plan->num_nodes];
             local += static_cast<unsigned long long>(
-                plan->csr->col_array[edge] & 1);
+                row_start + row_next + round);
         }
     }
 
@@ -319,7 +329,7 @@ main(int argc, char **argv)
 
     if (options.debug_log) {
         printf("BC split: sources=%d gpu_compute=[0, %d) "
-               "cpu_requested=%d cpu_planned=%d cpu_shared_load=graph-read-only "
+               "cpu_requested=%d cpu_planned=%d cpu_shared_load=blocked-full-graph "
                "gpu_dummy_blocks=%d gpu_dummy_rounds=%d roi_order=cpu-then-gpu\n",
                num_nodes, max_sources, options.cpu_workers, planned_workers,
                gpu_dummy_blocks, gpu_dummy_rounds);

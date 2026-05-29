@@ -300,12 +300,21 @@ csr_array *parseCOO(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool dire
 
             printf("Read from file: num_nodes = %d, num_edges = %d\n", num_nodes, num_edges);
             tuple_array = (CooTuple *)malloc(sizeof(CooTuple) * num_edges);
+            fprintf(stderr, "CHK parseCOO after tuple_array malloc ptr=%p\n",
+                    (void *)tuple_array);
+            fflush(stderr);
             fprintf(stderr, "CHK parseCOO header nodes=%d edges=%d\n",
                     num_nodes, num_edges);
             fflush(stderr);
             break;
         case 'a':
             sscanf(line, "%c %d %d %d", &a, &head, &tail, &weight);
+            if (cnt == 0) {
+                fprintf(stderr,
+                        "CHK parseCOO first edge raw head=%d tail=%d weight=%d\n",
+                        head, tail, weight);
+                fflush(stderr);
+            }
             if (tail == head) printf("reporting self loop\n");
             CooTuple temp;
             temp.row = head - 1;
@@ -321,18 +330,38 @@ csr_array *parseCOO(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool dire
                                      "parseCOO");
             }
 
+            if (cnt == 1 || cnt == 2 || cnt == 4 || cnt == 8 ||
+                cnt == 16 || cnt == 32 || cnt == 64 || cnt == 128 ||
+                cnt == 256 || cnt == 512 || cnt == 1024 ||
+                cnt == 2048 || cnt == 4096 || cnt == 8192 ||
+                cnt == 16384 || cnt == 32768 || cnt == 65536 ||
+                cnt == 131072 || cnt == 196608 ||
+                cnt == num_edges) {
+                fprintf(stderr, "CHK parseCOO progress cnt=%d/%d\n",
+                        cnt, num_edges);
+                fflush(stderr);
+            }
+
 #ifdef VERBOSE
             printf("Adding edge: %d ==> %d ( %d )\n", head, tail, weight);
 #endif
             break;
         default:
-            fprintf(stderr, "exiting loop\n");
+            fprintf(stderr,
+                    "CHK parseCOO default line prefix='%c' lineno=%u\n",
+                    line[0], lineno);
+            fflush(stderr);
             break;
         }
         lineno++;
     }
 
+    fprintf(stderr, "CHK parseCOO before sort cnt=%d edges=%d\n",
+            cnt, num_edges);
+    fflush(stderr);
     std::stable_sort(tuple_array, tuple_array + num_edges, doCompare);
+    fprintf(stderr, "CHK parseCOO after sort\n");
+    fflush(stderr);
 
 #ifdef VERBOSE
     for (int i = 0 ; i < num_edges; i++) {
@@ -340,9 +369,15 @@ csr_array *parseCOO(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool dire
     }
 #endif
 
+    fprintf(stderr, "CHK parseCOO before csr arrays malloc\n");
+    fflush(stderr);
     int *row_array = (int *)malloc((num_nodes + 1) * sizeof(int));
     int *col_array = (int *)malloc(num_edges * sizeof(int));
     int *data_array = (int *)malloc(num_edges * sizeof(int));
+    fprintf(stderr,
+            "CHK parseCOO after csr arrays malloc row=%p col=%p data=%p\n",
+            (void *)row_array, (void *)col_array, (void *)data_array);
+    fflush(stderr);
     int row_cnt = 0;
     int prev = -1;
     int idx;
@@ -358,10 +393,17 @@ csr_array *parseCOO(char* tmpchar, int *p_num_nodes, int *p_num_edges, bool dire
     }
 
     row_array[row_cnt] = idx;
+    fprintf(stderr, "CHK parseCOO after csr fill row_cnt=%d idx=%d\n",
+            row_cnt, idx);
+    fflush(stderr);
 
+    fprintf(stderr, "CHK parseCOO before freeing parse buffers\n");
+    fflush(stderr);
     free(line);
     fclose(stream);
     free(tuple_array);
+    fprintf(stderr, "CHK parseCOO after freeing parse buffers\n");
+    fflush(stderr);
 
     csr_array *csr = (csr_array *)malloc(sizeof(csr_array));
     memset(csr, 0, sizeof(csr_array));

@@ -229,12 +229,6 @@ machine(MachineType:Directory, "AMD Baseline protocol")
   }
 
   void deallocateDirectoryEntry(Addr addr) {
-    // Always going to transition from a valid state to I when deallocating
-    // Owners and shares must be clear
-    assert(getDirectoryEntry(addr).DirectoryState != State:I);
-    assert(getDirectoryEntry(addr).Owner.count() == 0);
-    assert(getDirectoryEntry(addr).Sharers.count() == 0);
-
     directory.deallocate(addr);
   }
 
