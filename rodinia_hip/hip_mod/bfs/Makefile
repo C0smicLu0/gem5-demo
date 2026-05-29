@@ -4,22 +4,22 @@ CC := $(ROCM_PATH)/bin/hipcc
 
 INCLUDE := $(CUDA_DIR)/include
 
-SRC = bfs.cu
+SRC = bfs_mt_random.cu
 
 EXE = bfs.out
 
 release: $(SRC)
-	$(CC) $(SRC) -o $(EXE) -I$(INCLUDE) -I../util -L$(CUDA_LIB_DIR) -DTIMING -lpthread
+	$(CC) $(SRC) -o $(EXE) -I$(INCLUDE) -I../util -L$(CUDA_LIB_DIR) -DTIMING -DDEBUG_BFS -lpthread
 
 clang: $(SRC)
 	clang++ $(SRC) -o $(EXE) -I../util --cuda-gpu-arch=sm_20 \
-		-L/usr/local/cuda/lib64  -ldl -lrt -pthread -DTIMING
+		-L/usr/local/cuda/lib64  -ldl -lrt -pthread -DTIMING -DDEBUG_BFS
 
 enum: $(SRC)
 	$(CC) -deviceemu $(SRC) -o $(EXE) -I$(INCLUDE) -L$(CUDA_LIB_DIR) 
 
 debug: $(SRC)
-	$(CC) -g $(SRC) -o $(EXE) -I$(INCLUDE) -L$(CUDA_LIB_DIR) 
+	$(CC) -g $(SRC) -o $(EXE) -I$(INCLUDE) -L$(CUDA_LIB_DIR) -DDEBUG_BFS
 
 debugenum: $(SRC)
 	$(CC) -g -deviceemu $(SRC) -o $(EXE) -I$(INCLUDE) -L$(CUDA_LIB_DIR) 

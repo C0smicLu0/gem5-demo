@@ -5,20 +5,28 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+
 #ifdef __linux__
 #include <sched.h>
 #endif
+
 #include <math.h>
 #include "needle.h"
 #include <hip/hip_runtime.h>
 #include <sys/time.h>
 
-// includes, kernels
 #include "needle_kernel.cu"
 
 #ifdef TIMING
 #include "timing.h"
+#endif
 
+#define NW_TRACE(...) do {       \
+    printf("[nw][trace] ");      \
+    printf(__VA_ARGS__);         \
+    printf("\n");               \
+    fflush(stdout);              \
+} while (0)
 
 // ---- CPU multithread phase injected for heterogeneous MT experiments ----
 typedef struct {
@@ -87,8 +95,9 @@ static void rodinia_mt_init_cfg(void) {
 
     // Thread count is controlled by workload options arg: --cpu-workers <threads>.
     int parsed_threads = rodinia_parse_threads_from_cmdline();
-    rodinia_mt_threads = (parsed_threads > 0) ? parsed_threads : 1;
-
+    if (parsed_threads > 0) {
+        rodinia_mt_threads = parsed_threads;
+    }
     if (s_work) rodinia_mt_work_percent = atoi(s_work);
     if (s_seed) rodinia_mt_seed = (unsigned int)atoi(s_seed);
     if (rodinia_mt_threads <= 0) rodinia_mt_threads = 1;
@@ -101,75 +110,65 @@ static void rodinia_mt_init_cfg(void) {
 static void rodinia_mt_set_threads(int n) {
     if (n > 0) {
         rodinia_mt_threads = n;
-        rodinia_mt_inited = 1;
     }
 }
-
-
 
 static void *rodinia_mt_worker(void *p) {
     rodinia_mt_arg_t *a = (rodinia_mt_arg_t *)p;
     unsigned int s = a->seed ^ (unsigned int)(a->tid + 1) * 0x9e3779b9u;
     volatile unsigned int acc = 0;
+
     for (int i = 0; i < a->iters; i++) {
         acc += rodinia_mt_xorshift32(&s);
     }
+
     a->sink = acc;
     return NULL;
 }
 
 static void rodinia_mt_cpu_phase(void) {
     rodinia_mt_init_cfg();
-    if (rodinia_mt_work_percent <= 0) return;
+    NW_TRACE("cpu cfg: threads=%d work_percent=%d seed=%u",
+         rodinia_mt_threads, rodinia_mt_work_percent, rodinia_mt_seed);
+
+    if (rodinia_mt_work_percent <= 0) {
+        NW_TRACE("cpu phase skipped: work_percent=%d", rodinia_mt_work_percent);
+        return;
+    }
     int n = rodinia_mt_threads;
     pthread_t *ths = (pthread_t *)malloc((size_t)n * sizeof(pthread_t));
     rodinia_mt_arg_t *args = (rodinia_mt_arg_t *)malloc((size_t)n * sizeof(rodinia_mt_arg_t));
     int base_iters = 5000 * rodinia_mt_work_percent;
+
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, 64 * 1024);
+
+    NW_TRACE("cpu phase begin: workers=%d base_iters=%d", n, base_iters);
+
     for (int t = 0; t < n; t++) {
         args[t].tid = t;
         args[t].iters = base_iters;
         args[t].seed = rodinia_mt_seed ^ (unsigned int)(t + 1);
         args[t].sink = 0;
-        pthread_create(&ths[t], NULL, rodinia_mt_worker, &args[t]);
+
+        int rc = pthread_create(&ths[t], &attr, rodinia_mt_worker, &args[t]);
+        NW_TRACE("cpu worker created: tid=%d iters=%d", t, args[t].iters);
+        if (rc != 0) {
+            fprintf(stderr, "pthread_create failed: tid=%d rc=%d\n", t, rc);
+            exit(1);
+        }
     }
+
+    pthread_attr_destroy(&attr);
     for (int t = 0; t < n; t++) {
         pthread_join(ths[t], NULL);
+        NW_TRACE("cpu worker joined: tid=%d sink=%u", t, args[t].sink);
     }
+    NW_TRACE("cpu phase end: workers=%d", n);
     free(ths);
     free(args);
 }
-
-typedef struct {
-    int tid;
-    int iters;
-    unsigned int seed;
-    unsigned char *shared;
-    size_t shared_bytes;
-} rodinia_mt_shared_arg_t;
-
-static void *rodinia_mt_shared_worker(void *p) {
-    rodinia_mt_shared_arg_t *a = (rodinia_mt_shared_arg_t *)p;
-    unsigned int s = a->seed ^ (unsigned int)(a->tid + 1) * 0x85ebca6bu;
-    if (a->shared == NULL || a->shared_bytes == 0 || a->iters <= 0) return NULL;
-
-    const size_t window = a->shared_bytes;
-    for (int i = 0; i < a->iters; i++) {
-        size_t idx = (size_t)(rodinia_mt_xorshift32(&s) % (unsigned int)window);
-        volatile unsigned char v = a->shared[idx];
-        (void)v;
-    }
-    return NULL;
-}
-
-static void rodinia_mt_cpu_phase_shared(void *shared, size_t shared_bytes) {
-    (void)shared;
-    (void)shared_bytes;
-    rodinia_mt_cpu_phase();
-}
-
-
-// ---- end injected MT helpers ----
-
 
 struct timeval tv;
 struct timeval tv_total_start, tv_total_end;
@@ -180,15 +179,7 @@ struct timeval tv_mem_alloc_start, tv_mem_alloc_end;
 struct timeval tv_close_start, tv_close_end;
 float init_time = 0, mem_alloc_time = 0, h2d_time = 0, kernel_time = 0,
       d2h_time = 0, close_time = 0, total_time = 0;
-#endif
-#ifndef TIMING
-static inline void rodinia_mt_set_threads(int n) { (void)n; }
-static inline void rodinia_mt_cpu_phase(void) {}
-static inline void rodinia_mt_cpu_phase_shared(void *shared, size_t shared_bytes) { (void)shared; (void)shared_bytes; }
-#endif
 
-
-////////////////////////////////////////////////////////////////////////////////
 // declaration, forward
 void runTest( int argc, char** argv);
 
@@ -239,14 +230,12 @@ double gettime() {
   return t.tv_sec+t.tv_usec*1e-6;
 }
 
-////////////////////////////////////////////////////////////////////////////////
 // Program main
-////////////////////////////////////////////////////////////////////////////////
 int
 main( int argc, char** argv) 
 {
 
-  printf("WG size of kernel = %d \n", BLOCK_SIZE);
+    printf("WG size of kernel = %d \n", BLOCK_SIZE);
 
     runTest( argc, argv);
 	printf("PASSED!\n");
@@ -322,6 +311,8 @@ void runTest( int argc, char** argv)
     if (mt_threads > 0) {
         rodinia_mt_set_threads(mt_threads);
     }
+    NW_TRACE("parsed args: base_dim=%d penalty=%d mt_threads=%d num_cus=%d",
+         base_dim, penalty, mt_threads, num_cus);
 
     max_rows = base_dim;
     max_cols = base_dim;
@@ -401,26 +392,39 @@ void runTest( int argc, char** argv)
 	dim3 dimBlock(BLOCK_SIZE, 1);
 	int block_width = ( max_cols - 1 )/BLOCK_SIZE;
 
+    NW_TRACE("before cpu phase");
+    rodinia_mt_cpu_phase();
+    NW_TRACE("after cpu phase, before gpu phase");
+
 #ifdef  TIMING
-  gettimeofday(&tv_kernel_start, NULL);
+    gettimeofday(&tv_kernel_start, NULL);
 #endif
 
-	printf("Processing top-left matrix\n");
-	//process top-left matrix
-	for( int i = 1 ; i <= block_width ; i++){
-		dimGrid.x = i;
-		dimGrid.y = 1;
-		rodinia_mt_cpu_phase_shared(matrix_cuda, (size_t)size * sizeof(int));
-		needle_cuda_shared_1<<<dimGrid, dimBlock>>>(referrence_cuda, matrix_cuda
-		                                      ,max_cols, penalty, i, block_width); 
-	}
-	printf("Processing bottom-right matrix\n");
+    NW_TRACE("gpu top-left begin: block_width=%d", block_width);
+
+    /* Run CPU activation/load phase only once.
+    * Do not create pthreads in every NW wavefront iteration.
+    */
+
+    //process top-left matrix
+    for( int i = 1 ; i <= block_width ; i++){
+        dimGrid.x = i;
+        dimGrid.y = 1;
+        needle_cuda_shared_1<<<dimGrid, dimBlock>>>(referrence_cuda, matrix_cuda,
+                                            max_cols, penalty, i, block_width); 
+        HIP_CHECK(hipGetLastError());
+        HIP_CHECK(hipDeviceSynchronize());
+    }
+
+	NW_TRACE("gpu bottom-right begin: block_width=%d", block_width);
     //process bottom-right matrix
 	for( int i = block_width - 1  ; i >= 1 ; i--){
 		dimGrid.x = i;
 		dimGrid.y = 1;
 		needle_cuda_shared_2<<<dimGrid, dimBlock>>>(referrence_cuda, matrix_cuda
 		                                      ,max_cols, penalty, i, block_width); 
+        HIP_CHECK(hipGetLastError());
+        HIP_CHECK(hipDeviceSynchronize());
 	}
 
 #ifdef  TIMING
@@ -429,7 +433,7 @@ void runTest( int argc, char** argv)
     kernel_time += tv.tv_sec * 1000.0 + (float) tv.tv_usec / 1000.0;
 #endif
 
-	hipDeviceSynchronize();
+	HIP_CHECK(hipDeviceSynchronize());
 	// 原来：通过 hipMemcpy D2H 取回结果
 	// 现在：managed 内存下只需同步后 memcpy（或直接读 matrix_cuda）
 	memcpy(output_itemsets, matrix_cuda, sizeof(int) * size);

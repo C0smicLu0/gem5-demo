@@ -27,6 +27,9 @@ typedef struct {
     volatile unsigned long long loops;
 } rodinia_mt_arg_t;
 
+static void rodinia_mt_start_pool(void);
+static void rodinia_mt_stop_pool(void);
+
 static int rodinia_mt_threads = 4;
 static int rodinia_mt_work_percent = 8;
 static unsigned int rodinia_mt_seed = 1;
@@ -127,21 +130,20 @@ static int rodinia_mt_visible_cpus(void) {
 
 static void rodinia_mt_cap_threads(void) {
     int visible = rodinia_mt_visible_cpus();
-    int max_threads = visible - 2;
-    if (max_threads < 1) max_threads = 1;
+    // int max_threads = visible - 2;
+    // if (max_threads < 1) max_threads = 1;
 
-    if (rodinia_mt_threads > max_threads) {
-        printf("[rodinia_mt][pf] clamp cpu-workers from %d to %d (visible_cpus=%d, reserve=2)\n",
-               rodinia_mt_threads, max_threads, visible);
-        fflush(stdout);
-        rodinia_mt_threads = max_threads;
-    }
+    // if (rodinia_mt_threads > max_threads) {
+    //     printf("[rodinia_mt][pf] clamp cpu-workers from %d to %d (visible_cpus=%d, reserve=2)\n",
+    //            rodinia_mt_threads, max_threads, visible);
+    //     fflush(stdout);
+    //     rodinia_mt_threads = max_threads;
+    // }
 }
 
 static void *rodinia_mt_worker(void *p) {
     rodinia_mt_arg_t *a = (rodinia_mt_arg_t *)p;
     unsigned int s = a->seed ^ (unsigned int)(a->tid + 1) * 0x9e3779b9u;
-
 
     for (int outer = 0; outer < 256 && !rodinia_mt_stop; outer++) {
         int base_iters = 128 * rodinia_mt_work_percent;
@@ -151,12 +153,18 @@ static void *rodinia_mt_worker(void *p) {
         volatile unsigned char *shared = rodinia_mt_shared;
         size_t shared_bytes = rodinia_mt_shared_bytes;
 
-        if (shared != NULL && shared_bytes > 0) {
-            for (int i = 0; i < base_iters; i++) {
-                size_t idx = (size_t)(rodinia_mt_xorshift32(&s) % (unsigned int)shared_bytes);
-                volatile unsigned char v = shared[idx];
-                acc += (unsigned int)v;
-                acc += (unsigned int)v;
+        if (shared != NULL && shared_bytes > 0 && rodinia_mt_threads > 0) {
+            size_t begin = (shared_bytes * (size_t)a->tid) / (size_t)rodinia_mt_threads;
+            size_t end = (shared_bytes * (size_t)(a->tid + 1)) / (size_t)rodinia_mt_threads;
+            size_t span = (end > begin) ? (end - begin) : 0;
+            size_t window = span > 8192 ? 8192 : span;
+            for (int rep = 0; rep < base_iters; rep++) {
+                if (window == 0) break;
+                size_t offset = begin + ((size_t)(rep * 131) % window);
+                size_t lim = begin + window;
+                for (size_t i = offset; i < lim; i += 64) {
+                    acc += (unsigned int)shared[i];
+                }
             }
         } else {
             for (int i = 0; i < base_iters * 8; i++) {
@@ -169,11 +177,12 @@ static void *rodinia_mt_worker(void *p) {
     return NULL;
 }
 
+
 static void rodinia_mt_start_pool(void) {
     rodinia_mt_init_cfg();
     if (rodinia_mt_started || rodinia_mt_work_percent <= 0) return;
 
-    rodinia_mt_cap_threads();
+    // rodinia_mt_cap_threads();
     int n = rodinia_mt_threads;
     rodinia_mt_pool = (pthread_t *)malloc((size_t)n * sizeof(pthread_t));
     rodinia_mt_args = (rodinia_mt_arg_t *)malloc((size_t)n * sizeof(rodinia_mt_arg_t));
@@ -222,10 +231,11 @@ static void rodinia_mt_cpu_phase(void) {
 }
 
 static void rodinia_mt_cpu_phase_shared(void *shared, size_t shared_bytes) {
-    (void)shared;
-    (void)shared_bytes;
-    rodinia_mt_cpu_phase();
+    rodinia_mt_shared = (volatile unsigned char *)shared;
+    rodinia_mt_shared_bytes = shared_bytes;
+    rodinia_mt_start_pool();
 }
+
 
 
 // ---- end injected MT helpers ----

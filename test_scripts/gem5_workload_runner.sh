@@ -30,12 +30,11 @@ Run/all options:
   --profile <name>     Apply a config profile from the JSON config.
   --debug-flags <csv>  Append gem5 --debug-flags=<csv>.
 
-Modified Square/Pannotia workloads derive their workload resource options from
-the merged gem5 config args. By default, the final -n/--num-cpus becomes
---cpu-workers max(0, N - 2). A small workload/profile-specific override table
-may use a different cpu offset, including max(0, N - 3) for BC and selected
-other workload/profile combinations. The final
--u/--num-compute-units becomes --gpu-cus N.
+  Modified Square/Pannotia workloads derive their workload resource options from
+  the merged gem5 config args. By default, the final -n/--num-cpus becomes
+  --cpu-workers max(0, N - 2). A small profile-specific override table may use
+  max(0, N - 3) for selected workload/profile combinations. The final
+  -u/--num-compute-units becomes --gpu-cus N.
 EOF
 }
 
@@ -238,7 +237,7 @@ add_resource_workload_args() {
           ;;
       esac
       ;;
-    pannotia-mis-hip-*)
+    rodinia-bfs)
       case " ${selected_profiles} " in
         *" cores.args1 "*|*" args1 "*)
           cpu_offset=3
@@ -264,7 +263,7 @@ parse_run_options() {
   PROFILE=""
   DEBUG_FLAGS=""
   DEBUG_START=""
-DEBUG_FILE=""
+  DEBUG_FILE=""
 
   while (($#)); do
     case "$1" in
@@ -445,10 +444,6 @@ run_test() {
     echo "profile=${selected_profiles}"
   fi
   echo "workload_args=${workload_args}"
-  if [[ "$workload" == rodinia-* ]]; then
-    echo "forwarded_cpu_workers=${resource_cpus:-unset} (as --cpu-workers in --options)"
-    echo "forwarded_gpu_cus=${resource_gpu_cus:-unset} (as --gpu-cus in --options)"
-  fi
   if [[ -n "$resource_cpus" || -n "$resource_gpu_cus" ]]; then
     echo "resources=cpus:${resource_cpus} gpu_cus:${resource_gpu_cus} (from config_args)"
   fi
@@ -484,47 +479,22 @@ run_latency_check() {
   "$GEM5_TEST" latency_check "$run_dir"
 }
 
-rodinia_compile_target() {
-  local workload="$1"
-  case "$workload" in
-    rodinia-btree) echo "hip_mod/b+tree" ;;
-    rodinia-bfs) echo "hip_mod/bfs" ;;
-    rodinia-dwt2d) echo "hip_mod/dwt2d" ;;
-    rodinia-gaussian) echo "hip_mod/gaussian" ;;
-    rodinia-hotspot) echo "hip_mod/hotspot" ;;
-    rodinia-lavaMD) echo "hip_mod/lavaMD" ;;
-    rodinia-nw) echo "hip_mod/nw" ;;
-    rodinia-particlefilter) echo "hip_mod/particlefilter" ;;
-    rodinia-pathfinder) echo "hip_mod/pathfinder" ;;
-    *) return 1 ;;
-  esac
-}
-
 run_compile() {
   local workload="$1"
   local compile_sh="${REPO_ROOT}/rodinia_hip/docker_compile.sh"
 
-  local target=""
-  if [[ "$workload" == rodinia-* ]]; then
-    if [[ ! -x "$compile_sh" ]]; then
-      echo "compile script not found or not executable: $compile_sh"
-      return 1
-    fi
-    if ! target="$(rodinia_compile_target "$workload")"; then
-      echo "unsupported rodinia workload for compile: $workload"
-      return 1
-    fi
-    echo "compile_target=${target}"
-    "$compile_sh" "$target"
-    return 0
+  if [[ ! -f "$compile_sh" ]]; then
+    echo "compile script not found: $compile_sh"
+    return 1
   fi
 
-  if run_demo_compile "$workload"; then
-    return 0
+  if [[ "$workload" != rodinia-* ]]; then
+    echo "compile currently supports rodinia-* workloads only: $workload"
+    return 1
   fi
 
-  echo "compile currently supports rodinia-*, square, hacc, color, and bc: $workload"
-  return 1
+  echo "compile_workload=${workload}"
+  bash "$compile_sh" "$workload"
 }
 
 list_rodinia_workloads() {

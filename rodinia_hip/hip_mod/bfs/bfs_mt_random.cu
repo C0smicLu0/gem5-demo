@@ -11,7 +11,7 @@
 #include "timing.h"
 #endif
 
-#define MAX_THREADS_PER_BLOCK 512
+#define MAX_THREADS_PER_BLOCK 128
 
 int no_of_nodes;
 int edge_list_size;
@@ -27,6 +27,14 @@ struct timeval tv_mem_alloc_start, tv_mem_alloc_end;
 struct timeval tv_close_start, tv_close_end;
 float init_time = 0, mem_alloc_time = 0, h2d_time = 0, kernel_time = 0,
       d2h_time = 0, close_time = 0, total_time = 0;
+#endif
+
+// 调试开关：编译时 -DDEBUG_BFS 启用，否则不输出
+#ifdef DEBUG_BFS
+#define BFS_PRINT(fmt, ...) \
+    do { printf("[BFS_DEBUG][%lld us] " fmt, bfs_wall_time_us(), ##__VA_ARGS__); fflush(stdout); } while(0)
+#else
+    #define BFS_PRINT(fmt, ...) ((void)0)
 #endif
 
 struct Node
@@ -73,6 +81,8 @@ typedef struct {
     int start;
     int end;
     int iter;
+    int *private_buf;
+    int private_size;
 } CpuArg;
 
 static inline unsigned int
@@ -95,8 +105,8 @@ void *cpu_shared_worker(void *arg)
         return NULL;
 
     int sample_count = (own_count * g_share_percent) / 100;
-    if (sample_count <= 0)
-        sample_count = 1;
+    if (sample_count <= 4096)
+        sample_count = 4096;
 
     int window_start = a->start - own_count;
     int window_end = a->end + own_count;
@@ -117,6 +127,15 @@ void *cpu_shared_worker(void *arg)
         int write_idx = a->start + (int)(bfs_xorshift32(&state) %
                                          (unsigned int)own_count);
         int v = g_cost_shared[write_idx];
+
+        if (a->private_buf != NULL && a->private_size > 0) {
+            int private_idx = (int)(bfs_xorshift32(&state) %
+                                    (unsigned int)a->private_size);
+
+            volatile int *private_buf = (volatile int *)a->private_buf;
+            private_buf[private_idx] = v + a->tid + a->iter + n;
+        }
+
         sum += v;
     }
 
@@ -139,12 +158,15 @@ int main(int argc, char** argv)
     no_of_nodes  = 0;
     edge_list_size = 0;
     BFSGraph(argc, argv);
+    printf("PASSED!\n");
+    return 0;
 }
 
 void Usage(int argc, char **argv)
 {
     fprintf(stderr,
-            "Usage: %s <input_file> [num_cpu_threads] [share_percent] [seed]\n",
+            "Usage: %s <input_file> "
+            "[--cpu-workers N] [--gpu-cus N] [--share-percent P] [--seed S]\n",
             argv[0]);
 }
 
@@ -155,6 +177,8 @@ void BFSGraph(int argc, char** argv)
     long long t_setup_end_us  = 0;
     long long t_loop_start_us = 0, t_loop_end_us = 0;
 
+    BFS_PRINT("Enter BFSGraph\n");
+
     char *input_f;
     if (argc < 2) {
         Usage(argc, argv);
@@ -162,40 +186,70 @@ void BFSGraph(int argc, char** argv)
     }
     input_f = argv[1];
 
-    // 可选参数：CPU 线程数
-    if (argc >= 3)
-        g_num_cpu_threads = atoi(argv[2]);
+    int num_cus = 0;
+
+    for (int ai = 2; ai < argc; ai++) {
+        if (strcmp(argv[ai], "--cpu-workers") == 0) {
+            if (ai + 1 >= argc) {
+                fprintf(stderr, "Missing value for --cpu-workers\n");
+                Usage(argc, argv);
+                exit(-1);
+            }
+            g_num_cpu_threads = atoi(argv[++ai]);
+        } else if (strcmp(argv[ai], "--gpu-cus") == 0) {
+            if (ai + 1 >= argc) {
+                fprintf(stderr, "Missing value for --gpu-cus\n");
+                Usage(argc, argv);
+                exit(-1);
+            }
+            num_cus = atoi(argv[++ai]);
+        } else if (strcmp(argv[ai], "--share-percent") == 0) {
+            if (ai + 1 >= argc) {
+                fprintf(stderr, "Missing value for --share-percent\n");
+                Usage(argc, argv);
+                exit(-1);
+            }
+            g_share_percent = atoi(argv[++ai]);
+        } else if (strcmp(argv[ai], "--seed") == 0) {
+            if (ai + 1 >= argc) {
+                fprintf(stderr, "Missing value for --seed\n");
+                Usage(argc, argv);
+                exit(-1);
+            }
+            g_share_seed = (unsigned int)atoi(argv[++ai]);
+        } else {
+            fprintf(stderr, "Unknown argument: %s\n", argv[ai]);
+            Usage(argc, argv);
+            exit(-1);
+        }
+    }
+
+    // 错误输入处理
     if (g_num_cpu_threads <= 0)
         g_num_cpu_threads = 1;
-    if (argc >= 4)
-        g_share_percent = atoi(argv[3]);
+
+    if (num_cus < 0)
+        num_cus = 0;
+
     if (g_share_percent < 0)
         g_share_percent = 0;
+
     if (g_share_percent > 100)
         g_share_percent = 100;
-    if (argc >= 5)
-        g_share_seed = (unsigned int)atoi(argv[4]);
+
     if (g_share_seed == 0)
         g_share_seed = 1;
 
-    int num_cus = 0;
-    for (int ai = 5; ai < argc; ai++) {
-        if (strcmp(argv[ai], "--cpu-workers") == 0 && ai + 1 < argc) {
-            g_num_cpu_threads = atoi(argv[++ai]);
-        } else if (strcmp(argv[ai], "--gpu-cus") == 0 && ai + 1 < argc) {
-            num_cus = atoi(argv[++ai]);
-        }
-    }
-    if (g_num_cpu_threads <= 0) g_num_cpu_threads = 1;
-    printf("BFS_MT: cpu_threads=%d share_percent=%d seed=%u\n",
-           g_num_cpu_threads, g_share_percent, g_share_seed);
+    BFS_PRINT("Parsed arguments: cpu_threads=%d gpu_cus=%d share_percent=%d seed=%u\n",
+              g_num_cpu_threads, num_cus, g_share_percent, g_share_seed);
 
-    printf("Reading File\n");
+    BFS_PRINT("Opening graph file: %s\n", input_f);
     t_read_start_us = bfs_wall_time_us();
 
     fp = fopen(input_f, "r");
     if (!fp) {
         printf("Error Reading graph file\n");
+        fflush(stdout); 
         return;
     }
 
@@ -203,13 +257,28 @@ void BFSGraph(int argc, char** argv)
     fscanf(fp, "%d", &no_of_nodes);
     g_num_nodes = no_of_nodes;
 
-    int num_of_blocks = 1;
-    int num_of_threads_per_block = no_of_nodes;
-    if (no_of_nodes > MAX_THREADS_PER_BLOCK) {
-        num_of_blocks = (int)ceil(no_of_nodes / (double)MAX_THREADS_PER_BLOCK);
-        num_of_threads_per_block = MAX_THREADS_PER_BLOCK;
+    int num_of_threads_per_block = MAX_THREADS_PER_BLOCK;
+
+    int base_blocks = (no_of_nodes + num_of_threads_per_block - 1) /
+                    num_of_threads_per_block;
+
+    int num_of_blocks = base_blocks;
+
+    /*
+    * 为了让 gem5 里的每个 CU 都更大概率执行到 workgroup，
+    * 不要只 launch num_cus 个 block。
+    */
+    if (num_cus > 0) {
+        int cu_required_blocks = num_cus * 2;
+        if (num_of_blocks < cu_required_blocks)
+            num_of_blocks = cu_required_blocks;
     }
-    if (num_cus > 0 && num_of_blocks > num_cus) num_of_blocks = num_cus;
+
+    printf("BFS_MT: nodes=%d gpu_cus=%d gpu_blocks=%d threads_per_block=%d\n",
+        no_of_nodes, num_cus, num_of_blocks, num_of_threads_per_block);
+    fflush(stdout); 
+    
+    BFS_PRINT("Graph size: nodes=%d, edge_list_size=%d (to be read)\n", no_of_nodes, edge_list_size);
 
     Node* h_graph_nodes =
         (Node*)checked_hip_malloc_managed(sizeof(Node) * no_of_nodes);
@@ -247,7 +316,8 @@ void BFSGraph(int argc, char** argv)
     }
     if (fp) fclose(fp);
 
-    printf("Read File\n");
+    BFS_PRINT("Finished reading file, nodes=%d edges=%d\n", no_of_nodes, edge_list_size);
+
     t_read_end_us = bfs_wall_time_us();
 
 #ifdef TIMING
@@ -273,16 +343,55 @@ void BFSGraph(int argc, char** argv)
     g_mask_shared    = h_graph_mask;
     g_visited_shared = h_graph_visited;
 
-    printf("Copied Everything to GPU memory\n");
+    BFS_PRINT("Allocated managed memory and copied data\n");
     t_setup_end_us = bfs_wall_time_us();
+
+    // if (num_cus > 0) {
+    //     int warmup_blocks = num_cus * 8;
+    //     int warmup_threads = num_of_threads_per_block;
+    //     int warmup_n = warmup_blocks * warmup_threads;
+
+    //     int *gpu_warmup_buf =
+    //         (int*)checked_hip_malloc_managed(sizeof(int) * warmup_n);
+
+    //     for (int i = 0; i < warmup_n; i++)
+    //         gpu_warmup_buf[i] = i;
+
+    //     printf("BFS_MT: GPU keepalive blocks=%d threads=%d\n",
+    //         warmup_blocks, warmup_threads);
+
+    //     gpu_keepalive_kernel<<<warmup_blocks, warmup_threads>>>(
+    //         gpu_warmup_buf, warmup_n, 128);
+
+    //     hipError_t err = hipDeviceSynchronize();
+    //     if (err != hipSuccess) {
+    //         fprintf(stderr, "GPU keepalive failed: %s\n", hipGetErrorString(err));
+    //         exit(-1);
+    //     }
+
+    //     hipDeviceSynchronize();
+    //     hipFree(gpu_warmup_buf);
+    // }
 
     // ============================================================
     // 准备 CPU 线程池
     // ============================================================
+    BFS_PRINT("Allocating CPU thread pool (%d threads)\n", g_num_cpu_threads);
     pthread_t *cpu_threads =
         (pthread_t*)malloc(g_num_cpu_threads * sizeof(pthread_t));
     CpuArg *cpu_args =
         (CpuArg*)malloc(g_num_cpu_threads * sizeof(CpuArg));
+    int private_stride = no_of_nodes / g_num_cpu_threads;
+    if (private_stride < 1024)
+        private_stride = 1024;
+
+    int *cpu_private_buf =
+        (int*)calloc((size_t)g_num_cpu_threads * private_stride, sizeof(int));
+
+    if (cpu_private_buf == NULL) {
+        fprintf(stderr, "Failed to allocate CPU private buffer\n");
+        exit(-1);
+    }
     int chunk = no_of_nodes / g_num_cpu_threads;
     for (int t = 0; t < g_num_cpu_threads; t++) {
         cpu_args[t].tid   = t;
@@ -290,14 +399,17 @@ void BFSGraph(int argc, char** argv)
         cpu_args[t].end   = (t == g_num_cpu_threads - 1)
                             ? no_of_nodes : (t + 1) * chunk;
         cpu_args[t].iter  = 0;
+        cpu_args[t].private_buf  = cpu_private_buf + t * private_stride;
+        cpu_args[t].private_size = private_stride;
     }
 
     dim3 grid(num_of_blocks, 1, 1);
     dim3 threads(num_of_threads_per_block, 1, 1);
 
-    int  k    = 0;
+    int k = 0;
     bool stop = false;
-    printf("Start traversing the tree\n");
+    BFS_PRINT("Entering BFS main loop\n");
+
     t_loop_start_us = bfs_wall_time_us();
 
     do {
@@ -305,20 +417,41 @@ void BFSGraph(int argc, char** argv)
         *d_over = false;
 
         // ------------------------------------------------------------
-        // Phase A：多 CPU 线程局部随机读写，制造更温和的共享访问。
+        // Phase A：多 CPU 线程局部随机读取共享数据，并写入 CPU 私有区域，制造 CPU 侧访问压力。
         // ------------------------------------------------------------
+        BFS_PRINT("Iteration %d: starting CPU phase\n", k);
         for (int t = 0; t < g_num_cpu_threads; t++)
             cpu_args[t].iter = k;
-        for (int t = 0; t < g_num_cpu_threads; t++)
-            pthread_create(&cpu_threads[t], NULL,
-                           cpu_shared_worker, &cpu_args[t]);
-        for (int t = 0; t < g_num_cpu_threads; t++)
-            pthread_join(cpu_threads[t], NULL);
+    
+        for (int t = 0; t < g_num_cpu_threads; t++){
+            BFS_PRINT("Creating pthread tid=%d, iter=%d\n", t, k);
+            int ret = pthread_create(&cpu_threads[t], NULL,
+                             cpu_shared_worker, &cpu_args[t]);
+            if (ret != 0) {
+                fprintf(stderr, "pthread_create failed in loop at t=%d, ret=%d\n",
+                        t, ret);
+                BFS_PRINT("pthread_create FAILED for tid=%d, errno=%d\n", t, errno);
+                exit(-1);
+            }
+            BFS_PRINT("pthread_create success tid=%d\n", t);
+        }
+        for (int t = 0; t < g_num_cpu_threads; t++){
+            BFS_PRINT("Joining pthread tid=%d, iter=%d\n", t, k);
+            int  ret = pthread_join(cpu_threads[t], NULL);
+            if (ret != 0) {
+                fprintf(stderr, "pthread_join failed in loop at t=%d, ret=%d\n",
+                        t, ret);
+                BFS_PRINT("pthread_join FAILED for tid=%d\n", t);
+                exit(-1);
+            }
+            BFS_PRINT("Joined pthread tid=%d\n", t);
+        }
+        BFS_PRINT("CPU phase completed for iter %d\n", k);
 
         // ------------------------------------------------------------
-        // Phase B：GPU BFS kernel
-        //          读取 CPU 刚写过的数据，制造 CPU-GPU 冲突
+        // Phase B：GPU BFS kernel，继承 CPU 侧共享数据访问后的缓存/一致性状态并执行 BFS。
         // ------------------------------------------------------------
+        BFS_PRINT("Iteration %d: launching GPU kernels\n", k);
         Kernel<<< grid, threads, 0 >>>(
             d_graph_nodes, d_graph_edges,
             d_graph_mask, d_updating_graph_mask,
@@ -327,10 +460,19 @@ void BFSGraph(int argc, char** argv)
         Kernel2<<< grid, threads, 0 >>>(
             d_graph_mask, d_updating_graph_mask,
             d_graph_visited, d_over, no_of_nodes);
-
+        
+        hipError_t err = hipDeviceSynchronize();
+        if (err != hipSuccess) {
+            fprintf(stderr, "BFS kernels failed at iter=%d: %s\n",
+                    k, hipGetErrorString(err));
+            BFS_PRINT("GPU sync failed at iter=%d\n", k);
+            exit(-1);
+        }
+        BFS_PRINT("GPU kernels completed for iter %d\n", k);
         hipDeviceSynchronize();
         stop = *d_over;
         k++;
+        BFS_PRINT("Iteration %d finished, stop=%d\n", k-1, stop);
     } while (stop);
 
     t_loop_end_us = bfs_wall_time_us();
@@ -338,6 +480,7 @@ void BFSGraph(int argc, char** argv)
     printf("Kernel Executed %d times\n", k);
     printf("\n==================== BFS_MT Timing Summary ====================\n");
     printf("[TIMING] cpu_threads:             %d\n",   g_num_cpu_threads);
+    printf("[TIMING] gpu_cus:                 %d\n",   num_cus);
     printf("[TIMING] share_percent:           %d\n",   g_share_percent);
     printf("[TIMING] share_seed:              %u\n",   g_share_seed);
     printf("[TIMING] read+parse:              %lld us\n", t_read_end_us - t_read_start_us);
@@ -366,6 +509,7 @@ void BFSGraph(int argc, char** argv)
     hipFree(h_graph_visited);
     hipFree(h_cost);
     hipFree(d_over);
+    free(cpu_private_buf);
     free(cpu_threads);
     free(cpu_args);
 }

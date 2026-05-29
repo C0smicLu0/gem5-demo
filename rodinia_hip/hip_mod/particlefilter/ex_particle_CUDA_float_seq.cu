@@ -14,12 +14,37 @@
 #include <sched.h>
 #endif
 
+#define PF_LOG(fmt, ...) do {                         \
+    printf("[pf] " fmt "\n", ##__VA_ARGS__);          \
+    fflush(stdout);                                   \
+} while (0)
+
+#define HIP_CHECK(cmd) do {                           \
+    hipError_t e = (cmd);                             \
+    if (e != hipSuccess) {                            \
+        fprintf(stderr,                               \
+                "[pf] HIP error %s:%d: %s\n",         \
+                __FILE__, __LINE__, hipGetErrorString(e)); \
+        fflush(stderr);                               \
+        exit(1);                                      \
+    }                                                 \
+} while (0)
+
+#define HIP_KERNEL_CHECK(stage) do {                  \
+    HIP_CHECK(hipGetLastError());                     \
+    PF_LOG("before sync: %s", stage);                 \
+    HIP_CHECK(hipDeviceSynchronize());                \
+    PF_LOG("after sync: %s", stage);                  \
+} while (0)
 
 // ---- CPU multithread phase injected for heterogeneous MT experiments ----
 typedef struct {
     int tid;
     unsigned int seed;
     volatile unsigned long long loops;
+    volatile unsigned int *private_buf;
+    size_t private_words;
+    int actual_threads;
 } rodinia_mt_arg_t;
 
 static int rodinia_mt_threads = 4;
@@ -32,6 +57,16 @@ static rodinia_mt_arg_t *rodinia_mt_args = NULL;
 static volatile int rodinia_mt_stop = 0;
 static int rodinia_mt_started = 0;
 static volatile unsigned char *rodinia_mt_shared = NULL;
+static volatile double *rodinia_mt_weights = NULL;
+static volatile double *rodinia_mt_arrayX = NULL;
+static volatile double *rodinia_mt_arrayY = NULL;
+static volatile double *rodinia_mt_CDF = NULL;
+static volatile double *rodinia_mt_likelihood = NULL;
+static int rodinia_mt_items = 0;
+
+static volatile unsigned int *rodinia_mt_private = NULL;
+static size_t rodinia_mt_private_words_per_thread = 0;
+
 static size_t rodinia_mt_shared_bytes = 0;
 
 static inline unsigned int rodinia_mt_xorshift32(unsigned int *state) {
@@ -122,107 +157,320 @@ static int rodinia_mt_visible_cpus(void) {
 
 static void rodinia_mt_cap_threads(void) {
     int visible = rodinia_mt_visible_cpus();
-    int max_threads = visible - 2;
-    if (max_threads < 1) max_threads = 1;
+    // int max_threads = visible - 2;
+    // if (max_threads < 1) max_threads = 1;
 
-    if (rodinia_mt_threads > max_threads) {
-        printf("[rodinia_mt][pf] clamp cpu-workers from %d to %d (visible_cpus=%d, reserve=2)\n",
-               rodinia_mt_threads, max_threads, visible);
-        fflush(stdout);
-        rodinia_mt_threads = max_threads;
-    }
+    // if (rodinia_mt_threads > max_threads) {
+    //     printf("[rodinia_mt][pf] clamp cpu-workers from %d to %d (visible_cpus=%d, reserve=2)\n",
+    //            rodinia_mt_threads, max_threads, visible);
+    //     fflush(stdout);
+    //     rodinia_mt_threads = max_threads;
+    // }
 }
 
 static void *rodinia_mt_worker(void *p) {
     rodinia_mt_arg_t *a = (rodinia_mt_arg_t *)p;
     unsigned int s = a->seed ^ (unsigned int)(a->tid + 1) * 0x9e3779b9u;
 
+    while (!rodinia_mt_stop) {
+        int nitems = rodinia_mt_items;
 
-    for (int outer = 0; outer < 256 && !rodinia_mt_stop; outer++) {
-        int base_iters = 128 * rodinia_mt_work_percent;
-        if (base_iters < 1) base_iters = 1;
+        if (nitems <= 0 || rodinia_mt_threads <= 0 || rodinia_mt_work_percent <= 0) {
+            volatile unsigned int acc = 0;
+            for (int i = 0; i < 1024 && !rodinia_mt_stop; i++)
+                acc += rodinia_mt_xorshift32(&s);
+            (void)acc;
+            a->loops++;
+            continue;
+        }
+
+        int begin = (nitems * a->tid) / rodinia_mt_threads;
+        int end   = (nitems * (a->tid + 1)) / rodinia_mt_threads;
+        int own_count = end - begin;
+
+        if (own_count <= 0) {
+            a->loops++;
+            continue;
+        }
+
+        int sample_count = (own_count * rodinia_mt_work_percent) / 100;
+        if (sample_count < 64)
+            sample_count = 64;
+
+        int window_start = begin - own_count;
+        int window_end   = end + own_count;
+
+        if (window_start < 0)
+            window_start = 0;
+        if (window_end > nitems)
+            window_end = nitems;
+
+        int window_count = window_end - window_start;
+        if (window_count <= 0)
+            window_count = own_count;
 
         volatile unsigned int acc = 0;
-        volatile unsigned char *shared = rodinia_mt_shared;
-        size_t shared_bytes = rodinia_mt_shared_bytes;
 
-        if (shared != NULL && shared_bytes > 0) {
-            for (int i = 0; i < base_iters; i++) {
-                size_t idx = (size_t)(rodinia_mt_xorshift32(&s) % (unsigned int)shared_bytes);
-                volatile unsigned char v = shared[idx];
-                acc += (unsigned int)v;
-                acc += (unsigned int)v;
-            }
-        } else {
-            for (int i = 0; i < base_iters * 8; i++) {
-                acc += rodinia_mt_xorshift32(&s);
+        /*
+         * Phase A-like behavior:
+         * randomly read the local partition and write CPU-private memory.
+         */
+        for (int r = 0; r < sample_count && !rodinia_mt_stop; r++) {
+            int idx = begin + (int)(rodinia_mt_xorshift32(&s) %
+                                    (unsigned int)own_count);
+
+            double v = 0.0;
+
+            if (rodinia_mt_weights)
+                v += rodinia_mt_weights[idx];
+            if (rodinia_mt_arrayX)
+                v += rodinia_mt_arrayX[idx];
+            if (rodinia_mt_arrayY)
+                v += rodinia_mt_arrayY[idx];
+
+            acc += (unsigned int)((long long)(v * 1000.0) ^ idx);
+
+            if (a->private_buf != NULL && a->private_words > 0) {
+                size_t pidx = (size_t)(rodinia_mt_xorshift32(&s) %
+                                       (unsigned int)a->private_words);
+                a->private_buf[pidx] = acc + (unsigned int)a->tid + (unsigned int)r;
             }
         }
+
+        /*
+         * Phase B-like behavior:
+         * randomly read a neighboring window, similar to BFS local-neighborhood access.
+         */
+        for (int r = 0; r < sample_count && !rodinia_mt_stop; r++) {
+            int idx = window_start + (int)(rodinia_mt_xorshift32(&s) %
+                                           (unsigned int)window_count);
+
+            double v = 0.0;
+
+            if (rodinia_mt_weights)
+                v += rodinia_mt_weights[idx];
+            if (rodinia_mt_CDF)
+                v += rodinia_mt_CDF[idx];
+            if (rodinia_mt_likelihood)
+                v += rodinia_mt_likelihood[idx];
+
+            acc += (unsigned int)((long long)(v * 1000.0) ^ idx);
+        }
+
         (void)acc;
         a->loops++;
     }
+
     return NULL;
 }
 
-static void rodinia_mt_start_pool(void) {
+static int rodinia_mt_cpu_loops_per_thread = 100;
+
+static void *rodinia_mt_worker_once(void *p) {
+    rodinia_mt_arg_t *a = (rodinia_mt_arg_t *)p;
+    unsigned int s = a->seed ^ (unsigned int)(a->tid + 1) * 0x9e3779b9u;
+
+    PF_LOG("CPU worker %d begin", a->tid);
+
+    for (int iter = 0; iter < rodinia_mt_cpu_loops_per_thread; iter++) {
+        int nitems = rodinia_mt_items;
+
+        if (nitems <= 0 || rodinia_mt_threads <= 0 || rodinia_mt_work_percent <= 0) {
+            volatile unsigned int acc = 0;
+            for (int i = 0; i < 1024; i++) {
+                acc += rodinia_mt_xorshift32(&s);
+            }
+            (void)acc;
+            a->loops++;
+            continue;
+        }
+
+        int begin = (nitems * a->tid) / rodinia_mt_threads;
+        int end   = (nitems * (a->tid + 1)) / rodinia_mt_threads;
+        int own_count = end - begin;
+
+        if (own_count <= 0) {
+            a->loops++;
+            continue;
+        }
+
+        int sample_count = (own_count * rodinia_mt_work_percent) / 100;
+        if (sample_count < 64) {
+            sample_count = 64;
+        }
+
+        int window_start = begin - own_count;
+        int window_end   = end + own_count;
+
+        if (window_start < 0) {
+            window_start = 0;
+        }
+        if (window_end > nitems) {
+            window_end = nitems;
+        }
+
+        int window_count = window_end - window_start;
+        if (window_count <= 0) {
+            window_count = own_count;
+        }
+
+        volatile unsigned int acc = 0;
+
+        for (int r = 0; r < sample_count; r++) {
+            int idx = begin + (int)(rodinia_mt_xorshift32(&s) %
+                                    (unsigned int)own_count);
+
+            double v = 0.0;
+
+            if (rodinia_mt_weights) {
+                v += rodinia_mt_weights[idx];
+            }
+            if (rodinia_mt_arrayX) {
+                v += rodinia_mt_arrayX[idx];
+            }
+            if (rodinia_mt_arrayY) {
+                v += rodinia_mt_arrayY[idx];
+            }
+
+            acc += (unsigned int)((long long)(v * 1000.0) ^ idx);
+
+            if (a->private_buf != NULL && a->private_words > 0) {
+                size_t pidx = (size_t)(rodinia_mt_xorshift32(&s) %
+                                       (unsigned int)a->private_words);
+                a->private_buf[pidx] = acc + (unsigned int)a->tid + (unsigned int)r;
+            }
+        }
+
+        for (int r = 0; r < sample_count; r++) {
+            int idx = window_start + (int)(rodinia_mt_xorshift32(&s) %
+                                           (unsigned int)window_count);
+
+            double v = 0.0;
+
+            if (rodinia_mt_weights) {
+                v += rodinia_mt_weights[idx];
+            }
+            if (rodinia_mt_CDF) {
+                v += rodinia_mt_CDF[idx];
+            }
+            if (rodinia_mt_likelihood) {
+                v += rodinia_mt_likelihood[idx];
+            }
+
+            acc += (unsigned int)((long long)(v * 1000.0) ^ idx);
+        }
+
+        (void)acc;
+        a->loops++;
+    }
+
+    PF_LOG("CPU worker %d end loops=%llu",
+           a->tid, (unsigned long long)a->loops);
+
+    return NULL;
+}
+
+static void rodinia_mt_cpu_phase_pf_sync(double *weights,
+                                         double *arrayX,
+                                         double *arrayY,
+                                         double *CDF,
+                                         double *likelihood,
+                                         int nitems) {
     rodinia_mt_init_cfg();
-    if (rodinia_mt_started || rodinia_mt_work_percent <= 0) return;
 
-    rodinia_mt_cap_threads();
+    if (rodinia_mt_work_percent <= 0) {
+        PF_LOG("CPU sync phase skipped: work_percent=%d", rodinia_mt_work_percent);
+        return;
+    }
+
+    rodinia_mt_weights = (volatile double *)weights;
+    rodinia_mt_arrayX = (volatile double *)arrayX;
+    rodinia_mt_arrayY = (volatile double *)arrayY;
+    rodinia_mt_CDF = (volatile double *)CDF;
+    rodinia_mt_likelihood = (volatile double *)likelihood;
+    rodinia_mt_items = nitems;
+
     int n = rodinia_mt_threads;
-    rodinia_mt_pool = (pthread_t *)malloc((size_t)n * sizeof(pthread_t));
-    rodinia_mt_args = (rodinia_mt_arg_t *)malloc((size_t)n * sizeof(rodinia_mt_arg_t));
-    rodinia_mt_stop = 0;
 
+    PF_LOG("CPU sync phase setup: threads=%d nitems=%d work_percent=%d loops_per_thread=%d",
+           n,
+           nitems,
+           rodinia_mt_work_percent,
+           rodinia_mt_cpu_loops_per_thread);
+
+    pthread_t *pool = (pthread_t *)malloc((size_t)n * sizeof(pthread_t));
+    rodinia_mt_arg_t *args = (rodinia_mt_arg_t *)malloc((size_t)n * sizeof(rodinia_mt_arg_t));
+
+    size_t private_words_per_thread = 8192;
+    volatile unsigned int *private_buf =
+        (volatile unsigned int *)calloc((size_t)n * private_words_per_thread,
+                                        sizeof(unsigned int));
+
+    if (pool == NULL || args == NULL || private_buf == NULL) {
+        fprintf(stderr, "[rodinia_mt][pf] failed to allocate sync CPU phase buffer\n");
+        fflush(stderr);
+        exit(1);
+    }
+
+    PF_LOG("Before CPU worker creation");
+
+    int created = 0;
     for (int t = 0; t < n; t++) {
-        rodinia_mt_args[t].tid = t;
-        rodinia_mt_args[t].seed = rodinia_mt_seed ^ (unsigned int)(t + 1);
-        rodinia_mt_args[t].loops = 0;
-        int create_rc = pthread_create(&rodinia_mt_pool[t], NULL, rodinia_mt_worker, &rodinia_mt_args[t]);
-        printf("[rodinia_mt][pf] create tid=%d rc=%d\n", t, create_rc);
-        fflush(stdout);
+        args[t].tid = t;
+        args[t].seed = rodinia_mt_seed ^ (unsigned int)(t + 1);
+        args[t].loops = 0;
+        args[t].private_buf = private_buf + (size_t)t * private_words_per_thread;
+        args[t].private_words = private_words_per_thread;
+
+        int rc = pthread_create(&pool[t], NULL, rodinia_mt_worker_once, &args[t]);
+        PF_LOG("CPU create tid=%d rc=%d", t, rc);
+
+        if (rc != 0) {
+            fprintf(stderr, "[pf] pthread_create tid=%d failed: %s\n", t, strerror(rc));
+            fflush(stderr);
+            break;
+        }
+
+        created++;
     }
 
-    rodinia_mt_started = 1;
-}
+    PF_LOG("Created %d/%d CPU workers", created, n);
+    PF_LOG("Before CPU workers join");
 
-static void rodinia_mt_stop_pool(void) {
-    if (!rodinia_mt_started) return;
+    for (int t = 0; t < created; t++) {
+        PF_LOG("Joining CPU worker thread %d", t);
 
-    rodinia_mt_stop = 1;
-    for (int t = 0; t < rodinia_mt_threads; t++) {
-        pthread_join(rodinia_mt_pool[t], NULL);
+        int rc = pthread_join(pool[t], NULL);
+        if (rc != 0) {
+            fprintf(stderr, "[pf] pthread_join tid=%d failed: %s\n", t, strerror(rc));
+            fflush(stderr);
+            exit(1);
+        }
+
+        PF_LOG("Joined CPU worker thread %d", t);
     }
 
-    for (int t = 0; t < rodinia_mt_threads; t++) {
-        printf("[rodinia_mt][pf] tid=%d loops=%llu\n",
+    PF_LOG("CPU workers joined");
+
+    for (int t = 0; t < created; t++) {
+        PF_LOG("CPU worker %d final loops=%llu",
                t,
-               (unsigned long long)rodinia_mt_args[t].loops);
-        fflush(stdout);
+               (unsigned long long)args[t].loops);
     }
 
-    free(rodinia_mt_pool);
-    free(rodinia_mt_args);
-    rodinia_mt_pool = NULL;
-    rodinia_mt_args = NULL;
-    rodinia_mt_shared = NULL;
-    rodinia_mt_shared_bytes = 0;
-    rodinia_mt_started = 0;
+    free(pool);
+    free(args);
+    free((void *)private_buf);
+
+    rodinia_mt_weights = NULL;
+    rodinia_mt_arrayX = NULL;
+    rodinia_mt_arrayY = NULL;
+    rodinia_mt_CDF = NULL;
+    rodinia_mt_likelihood = NULL;
+    rodinia_mt_items = 0;
+
+    PF_LOG("CPU sync phase cleanup done");
 }
-
-static void rodinia_mt_cpu_phase(void) {
-    rodinia_mt_shared = NULL;
-    rodinia_mt_shared_bytes = 0;
-    rodinia_mt_start_pool();
-}
-
-static void rodinia_mt_cpu_phase_shared(void *shared, size_t shared_bytes) {
-    (void)shared;
-    (void)shared_bytes;
-    rodinia_mt_cpu_phase();
-}
-
-
 // ---- end injected MT helpers ----
 
 
@@ -230,7 +478,7 @@ static void rodinia_mt_cpu_phase_shared(void *shared, size_t shared_bytes) {
 #define BLOCK_Y 16
 #define PI 3.1415926535897932
 
-const int threads_per_block = 512;
+const int threads_per_block = 64;
 
 /**
 @var M value for Linear Congruential Generator (LCG); use GCC's value
@@ -297,7 +545,7 @@ void cuda_print_double_array(double *array_GPU, size_t size) {
     printf("PRINTING ARRAY VALUES\n");
     //print values in memory
     for (size_t i = 0; i < size; ++i) {
-        printf("[%d]:%0.6f\n", i, mem[i]);
+        printf("[%zu]:%0.6f\n", i, mem[i]);
     }
     printf("FINISHED PRINTING ARRAY VALUES\n");
 
@@ -403,6 +651,46 @@ __device__ double d_randn(int * seed, int index) {
     return sqrt(rt) * cosine;
 }
 
+__global__ void normalize_weights_only_kernel(
+    double *weights,
+    int Nparticles,
+    double *total_sum
+) {
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+
+    if (i < Nparticles) {
+        weights[i] = weights[i] / total_sum[0];
+    }
+}
+
+__global__ void cdf_u0_kernel(
+    double *weights,
+    int Nparticles,
+    double *CDF,
+    double *u,
+    int *seed
+) {
+    CDF[0] = weights[0];
+
+    for (int x = 1; x < Nparticles; x++) {
+        CDF[x] = CDF[x - 1] + weights[x];
+    }
+
+    u[0] = (1.0 / ((double)Nparticles)) * d_randu(seed, 0);
+}
+
+__global__ void fill_u_kernel(
+    double *u,
+    int Nparticles
+) {
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
+
+    if (i < Nparticles) {
+        double u1 = u[0];
+        u[i] = u1 + i / ((double)Nparticles);
+    }
+}
+
 /****************************
 UPDATE WEIGHTS
 UPDATES WEIGHTS
@@ -458,6 +746,22 @@ __device__ double dev_round_double(double value) {
         return newValue++;
 }
 
+__device__ int lower_bound_cdf(double *CDF, int Nparticles, double value) {
+    int lo = 0;
+    int hi = Nparticles - 1;
+
+    while (lo < hi) {
+        int mid = lo + (hi - lo) / 2;
+        if (CDF[mid] >= value) {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+
+    return lo;
+}
+
 /*****************************
  * CUDA Find Index Kernel Function to replace FindIndex
  * param1: arrayX
@@ -469,32 +773,31 @@ __device__ double dev_round_double(double value) {
  * param7: weights
  * param8: Nparticles
  *****************************/
-__global__ void find_index_kernel(double * arrayX, double * arrayY, double * CDF, double * u, double * xj, double * yj, double * weights, int Nparticles) {
-    int block_id = blockIdx.x;
-    int i = blockDim.x * block_id + threadIdx.x;
+__global__ void find_index_kernel(
+    double *arrayX,
+    double *arrayY,
+    double *CDF,
+    double *u,
+    double *xj,
+    double *yj,
+    double *weights,
+    int Nparticles
+) {
+    int i = blockDim.x * blockIdx.x + threadIdx.x;
 
     if (i < Nparticles) {
+        int index = lower_bound_cdf(CDF, Nparticles, u[i]);
 
-        int index = -1;
-        int x;
-
-        for (x = 0; x < Nparticles; x++) {
-            if (CDF[x] >= u[i]) {
-                index = x;
-                break;
-            }
+        if (index < 0) {
+            index = 0;
         }
-        if (index == -1) {
+        if (index >= Nparticles) {
             index = Nparticles - 1;
         }
 
         xj[i] = arrayX[index];
         yj[i] = arrayY[index];
-
-        //weights[i] = 1 / ((double) (Nparticles)); //moved this code to the beginning of likelihood kernel
-
     }
-    __syncthreads();
 }
 
 __global__ void normalize_weights_kernel(double * weights, int Nparticles, double* partial_sums, double * CDF, double * u, int * seed) {
@@ -530,18 +833,29 @@ __global__ void normalize_weights_kernel(double * weights, int Nparticles, doubl
     }
 }
 
-__global__ void sum_kernel(double* partial_sums, int Nparticles) {
-    int block_id = blockIdx.x;
-    int i = blockDim.x * block_id + threadIdx.x;
+__global__ void sum_kernel_parallel(double *partial_sums, double *total_sum, int num_blocks) {
+    __shared__ double buf[256];
 
-    if (i == 0) {
-        int x;
-        double sum = 0.0;
-        int num_blocks = ceil((double) Nparticles / (double) threads_per_block);
-        for (x = 0; x < num_blocks; x++) {
-            sum += partial_sums[x];
+    int tid = threadIdx.x;
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    double v = 0.0;
+    if (idx < num_blocks) {
+        v = partial_sums[idx];
+    }
+
+    buf[tid] = v;
+    __syncthreads();
+
+    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            buf[tid] += buf[tid + s];
         }
-        partial_sums[0] = sum;
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+        atomicAdd(total_sum, buf[0]);
     }
 }
 
@@ -627,7 +941,6 @@ __global__ void likelihood_kernel(double * arrayX, double * arrayY, double * xj,
     
     __syncthreads();
 
-    
 }
 
 /** 
@@ -949,6 +1262,10 @@ void particleFilter(unsigned char * I, int IszX, int IszY, int Nfr, int * seed, 
         xj[x] = xe;
         yj[x] = ye;
 
+        arrayX[x] = xe;
+        arrayY[x] = ye;
+        CDF[x] = ((double)(x + 1)) / ((double)Nparticles);
+        likelihood[x] = 0.0;
     }
 
     int k;
@@ -957,33 +1274,122 @@ void particleFilter(unsigned char * I, int IszX, int IszY, int Nfr, int * seed, 
     long long send_start = get_time();
     long long send_end = get_time();
     printf("TIME TO SEND TO GPU: %f\n", elapsed_time(send_start, send_end));
-    int num_blocks = ceil((double) Nparticles / (double) threads_per_block);
-    if (num_cus > num_blocks) {
-        int max_blocks = (Nparticles + 63) / 64;
-        if (max_blocks < num_blocks) max_blocks = num_blocks;
-        if (max_blocks > num_cus) max_blocks = num_cus;
-        num_blocks = max_blocks;
+    int num_blocks = (Nparticles + threads_per_block - 1) / threads_per_block;
+
+    if (num_blocks != num_cus) {
+        printf("[pf] warning: num_blocks=%d, gpu_cus=%d\n", num_blocks, num_cus);
     }
 
+    printf("[pf] Nparticles=%d threads_per_block=%d gpu_cus=%d num_blocks=%d\n",
+        Nparticles, threads_per_block, num_cus, num_blocks);
+    
+    double *total_sum;
+    total_sum = (double *)checked_hip_malloc_managed(sizeof(double));
 
     for (k = 1; k < Nfr; k++) {
 
-        rodinia_mt_cpu_phase_shared(weights_GPU, (size_t)Nparticles * sizeof(double));
-        likelihood_kernel <<< num_blocks, threads_per_block >>> (arrayX_GPU, arrayY_GPU, xj_GPU, yj_GPU, CDF_GPU, ind_GPU, objxy_GPU, likelihood_GPU, I_GPU, u_GPU, weights_GPU, Nparticles, countOnes, max_size, k, IszY, Nfr, seed_GPU, partial_sums);
+        PF_LOG("frame %d CPU phase begin", k);
 
-        sum_kernel <<< num_blocks, threads_per_block >>> (partial_sums, Nparticles);
+        rodinia_mt_cpu_phase_pf_sync(weights_GPU,
+                                    arrayX_GPU,
+                                    arrayY_GPU,
+                                    CDF_GPU,
+                                    likelihood_GPU,
+                                    Nparticles);
 
-        normalize_weights_kernel <<< num_blocks, threads_per_block >>> (weights_GPU, Nparticles, partial_sums, CDF_GPU, u_GPU, seed_GPU);
-        
-        find_index_kernel <<< num_blocks, threads_per_block>>> (arrayX_GPU, arrayY_GPU, CDF_GPU, u_GPU, xj_GPU, yj_GPU, weights_GPU, Nparticles);
+        PF_LOG("frame %d CPU phase end", k);
 
-    }//end loop
+        PF_LOG("frame %d GPU phase begin", k);
+
+        *total_sum = 0.0;
+
+        likelihood_kernel <<< num_blocks, threads_per_block >>> (
+            arrayX_GPU,
+            arrayY_GPU,
+            xj_GPU,
+            yj_GPU,
+            CDF_GPU,
+            ind_GPU,
+            objxy_GPU,
+            likelihood_GPU,
+            I_GPU,
+            u_GPU,
+            weights_GPU,
+            Nparticles,
+            countOnes,
+            max_size,
+            k,
+            IszY,
+            Nfr,
+            seed_GPU,
+            partial_sums
+        );
+        HIP_KERNEL_CHECK("likelihood_kernel");
+
+        PF_LOG("frame %d before sum_kernel_parallel", k);
+
+        sum_kernel_parallel <<< num_blocks, threads_per_block >>> (
+            partial_sums,
+            total_sum,
+            num_blocks
+        );
+
+        HIP_KERNEL_CHECK("sum_kernel_parallel");
+
+        PF_LOG("frame %d before normalize_weights_only_kernel", k);
+
+        normalize_weights_only_kernel <<< num_blocks, threads_per_block >>> (
+            weights_GPU,
+            Nparticles,
+            total_sum
+        );
+
+        HIP_KERNEL_CHECK("normalize_weights_only_kernel");
+
+        PF_LOG("frame %d before cdf_u0_kernel", k);
+
+        cdf_u0_kernel <<< 1, 1 >>> (
+            weights_GPU,
+            Nparticles,
+            CDF_GPU,
+            u_GPU,
+            seed_GPU
+        );
+
+        HIP_KERNEL_CHECK("cdf_u0_kernel");
+
+        PF_LOG("frame %d before fill_u_kernel", k);
+
+        fill_u_kernel <<< num_blocks, threads_per_block >>> (
+            u_GPU,
+            Nparticles
+        );
+
+        HIP_KERNEL_CHECK("fill_u_kernel");
+
+        PF_LOG("frame %d before find_index_kernel", k);
+
+        find_index_kernel <<< num_blocks, threads_per_block >>> (
+            arrayX_GPU,
+            arrayY_GPU,
+            CDF_GPU,
+            u_GPU,
+            xj_GPU,
+            yj_GPU,
+            weights_GPU,
+            Nparticles
+        );
+
+        HIP_KERNEL_CHECK("find_index_kernel");
+
+        PF_LOG("frame %d GPU phase end", k);
+
+    }
 
     // åæ¥ï¼D2H memcpy éå¼åæ­¥
     // ç°å¨ï¼managed åå­ä¸æ¾å¼åæ­¥ç¡®ä¿ CPU å¯è¯»
     hipDeviceSynchronize();
     long long back_time = get_time();
-
 
     long long free_time = get_time();
     long long arrayX_time = get_time();
@@ -1008,8 +1414,6 @@ void particleFilter(unsigned char * I, int IszX, int IszY, int Nfr, int * seed, 
     double distance = sqrt(pow((double) (xe - (int) roundDouble(IszY / 2.0)), 2) + pow((double) (ye - (int) roundDouble(IszX / 2.0)), 2));
     printf("%lf\n", distance);
 
-    rodinia_mt_stop_pool();
-
     //CUDA freeing of memory
     hipFree(weights);
     hipFree(arrayY);
@@ -1022,6 +1426,7 @@ void particleFilter(unsigned char * I, int IszX, int IszY, int Nfr, int * seed, 
     hipFree(likelihood);
     hipFree(objxy);
     hipFree(partial_sums);
+    hipFree(total_sum);
 
     //free regular memory
     free(disk);
@@ -1029,7 +1434,7 @@ void particleFilter(unsigned char * I, int IszX, int IszY, int Nfr, int * seed, 
 
 int main(int argc, char * argv[]) {
 
-    char* usage = "double.out -x <dimX> -y <dimY> -z <Nfr> -np <Nparticles> --cpu-workers <N> --gpu-cus <M>";
+    const char* usage = "double.out -x <dimX> -y <dimY> -z <Nfr> -np <Nparticles> --cpu-workers <N> --gpu-cus <M>";
     //check number of arguments
     if (argc != 13) {
         printf("%s\n", usage);
@@ -1105,9 +1510,18 @@ int main(int argc, char * argv[]) {
     }
     int num_cus = 0;
     sscanf(argv[12], "%d", &num_cus);
+
     if (num_cus <= 0) {
         printf("gpu-cus must be > 0\n");
         return 0;
+    }
+
+    int target_particles = num_cus * threads_per_block;
+
+    if (Nparticles != target_particles) {
+        printf("[pf] adjust Nparticles from %d to %d for gpu_cus=%d\n",
+            Nparticles, target_particles, num_cus);
+        Nparticles = target_particles;
     }
     //establish seed
     // åæ¥ï¼seed/I å¨ hostï¼GPU ç«¯é hipMemcpy

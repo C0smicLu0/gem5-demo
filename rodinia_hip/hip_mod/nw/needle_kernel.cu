@@ -3,34 +3,43 @@
 #include "needle.h"
 #include <stdio.h>
 
+#define HIP_CHECK(cmd) do {                                      \
+    hipError_t e = (cmd);                                        \
+    if (e != hipSuccess) {                                       \
+        fprintf(stderr, "HIP error %s:%d: %s\n",                 \
+                __FILE__, __LINE__, hipGetErrorString(e));       \
+        exit(1);                                                 \
+    }                                                            \
+} while (0)
+
 
 #define SDATA( index)      CUT_BANK_CHECKER(sdata, index)
 
 __device__ __host__ int 
 maximum( int a,
-		 int b,
-		 int c){
+    int b,
+    int c){
 
-int k;
-if( a <= b )
-k = b;
-else 
-k = a;
+    int k;
+    if( a <= b )
+    k = b;
+    else 
+    k = a;
 
-if( k <=c )
-return(c);
-else
-return(k);
-
+    if( k <=c )
+    return(c);
+    else
+    return(k);
 }
 
 __global__ void
-needle_cuda_shared_1(  int* referrence,
-			  int* matrix_cuda, 
-			  int cols,
-			  int penalty,
-			  int i,
-			  int block_width) 
+needle_cuda_shared_1(
+  int* referrence,
+  int* matrix_cuda, 
+  int cols,
+  int penalty,
+  int i,
+  int block_width) 
 {
   int bx = blockIdx.x;
   int tx = threadIdx.x;
@@ -114,7 +123,6 @@ needle_cuda_shared_2(  int* referrence,
 			  int i,
 			  int block_width) 
 {
-
   int bx = blockIdx.x;
   int tx = threadIdx.x;
 

@@ -7,7 +7,7 @@ SRC = needle.cu
 EXE = needle
 
 release: $(SRC)
-	$(CC) ${KERNEL_DIM} $(SRC) -o $(EXE)  -lpthread
+	$(CC) ${KERNEL_DIM} $(SRC) -o $(EXE)  -lpthread -DTIMING -I../util
 
 clang: $(SRC)
 	clang++ $(SRC) -o $(EXE) -I../util \

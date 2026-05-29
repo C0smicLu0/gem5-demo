@@ -56,10 +56,3 @@ result.txt
 /rodinia_hip/hip_mod/**/result
 /rodinia_hip/hip_mod/**/b+tree.out
 /rodinia_hip/hip_mod/**/bfs.out
-/rodinia_hip/hip_mod/**/particlefilter_float
-/rodinia_hip/hip_mod/**/needle
-/rodinia_hip/hip_mod/**/gaussian
-/rodinia_hip/hip_mod/**/hotspot
-/rodinia_hip/hip_mod/**/lavaMD
-/rodinia_hip/hip_mod/**/pathfinder
-/rodinia_hip/hip_mod/**/dwt2d

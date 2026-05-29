@@ -46,25 +46,25 @@
       "workload_args": "--mem-size=8GiB -c /gem5/tests/gem5/gpu/pannotia_modified_src/pannotia/mis/bin/mis_hip.gem5 --options '/gem5/tests/gem5/gpu/pannotia_modified_src/pannotia/datasets/1k_128k.gr 0'"
     },
     "rodinia-bfs": {
-      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin_mod/bfs.out --options '/gem5/tests/gem5/resources/rodinia_hip/data/bfs/graph65536.txt'"
+      "workload_args": "-c /gem5/rodinia_hip/hip_mod/bin/bfs.out --options '/gem5/rodinia_hip/data/bfs/graph65536.txt'"
     },
     "rodinia-dwt2d": {
-      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin_mod/dwt2d --options '/gem5/tests/gem5/resources/rodinia_hip/data/dwt2d/192.bmp -d 192x192 -f -5 -l 3'"
+      "workload_args": "-c /gem5/rodinia_hip/hip_mod/bin/dwt2d --options '/gem5/rodinia_hip/data/dwt2d/4096.rgb -d 4096x4096 -f -5 -c 3 -l 3'"
     },
     "rodinia-gaussian": {
-      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin_mod/gaussian --options '-f /gem5/tests/gem5/resources/rodinia_hip/data/gaussian/matrix4.txt'"
+      "workload_args": "-c /gem5/rodinia_hip/hip_mod/bin/gaussian --options '-f /gem5/rodinia_hip/data/gaussian/matrix1024.txt'"
     },
     "rodinia-hotspot": {
-      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin_mod/hotspot --options '512 2 2 /gem5/tests/gem5/resources/rodinia_hip/data/hotspot/temp_512 /gem5/tests/gem5/resources/rodinia_hip/data/hotspot/power_512 output.out'"
+      "workload_args": "-c /gem5/rodinia_hip/hip_mod/bin/hotspot --options '512 2 2 /gem5/rodinia_hip/data/hotspot/temp_512 /gem5/tests/gem5/resources/rodinia_hip/data/hotspot/power_512 output.out'"
     },
     "rodinia-lavaMD": {
-      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin_mod/lavaMD --options '-boxes1d 10'"
+      "workload_args": "-c /gem5/rodinia_hip/hip_mod/bin/lavaMD --options '-boxes1d 10'"
     },
     "rodinia-nw": {
-      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin_mod/needle --options '2048 10'"
+      "workload_args": "-c /gem5/rodinia_hip/hip_mod/bin/needle --options '2048 10'"
     },
     "rodinia-particlefilter": {
-      "workload_args": "-c /gem5/tests/gem5/resources/rodinia_hip/bin_mod/particlefilter_float --options '-x 128 -y 128 -z 10 -np 1000'"
+      "workload_args": "-c /gem5/rodinia_hip/hip_mod/bin/particlefilter_float --options '-x 128 -y 128 -z 10 -np 1000'"
     }
   }
 }
