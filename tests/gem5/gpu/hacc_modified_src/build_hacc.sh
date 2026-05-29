@@ -69,6 +69,7 @@ if (( IN_CONTAINER )); then
     )
 else
     docker run --rm \
+        -u "$(id -u):$(id -g)" \
         -v "$GEM5_ROOT":"$GEM5_ROOT" \
         -w "$HACC_SRC" \
         -e GEM5_ROOT="$GEM5_ROOT" \

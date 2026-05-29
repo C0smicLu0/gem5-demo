@@ -163,6 +163,7 @@ run_make()
         )
     else
         docker run --rm \
+            -u "$(id -u):$(id -g)" \
             -v "$GEM5_ROOT":"$GEM5_ROOT" \
             -w "$SOURCE_DIR" \
             -e GEM5_ROOT="$GEM5_ROOT" \

@@ -224,6 +224,7 @@ build_libm5()
     else
         local image="${DOCKER_IMAGE_OVERRIDE:-ghcr.io/gem5/gcn-gpu:v25-1}"
         docker run --rm \
+            -u "$(id -u):$(id -g)" \
             -v "$GEM5_ROOT":"$GEM5_ROOT" \
             -w "$M5_UTIL_DIR" \
             "$image" \
