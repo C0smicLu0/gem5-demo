@@ -128,8 +128,7 @@ bash test_scripts/gem5_workload_runner.sh run hacc [run_tag] [--profile PROFILE]
 bash test_scripts/gem5_workload_runner.sh run pannotia-bc-1k-128k [run_tag] [--profile PROFILE]...
 bash test_scripts/gem5_workload_runner.sh run rodinia-bfs [run_tag] [--profile PROFILE]...
 bash test_scripts/gem5_workload_runner.sh analyze square <run_tag>
-bash test_scripts/gem5_workload_runner.sh functional_check square <run_tag>
-bash test_scripts/gem5_workload_runner.sh latency_check square <run_tag>
+bash test_scripts/gem5_workload_runner.sh check square <run_tag>
 bash test_scripts/gem5_workload_runner.sh all square [run_tag] [--profile PROFILE]...
 ```
 
@@ -140,8 +139,7 @@ bash test_scripts/gem5_test.sh test --run-dir <run_dir> [--gem5-opt-bin BIN] \
   [--config-py FILE] [--gem5-opt-args "..."] [--config-args "..."] \
   [--workload-args "..."]
 bash test_scripts/gem5_test.sh analyze <run_dir>
-bash test_scripts/gem5_test.sh functional_check <run_dir>
-bash test_scripts/gem5_test.sh latency_check <run_dir>
+bash test_scripts/gem5_test.sh check <run_dir> [LOW] [HIGH]
 ```
 
 For more detail on the helper scripts and configuration layout, see
