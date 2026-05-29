@@ -57,7 +57,7 @@ rodinia_hip/hip_mod/*
 !rodinia_hip/hip_mod/gaussian/
 !rodinia_hip/hip_mod/hotspot/
 !rodinia_hip/hip_mod/particlefilter/
-!rodinia_hip/hip_mod/gaussian/
+!rodinia_hip/hip_mod/lavaMD/
 !rodinia_hip/hip_mod/nw/
 
 /rodinia_hip/hip_mod/bin
