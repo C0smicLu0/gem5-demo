@@ -55,7 +55,7 @@
       "workload_args": "-c /gem5/rodinia_hip/hip_mod/bin/gaussian --options '-f /gem5/rodinia_hip/data/gaussian/matrix1024.txt'"
     },
     "rodinia-hotspot": {
-      "workload_args": "-c /gem5/rodinia_hip/hip_mod/bin/hotspot --options '512 2 2 /gem5/rodinia_hip/data/hotspot/temp_512 /gem5/tests/gem5/resources/rodinia_hip/data/hotspot/power_512 output.out'"
+      "workload_args": "-c /gem5/rodinia_hip/hip_mod/bin/hotspot --options '512 2 2 /gem5/rodinia_hip/data/hotspot/temp_512 /gem5/rodinia_hip/data/hotspot/power_512 output.out'"
     },
     "rodinia-lavaMD": {
       "workload_args": "-c /gem5/rodinia_hip/hip_mod/bin/lavaMD --options '-boxes1d 10'"

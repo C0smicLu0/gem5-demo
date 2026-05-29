@@ -43,8 +43,12 @@ result.txt
 /rodinia_hip/hip
 /rodinia_hip/hip_backup
 /rodinia_hip/LICENSE
-/rodinia_hip/data
 /rodinia_hip/common
+rodinia_hip/data/*
+!rodinia_hip/data/bfs/
+!rodinia_hip/data/dwt2d/
+!rodinia_hip/data/gaussian/
+!rodinia_hip/data/hotspot/
 
 /rodinia_hip/hip_mod/bin
 /rodinia_hip/hip_mod/*/bin
