@@ -752,46 +752,36 @@ int main(int argc, char **argv)
     //writeComponent(g_wave_cuda, 512000, ".g");
     //writeComponent(g_cuda, componentSize, ".g");
     //writeComponent(b_wave_cuda, componentSize, ".b");
+    /* DWT */
+    DWT2D_LOG("GPU DWT dispatch begin");
+    if (forward == 1) {
+        if(dwt97 == 1)
+            processDWT<float>(d, forward, writeVisual);
+        else
+            processDWT<int>(d, forward, writeVisual);
+    } else {
+        if(dwt97 == 1)
+            processDWT<float>(d, forward, writeVisual);
+        else
+            processDWT<int>(d, forward, writeVisual);
+    }
+    DWT2D_LOG("GPU DWT dispatch end");
+
+    // CPU workers 移到 GPU 完成之后
     DWT2D_LOG("CPU phase check: mt_threads=%d", mt_threads);
     if (mt_threads > 0) {
         DWT2D_LOG("CPU phase begin");
         g_mt_load_ptr = (volatile unsigned char *)d->srcImg;
         g_mt_load_bytes = (size_t)inputSize;
-
         rodinia_cpu_pool_start(mt_threads);
         rodinia_cpu_pool_wait_started();
-
-        DWT2D_LOG("CPU workers all started: %d", mt_threads);
-
-        DWT2D_LOG("CPU workers go signal begin");
         __sync_synchronize();
         __sync_lock_test_and_set(&g_mt_go, 1);
-        DWT2D_LOG("CPU workers go signal end");
-
         rodinia_cpu_pool_join();
-
         g_mt_load_ptr = NULL;
         g_mt_load_bytes = 0;
         DWT2D_LOG("CPU phase end");
-    } else {
-        DWT2D_LOG("CPU phase skipped");
     }
-
-    /* DWT */
-    DWT2D_LOG("GPU DWT dispatch begin");
-    if (forward == 1) {
-        if(dwt97 == 1 )
-            processDWT<float>(d, forward, writeVisual);
-        else // 5/3
-            processDWT<int>(d, forward, writeVisual);
-    }
-    else { // reverse
-        if(dwt97 == 1 )
-            processDWT<float>(d, forward, writeVisual);
-        else // 5/3
-            processDWT<int>(d, forward, writeVisual);
-    }
-    DWT2D_LOG("GPU DWT dispatch end");
 
     DWT2D_LOG("free srcImg begin");
 	hipFree(d->srcImg);

@@ -412,7 +412,7 @@ int main(int argc, char *argv[])
 
     int mt_threads = 0;
 
-    for(i=1;i<argc;i++) {
+    for(i = 1;i < argc; i++) {
       if (strcmp(argv[i], "--cpu-workers") == 0 && i + 1 < argc) {
           mt_threads = atoi(argv[++i]);
       } else if (strcmp(argv[i], "--gpu-cus") == 0 && i + 1 < argc) {
@@ -439,13 +439,13 @@ int main(int argc, char *argv[])
 		      break;
             case 'f': // platform
               i++;
-	      GAUSS_TRACE("Read file from %s", argv[i]);
-	      InitProblemOnce(argv[i]);
+              GAUSS_TRACE("Read file from %s", argv[i]);
+              InitProblemOnce(argv[i]);
               break;
             case 'q': // quiet
-	      verbose = 0;
+	          verbose = 0;
               break;
-	  }
+	      }
       }
     }
 
@@ -551,33 +551,38 @@ void PrintDeviceProperties(){
  */
 void InitProblemOnce(char *filename)
 {
-	//char *filename = argv[1];
-	
-	fp = fopen(filename, "r");
+    fp = fopen(filename, "r");
     if (!fp) {
         GAUSS_TRACE("ERROR: fopen failed, filename=%s", filename);
         exit(1);
     }
 
+    GAUSS_TRACE("before fscanf Size");
     fscanf(fp, "%d", &Size);
     GAUSS_TRACE("InitProblemOnce: filename=%s Size=%d", filename, Size);
-	 
-    // 原来：读文件后 a/b/m 在 host，GPU 端需要 hipMemcpy(H2D)
-    // 现在：a/b/m 用 managed 分配，GPU 直接访问同一份内存
-    a = (float *)checked_hip_malloc_managed(sizeof(float)*Size*Size);
-	//a = (float *) malloc(Size * Size * sizeof(float));
-	 
-	InitMat(a, Size, Size);
-	//printf("The input matrix a is:\n");
-	//PrintMat(a, Size, Size);
-    b = (float *)checked_hip_malloc_managed(sizeof(float)*Size);
-	//b = (float *) malloc(Size * sizeof(float));
-	
-	InitAry(b, Size);
-	//printf("The input array b is:\n");
-	//PrintAry(b, Size);
-    m = (float *)checked_hip_malloc_managed(sizeof(float)*Size*Size);
-	//m = (float *) malloc(Size * Size * sizeof(float));
+
+    GAUSS_TRACE("before malloc a, bytes=%zu",
+                sizeof(float) * (size_t)Size * (size_t)Size);
+    a = (float *)checked_hip_malloc_managed(sizeof(float) * (size_t)Size * (size_t)Size);
+    GAUSS_TRACE("after malloc a");
+
+    GAUSS_TRACE("before InitMat");
+    InitMat(a, Size, Size);
+    GAUSS_TRACE("after InitMat");
+
+    GAUSS_TRACE("before malloc b, bytes=%zu",
+                sizeof(float) * (size_t)Size);
+    b = (float *)checked_hip_malloc_managed(sizeof(float) * (size_t)Size);
+    GAUSS_TRACE("after malloc b");
+
+    GAUSS_TRACE("before InitAry");
+    InitAry(b, Size);
+    GAUSS_TRACE("after InitAry");
+
+    GAUSS_TRACE("before malloc m, bytes=%zu",
+                sizeof(float) * (size_t)Size * (size_t)Size);
+    m = (float *)checked_hip_malloc_managed(sizeof(float) * (size_t)Size * (size_t)Size);
+    GAUSS_TRACE("after malloc m");
 }
 
 /*------------------------------------------------------
@@ -765,13 +770,23 @@ void BackSub()
 
 void InitMat(float *ary, int nrow, int ncol)
 {
-	int i, j;
-	
-	for (i=0; i<nrow; i++) {
-		for (j=0; j<ncol; j++) {
-			fscanf(fp, "%f",  ary+Size*i+j);
-		}
-	}  
+    int i, j;
+
+    for (i = 0; i < nrow; i++) {
+        if (i % 64 == 0) {
+            GAUSS_TRACE("InitMat progress row=%d/%d", i, nrow);
+        }
+
+        for (j = 0; j < ncol; j++) {
+            int ret = fscanf(fp, "%f", ary + Size * i + j);
+            if (ret != 1) {
+                GAUSS_TRACE("ERROR: InitMat fscanf failed at i=%d j=%d", i, j);
+                exit(1);
+            }
+        }
+    }
+
+    GAUSS_TRACE("InitMat done rows=%d cols=%d", nrow, ncol);
 }
 
 /*------------------------------------------------------
@@ -798,12 +813,18 @@ void PrintMat(float *ary, int nrow, int ncol)
  */
 void InitAry(float *ary, int ary_size)
 {
-	int i;
-	
-	for (i=0; i<ary_size; i++) {
-		fscanf(fp, "%f",  &ary[i]);
-	}
-}  
+    int i;
+
+    for (i = 0; i < ary_size; i++) {
+        int ret = fscanf(fp, "%f", &ary[i]);
+        if (ret != 1) {
+            GAUSS_TRACE("ERROR: InitAry fscanf failed at i=%d", i);
+            exit(1);
+        }
+    }
+
+    GAUSS_TRACE("InitAry done size=%d", ary_size);
+}
 
 /*------------------------------------------------------
  ** PrintAry() -- Print the contents of the array (vector)

@@ -44,11 +44,21 @@ result.txt
 /rodinia_hip/hip_backup
 /rodinia_hip/LICENSE
 /rodinia_hip/common
+
 rodinia_hip/data/*
 !rodinia_hip/data/bfs/
 !rodinia_hip/data/dwt2d/
 !rodinia_hip/data/gaussian/
 !rodinia_hip/data/hotspot/
+
+rodinia_hip/hip_mod/*
+!rodinia_hip/hip_mod/bfs/
+!rodinia_hip/hip_mod/dwt2d/
+!rodinia_hip/hip_mod/gaussian/
+!rodinia_hip/hip_mod/hotspot/
+!rodinia_hip/hip_mod/particlefilter/
+!rodinia_hip/hip_mod/gaussian/
+!rodinia_hip/hip_mod/nw/
 
 /rodinia_hip/hip_mod/bin
 /rodinia_hip/hip_mod/*/bin

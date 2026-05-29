@@ -155,115 +155,6 @@ static int rodinia_mt_visible_cpus(void) {
     return 1;
 }
 
-static void rodinia_mt_cap_threads(void) {
-    int visible = rodinia_mt_visible_cpus();
-    // int max_threads = visible - 2;
-    // if (max_threads < 1) max_threads = 1;
-
-    // if (rodinia_mt_threads > max_threads) {
-    //     printf("[rodinia_mt][pf] clamp cpu-workers from %d to %d (visible_cpus=%d, reserve=2)\n",
-    //            rodinia_mt_threads, max_threads, visible);
-    //     fflush(stdout);
-    //     rodinia_mt_threads = max_threads;
-    // }
-}
-
-static void *rodinia_mt_worker(void *p) {
-    rodinia_mt_arg_t *a = (rodinia_mt_arg_t *)p;
-    unsigned int s = a->seed ^ (unsigned int)(a->tid + 1) * 0x9e3779b9u;
-
-    while (!rodinia_mt_stop) {
-        int nitems = rodinia_mt_items;
-
-        if (nitems <= 0 || rodinia_mt_threads <= 0 || rodinia_mt_work_percent <= 0) {
-            volatile unsigned int acc = 0;
-            for (int i = 0; i < 1024 && !rodinia_mt_stop; i++)
-                acc += rodinia_mt_xorshift32(&s);
-            (void)acc;
-            a->loops++;
-            continue;
-        }
-
-        int begin = (nitems * a->tid) / rodinia_mt_threads;
-        int end   = (nitems * (a->tid + 1)) / rodinia_mt_threads;
-        int own_count = end - begin;
-
-        if (own_count <= 0) {
-            a->loops++;
-            continue;
-        }
-
-        int sample_count = (own_count * rodinia_mt_work_percent) / 100;
-        if (sample_count < 64)
-            sample_count = 64;
-
-        int window_start = begin - own_count;
-        int window_end   = end + own_count;
-
-        if (window_start < 0)
-            window_start = 0;
-        if (window_end > nitems)
-            window_end = nitems;
-
-        int window_count = window_end - window_start;
-        if (window_count <= 0)
-            window_count = own_count;
-
-        volatile unsigned int acc = 0;
-
-        /*
-         * Phase A-like behavior:
-         * randomly read the local partition and write CPU-private memory.
-         */
-        for (int r = 0; r < sample_count && !rodinia_mt_stop; r++) {
-            int idx = begin + (int)(rodinia_mt_xorshift32(&s) %
-                                    (unsigned int)own_count);
-
-            double v = 0.0;
-
-            if (rodinia_mt_weights)
-                v += rodinia_mt_weights[idx];
-            if (rodinia_mt_arrayX)
-                v += rodinia_mt_arrayX[idx];
-            if (rodinia_mt_arrayY)
-                v += rodinia_mt_arrayY[idx];
-
-            acc += (unsigned int)((long long)(v * 1000.0) ^ idx);
-
-            if (a->private_buf != NULL && a->private_words > 0) {
-                size_t pidx = (size_t)(rodinia_mt_xorshift32(&s) %
-                                       (unsigned int)a->private_words);
-                a->private_buf[pidx] = acc + (unsigned int)a->tid + (unsigned int)r;
-            }
-        }
-
-        /*
-         * Phase B-like behavior:
-         * randomly read a neighboring window, similar to BFS local-neighborhood access.
-         */
-        for (int r = 0; r < sample_count && !rodinia_mt_stop; r++) {
-            int idx = window_start + (int)(rodinia_mt_xorshift32(&s) %
-                                           (unsigned int)window_count);
-
-            double v = 0.0;
-
-            if (rodinia_mt_weights)
-                v += rodinia_mt_weights[idx];
-            if (rodinia_mt_CDF)
-                v += rodinia_mt_CDF[idx];
-            if (rodinia_mt_likelihood)
-                v += rodinia_mt_likelihood[idx];
-
-            acc += (unsigned int)((long long)(v * 1000.0) ^ idx);
-        }
-
-        (void)acc;
-        a->loops++;
-    }
-
-    return NULL;
-}
-
 static int rodinia_mt_cpu_loops_per_thread = 100;
 
 static void *rodinia_mt_worker_once(void *p) {
@@ -532,26 +423,6 @@ static void *checked_hip_malloc_managed(size_t size)
         exit(1);
     }
     return ptr;
-}
-
-void cuda_print_double_array(double *array_GPU, size_t size) {
-    //allocate temporary array for printing
-    double* mem = (double*) malloc(sizeof (double) *size);
-
-    //transfer data from device
-    hipMemcpy(mem, array_GPU, sizeof (double) *size, hipMemcpyDeviceToHost);
-
-
-    printf("PRINTING ARRAY VALUES\n");
-    //print values in memory
-    for (size_t i = 0; i < size; ++i) {
-        printf("[%zu]:%0.6f\n", i, mem[i]);
-    }
-    printf("FINISHED PRINTING ARRAY VALUES\n");
-
-    //clean up memory
-    free(mem);
-    mem = NULL;
 }
 
 /********************************
@@ -912,7 +783,6 @@ __global__ void likelihood_kernel(double * arrayX, double * arrayY, double * xj,
         likelihood[i] = likelihood[i] / countOnes;
         
         weights[i] = weights[i] * exp(likelihood[i]); //Donnie Newell - added the missing exponential function call
-        
     }
 
     buffer[threadIdx.x] = 0.0;
