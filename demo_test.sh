@@ -28,7 +28,8 @@ usage()
 {
     cat <<EOF
 Usage:
-  $(basename "$0") [quick|all] [options]
+  $(basename "$0") [quick|all] [--run-tag TAG] [--debug-flags CSV]
+                 [--debug-start TICK] [--docker-help]
 
 Modes:
   quick               Run square once with profile cores.args1.

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Build the demo gem5 binary and GPU workloads from the repository root.
+# Build the demo gem5 binary and workloads from the repository root.
 
 set -euo pipefail
 
@@ -16,8 +16,8 @@ readonly HETEROSYNC_BUILD_SCRIPT="$GPU_ROOT/heterosync_modified_src/build_hetero
 readonly DOCKER_HELP_SCRIPT="$GEM5_ROOT/download_docker.sh"
 
 RUN_GEM5=1
-RUN_GPU=1
-GPU_IN_CONTAINER=0
+RUN_WORKLOADS=1
+WORKLOADS_IN_CONTAINER=0
 DOCKER_IMAGE_OVERRIDE=""
 JOBS_OVERRIDE=""
 
@@ -27,7 +27,10 @@ usage()
 {
     cat <<EOF
 Usage:
-  $(basename "$0") [options]
+  $(basename "$0") [--gem5-only] [--workload-only]
+                 [--workloads-in-container]
+                 [--image IMAGE] [--jobs N] [--pannotia BENCH]...
+                 [--docker-help]
 
 Build order:
   1. test_scripts/build_gem5_vega_x86.sh
@@ -36,12 +39,14 @@ Build order:
 
 Options:
   --gem5-only           Build only gem5.
-  --gpu-only            Build only GPU workloads.
-  --skip-gem5           Skip the gem5 build.
-  --skip-gpu            Skip all GPU workload builds.
-  --gpu-in-container    Build GPU workloads in the current environment.
+  --workload-only       Build only the demo workloads.
+  --gpu-only            Alias for --workload-only.
+  --workloads-in-container
+                        Build workloads in the current environment.
+  --gpu-in-container    Alias for --workloads-in-container.
+  --in-container        Alias for --workloads-in-container.
                         The gem5 build helper still manages its own container.
-  --image IMAGE         Use IMAGE for the gem5 and GPU docker builds.
+  --image IMAGE         Use IMAGE for the gem5 and workload docker builds.
   --jobs N              Set JOBS=N for the gem5 scons build.
   --pannotia BENCH      Build one Pannotia benchmark. May be repeated.
                         Defaults to all benchmarks known by build_pannotia.sh.
@@ -51,7 +56,7 @@ Options:
 Examples:
   $(basename "$0")
   $(basename "$0") --jobs 16
-  $(basename "$0") --gpu-only --gpu-in-container
+  $(basename "$0") --workload-only --workloads-in-container
   $(basename "$0") --pannotia bc --pannotia mis_hip
 EOF
 }
@@ -100,7 +105,7 @@ build_libm5()
         scons_cmd+=(-j "$JOBS_OVERRIDE")
     fi
 
-    if (( GPU_IN_CONTAINER )); then
+    if (( WORKLOADS_IN_CONTAINER )); then
         (
             cd -- "$M5_UTIL_DIR"
             "${scons_cmd[@]}"
@@ -118,19 +123,19 @@ build_libm5()
 while (($#)); do
     case "$1" in
         --gem5-only)
-            RUN_GPU=0
+            RUN_WORKLOADS=0
             ;;
-        --gpu-only)
+        --workload-only|--gpu-only)
             RUN_GEM5=0
             ;;
         --skip-gem5)
             RUN_GEM5=0
             ;;
-        --skip-gpu)
-            RUN_GPU=0
+        --skip-workloads|--skip-gpu)
+            RUN_WORKLOADS=0
             ;;
-        --gpu-in-container|--in-container)
-            GPU_IN_CONTAINER=1
+        --workloads-in-container|--gpu-in-container|--in-container)
+            WORKLOADS_IN_CONTAINER=1
             ;;
         --image)
             shift
@@ -162,7 +167,7 @@ while (($#)); do
     shift
 done
 
-if (( ! RUN_GEM5 && ! RUN_GPU )); then
+if (( ! RUN_GEM5 && ! RUN_WORKLOADS )); then
     die "nothing to build"
 fi
 
@@ -179,9 +184,9 @@ if (( RUN_GEM5 )) && ! command -v docker >/dev/null 2>&1; then
     exit 1
 fi
 
-if (( RUN_GPU && ! GPU_IN_CONTAINER )) && ! command -v docker >/dev/null 2>&1; then
-    echo "error: docker not found in PATH for GPU workload builds" >&2
-    echo "hint: run 'bash $DOCKER_HELP_SCRIPT' or use --gpu-in-container" >&2
+if (( RUN_WORKLOADS && ! WORKLOADS_IN_CONTAINER )) && ! command -v docker >/dev/null 2>&1; then
+    echo "error: docker not found in PATH for workload builds" >&2
+    echo "hint: run 'bash $DOCKER_HELP_SCRIPT' or use --workloads-in-container" >&2
     exit 1
 fi
 
@@ -198,24 +203,24 @@ if (( RUN_GEM5 )); then
         "${gem5_env[@]}" bash "$GEM5_BUILD_SCRIPT"
 fi
 
-if (( RUN_GPU )); then
+if (( RUN_WORKLOADS )); then
     run_step "Building util/m5 libm5" build_libm5
 
     gpu_args=()
-    if (( GPU_IN_CONTAINER )); then
+    if (( WORKLOADS_IN_CONTAINER )); then
         gpu_args+=(--in-container)
     fi
     if [[ -n "$DOCKER_IMAGE_OVERRIDE" ]]; then
         gpu_args+=(--image "$DOCKER_IMAGE_OVERRIDE")
     fi
 
-    run_step "Building square GPU workload" \
+    run_step "Building square workload" \
         bash "$SQUARE_BUILD_SCRIPT" "${gpu_args[@]}"
-    run_step "Building HACC GPU workload" \
+    run_step "Building HACC workload" \
         bash "$HACC_BUILD_SCRIPT" "${gpu_args[@]}"
-    run_step "Building Pannotia GPU workloads" \
+    run_step "Building Pannotia workloads" \
         bash "$PANNOTIA_BUILD_SCRIPT" "${gpu_args[@]}" "${PANNOTIA_BENCHMARKS[@]}"
-    run_step "Building HeteroSync GPU workload" \
+    run_step "Building HeteroSync workload" \
         bash "$HETEROSYNC_BUILD_SCRIPT" "${gpu_args[@]}"
 fi
 
