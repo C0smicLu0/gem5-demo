@@ -54,7 +54,9 @@ main.o:		main.h \
 			-c \
 			-o main.o \
 			-O3 \
-			$(HIP_PLATFORM_FLAGS)
+			$(HIP_PLATFORM_FLAGS) \
+			$(GEM5_INCLUDE) \
+			$(GEM5_DEFS)
 
 ./kernel/kernel_gpu_cuda_wrapper.o:	./kernel/kernel_gpu_cuda_wrapper.h \
 									./kernel/kernel_gpu_cuda_wrapper.cu
@@ -63,6 +65,7 @@ main.o:		main.h \
 									-o ./kernel/kernel_gpu_cuda_wrapper.o \
 									-O3 \
 									$(HIP_PLATFORM_FLAGS) \
+									$(GEM5_DEFS) \
 									$(CUDA_FLAG)
 
 ./util/num/num.o:	./util/num/num.h \

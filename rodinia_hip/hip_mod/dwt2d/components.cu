@@ -32,9 +32,27 @@
 #include <errno.h>
 #include <assert.h>
 #include <string.h>
+#include <sys/time.h>
 
 #include "components.h"
 #include "common.h"
+
+#ifndef DWT2D_TRACE
+#define DWT2D_TRACE 1
+#endif
+
+#if DWT2D_TRACE
+#define DWT2D_LOG(fmt, ...) do { \
+    struct timeval _dwt2d_tv; \
+    gettimeofday(&_dwt2d_tv, NULL); \
+    printf("[DWT2D][%ld.%06ld][%s:%d] " fmt "\n", \
+           (long)_dwt2d_tv.tv_sec, (long)_dwt2d_tv.tv_usec, \
+           __func__, __LINE__, ##__VA_ARGS__); \
+    fflush(stdout); \
+} while (0)
+#else
+#define DWT2D_LOG(fmt, ...) do { } while (0)
+#endif
 
 #define THREADS 256
 
@@ -137,24 +155,34 @@ void rgbToComponents(T *d_r, T *d_g, T *d_b, unsigned char * src, int width, int
     unsigned char * d_src;
     int pixels      = width*height;
     int alignedSize =  DIVANDRND(width*height, THREADS) * THREADS * 3; //aligned to thread block size -- THREADS
+    DWT2D_LOG("rgbToComponents enter: width=%d height=%d pixels=%d alignedSize=%d src=%p d_r=%p d_g=%p d_b=%p",
+              width, height, pixels, alignedSize, (void *)src,
+              (void *)d_r, (void *)d_g, (void *)d_b);
 
 	/* Alloc d_src buffer */
 	// 原来：d_src 在 device，src 在 host，需要 hipMemcpy(H2D)
 	// 现在：d_src 用 managed 分配，memcpy 是 CPU 侧初始化拷贝
 	d_src = (unsigned char *)checked_hip_malloc_managed(alignedSize);
+    DWT2D_LOG("rgbToComponents alloc d_src end: ptr=%p", (void *)d_src);
 	memset(d_src, 0, alignedSize);
+    DWT2D_LOG("rgbToComponents memset d_src end");
 	memcpy(d_src, src, pixels*3);
+    DWT2D_LOG("rgbToComponents memcpy source end");
 
     /* Kernel */
     dim3 threads(THREADS);
     dim3 grid(alignedSize/(THREADS*3));
     assert(alignedSize%(THREADS*3) == 0);
+    DWT2D_LOG("rgbToComponents kernel launch: grid=%u threads=%u",
+              grid.x, threads.x);
     c_CopySrcToComponents<<<grid, threads>>>(d_r, d_g, d_b, d_src, pixels);
     cudaCheckAsyncError("CopySrcToComponents kernel")
+    DWT2D_LOG("rgbToComponents kernel launch returned");
 
 	/* Free Memory */
 	hipFree(d_src);
 	cudaCheckAsyncError("Free memory")
+    DWT2D_LOG("rgbToComponents exit");
 }
 template void rgbToComponents<float>(float *d_r, float *d_g, float *d_b, unsigned char * src, int width, int height);
 template void rgbToComponents<int>(int *d_r, int *d_g, int *d_b, unsigned char * src, int width, int height);
@@ -167,24 +195,33 @@ void bwToComponent(T *d_c, unsigned char * src, int width, int height)
     unsigned char * d_src;
     int pixels      = width*height;
     int alignedSize =  DIVANDRND(pixels, THREADS) * THREADS; //aligned to thread block size -- THREADS
+    DWT2D_LOG("bwToComponent enter: width=%d height=%d pixels=%d alignedSize=%d src=%p d_c=%p",
+              width, height, pixels, alignedSize, (void *)src, (void *)d_c);
 
 	/* Alloc d_src buffer */
 	// 原来：d_src 在 device，src 在 host，需要 hipMemcpy(H2D)
 	// 现在：d_src 用 managed 分配，memcpy 是 CPU 侧初始化拷贝
 	d_src = (unsigned char *)checked_hip_malloc_managed(alignedSize);
+    DWT2D_LOG("bwToComponent alloc d_src end: ptr=%p", (void *)d_src);
 	memset(d_src, 0, alignedSize);
+    DWT2D_LOG("bwToComponent memset d_src end");
 	memcpy(d_src, src, pixels);
+    DWT2D_LOG("bwToComponent memcpy source end");
 
     /* Kernel */
     dim3 threads(THREADS);
     dim3 grid(alignedSize/(THREADS));
     assert(alignedSize%(THREADS) == 0);
+    DWT2D_LOG("bwToComponent kernel launch: grid=%u threads=%u",
+              grid.x, threads.x);
     c_CopySrcToComponent<<<grid, threads>>>(d_c, d_src, pixels);
     cudaCheckAsyncError("CopySrcToComponent kernel")
+    DWT2D_LOG("bwToComponent kernel launch returned");
 
     /* Free Memory */
     hipFree(d_src);
     cudaCheckAsyncError("Free memory")
+    DWT2D_LOG("bwToComponent exit");
 }
 
 template void bwToComponent<float>(float *d_c, unsigned char *src, int width, int height);

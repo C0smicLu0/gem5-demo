@@ -143,7 +143,10 @@ else:
         raise SystemExit("workload_args has --options without a value")
     args[opt + 1] = " ".join([args[opt + 1], *extra])
 
-print(shlex.join(args))
+if hasattr(shlex, "join"):
+    print(shlex.join(args))
+else:
+    print(" ".join(shlex.quote(arg) for arg in args))
 PY
 }
 

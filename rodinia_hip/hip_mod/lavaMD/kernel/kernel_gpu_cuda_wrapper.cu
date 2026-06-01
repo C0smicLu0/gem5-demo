@@ -35,7 +35,7 @@ static void lavamd_gpu_keepalive(int num_cus)
         return;
 
     int warmup_threads = NUMBER_THREADS;
-    int warmup_blocks = num_cus * 8;
+    int warmup_blocks = num_cus;
     int warmup_n = warmup_blocks * warmup_threads;
 
     int *warmup_buf = NULL;
@@ -52,11 +52,11 @@ static void lavamd_gpu_keepalive(int num_cus)
     for (int i = 0; i < warmup_n; i++)
         warmup_buf[i] = i;
 
-    printf("LAVAMD_MT: GPU keepalive blocks=%d threads=%d repeat=%d\n",
-           warmup_blocks, warmup_threads, 128);
+    printf("LAVAMD_MT: GPU dummy blocks=%d threads=%d repeat=%d\n",
+           warmup_blocks, warmup_threads, 64);
 
     lavamd_gpu_keepalive_kernel<<<warmup_blocks, warmup_threads>>>(
-        warmup_buf, warmup_n, 128);
+        warmup_buf, warmup_n, 64);
 
     err = hipDeviceSynchronize();
     if (err != hipSuccess) {
@@ -136,11 +136,8 @@ kernel_gpu_cuda_wrapper(int num_cus,
 	//	KERNEL
 	//======================================================================================================================================================150
 
-	// launch kernel - all boxes
-
-    lavamd_gpu_keepalive(num_cus);
-
-	kernel_gpu_cuda<<<blocks, threads>>>(	par_cpu,
+    // launch kernel - all boxes
+    kernel_gpu_cuda<<<blocks, threads>>>(	par_cpu,
 											dim_cpu,
 											d_box_gpu,
 											d_rv_gpu,
@@ -156,6 +153,8 @@ kernel_gpu_cuda_wrapper(int num_cus,
                 hipGetErrorString(err));
         exit(-1);
     }
+
+    lavamd_gpu_keepalive(num_cus);
 
 
 	time4 = get_time();

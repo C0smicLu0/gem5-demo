@@ -7,6 +7,45 @@
 #include <stddef.h>
 #include <pthread.h>
 #include <sched.h>
+#include <stdatomic.h>
+#if defined(__has_include)
+#if __has_include(<gem5/m5ops.h>)
+#include <gem5/m5ops.h>
+#endif
+#if __has_include(<gem5/m5_mmap.h>)
+#include <gem5/m5_mmap.h>
+#endif
+#if !defined(m5_work_begin) && __has_include("../../../include/gem5/m5ops.h")
+#include "../../../include/gem5/m5ops.h"
+#endif
+#if !defined(map_m5_mem) && __has_include("../../../include/gem5/m5_mmap.h")
+#include "../../../include/gem5/m5_mmap.h"
+#endif
+#endif
+
+#ifndef m5_work_begin
+#define m5_work_begin(a, b) ((void)0)
+#endif
+
+#ifndef m5_work_end
+#define m5_work_end(a, b) ((void)0)
+#endif
+
+#ifndef m5_work_begin_addr
+#define m5_work_begin_addr(a, b, c) ((void)0)
+#endif
+
+#ifndef m5_work_end_addr
+#define m5_work_end_addr(a, b, c) ((void)0)
+#endif
+
+#ifndef map_m5_mem
+static inline void map_m5_mem(void) {}
+#endif
+
+#ifndef unmap_m5_mem
+static inline void unmap_m5_mem(void) {}
+#endif
 
 #define LAVAMD_DBG(...) do {                          \
     char _buf[512];                                   \
@@ -18,20 +57,16 @@
 typedef struct {
     int tid;
     int active_threads;
-    int iters;
-
-    volatile unsigned char *shared_read;
-    size_t shared_bytes;
-
-    unsigned int *private_write;
-    size_t private_elems;
+    volatile unsigned char *shared_base;
+    size_t shared_elems;
+    size_t elem_size;
 
     volatile unsigned int sink;
 } rodinia_mt_arg_t;
 
 static int rodinia_mt_threads = 1;
-static volatile int rodinia_mt_ready_count = 0;
-static volatile int rodinia_mt_start_flag = 0;
+static atomic_int rodinia_mt_start_flag = 0;
+static const size_t RODINIA_MT_CPU_READ_ELEMS_LIMIT = 128;
 
 static void rodinia_mt_set_threads(int n)
 {
@@ -39,63 +74,56 @@ static void rodinia_mt_set_threads(int n)
         rodinia_mt_threads = n;
 }
 
-static inline unsigned int rodinia_xorshift32(unsigned int *state)
-{
-    unsigned int x = *state;
-    x ^= x << 13;
-    x ^= x >> 17;
-    x ^= x << 5;
-    *state = x ? x : 1;
-    return *state;
-}
-
 static void *rodinia_mt_worker(void *vp)
 {
     rodinia_mt_arg_t *a = (rodinia_mt_arg_t *)vp;
 
     volatile unsigned int acc = 0;
+    volatile unsigned char *shared = a->shared_base;
+    size_t shared_elems = a->shared_elems;
+    size_t elem_size = a->elem_size;
 
-    volatile unsigned char *shared = a->shared_read;
-    size_t shared_bytes = a->shared_bytes;
-
-    unsigned int *priv = a->private_write;
-    size_t private_elems = a->private_elems;
-
-    LAVAMD_DBG("CPU worker start: tid=%d active_threads=%d iters=%d shared_bytes=%lu private_elems=%lu",
+    LAVAMD_DBG("CPU worker start: tid=%d active_threads=%d shared_elems=%lu elem_size=%lu",
                a->tid,
                a->active_threads,
-               a->iters,
-               (unsigned long)shared_bytes,
-               (unsigned long)private_elems);
+               (unsigned long)shared_elems,
+               (unsigned long)elem_size);
 
-    if (shared == NULL || shared_bytes == 0 || priv == NULL || private_elems == 0) {
+    if (shared == NULL || shared_elems == 0 || elem_size == 0) {
         LAVAMD_DBG("CPU worker early return: tid=%d", a->tid);
         a->sink = 0;
         return NULL;
     }
 
-    unsigned int state =
-        0x9e3779b9u ^ (unsigned int)(a->tid + 1) * 0x85ebca6bu;
+    while (!atomic_load_explicit(&rodinia_mt_start_flag, memory_order_acquire)) {
+        sched_yield();
+    }
 
-    for (int n = 0; n < a->iters; n++) {
-        /*
-         * 读共享：shared input，只读不写。
-         */
-        size_t r =
-            ((size_t)rodinia_xorshift32(&state) << 32) ^
-            (size_t)rodinia_xorshift32(&state);
+    size_t elem_begin =
+        (shared_elems * (size_t)a->tid) / (size_t)a->active_threads;
+    size_t elem_end =
+        (shared_elems * (size_t)(a->tid + 1)) / (size_t)a->active_threads;
+    size_t elem_count = elem_end > elem_begin ? (elem_end - elem_begin) : 0;
+    if (elem_count == 0) {
+        elem_begin = 0;
+        elem_end = shared_elems;
+        elem_count = shared_elems;
+    }
 
-        size_t read_idx = r % shared_bytes;
-        unsigned int v = (unsigned int)shared[read_idx];
+    size_t scan_elems =
+        elem_count < RODINIA_MT_CPU_READ_ELEMS_LIMIT ?
+        elem_count : RODINIA_MT_CPU_READ_ELEMS_LIMIT;
+    for (size_t n = 0; n < scan_elems; n++) {
+        /* Shared input read: linearly walk a capped element range. */
+        size_t elem_idx = elem_begin + n;
+        size_t byte_idx = elem_idx * elem_size;
+        unsigned int v = 0;
+        v += (unsigned int)shared[byte_idx];
+        v += (unsigned int)shared[byte_idx + (elem_size / 4)];
+        v += (unsigned int)shared[byte_idx + (elem_size / 2)];
+        v += (unsigned int)shared[byte_idx + ((elem_size * 3) / 4)];
 
-        /*
-         * 写非共享：每个线程自己的 private_write。
-         * 不写 rv_cpu/qv_cpu/fv_cpu，不写共享数组。
-         */
-        size_t write_idx = (size_t)n % private_elems;
-        priv[write_idx] = v + (unsigned int)n + (unsigned int)a->tid;
-
-        acc += priv[write_idx];
+        acc += v + (unsigned int)n + (unsigned int)a->tid;
         acc = acc * 1664525u + 1013904223u;
     }
 
@@ -105,20 +133,21 @@ static void *rodinia_mt_worker(void *vp)
     return NULL;
 }
 
-static void rodinia_mt_cpu_phase(void *shared, size_t shared_bytes, int iters)
+static void rodinia_mt_cpu_phase(void *shared, size_t shared_bytes, size_t elem_size, int iters)
 {
-    LAVAMD_DBG("CPU phase enter: shared=%p bytes=%lu iters=%d requested_threads=%d",
+    LAVAMD_DBG("CPU phase enter: shared=%p elems=%lu elem_size=%lu requested_threads=%d",
                shared,
-               (unsigned long)shared_bytes,
-               iters,
+               (unsigned long)(elem_size ? (shared_bytes / elem_size) : 0),
+               (unsigned long)elem_size,
                rodinia_mt_threads);
 
-    if (rodinia_mt_threads <= 0 || shared == NULL || shared_bytes == 0) {
+    if (rodinia_mt_threads <= 0 || shared == NULL || shared_bytes == 0 || elem_size == 0) {
         LAVAMD_DBG("CPU phase skip");
         return;
     }
 
     int active_threads = rodinia_mt_threads;
+    atomic_store_explicit(&rodinia_mt_start_flag, 0, memory_order_release);
 
     LAVAMD_DBG("CPU phase active_threads=%d requested_threads=%d",
                active_threads, rodinia_mt_threads);
@@ -128,29 +157,12 @@ static void rodinia_mt_cpu_phase(void *shared, size_t shared_bytes, int iters)
     rodinia_mt_arg_t *args =
         (rodinia_mt_arg_t *)malloc((size_t)active_threads * sizeof(rodinia_mt_arg_t));
 
-    /*
-     * 非共享写缓冲区：每个线程一段 private slice。
-     * 这个 buffer 是普通 host malloc，不是 hipMallocManaged。
-     */
-    size_t private_elems_per_thread = 64 * 1024;
-    unsigned int *private_buf =
-        (unsigned int *)malloc((size_t)active_threads *
-                               private_elems_per_thread *
-                               sizeof(unsigned int));
-
-    if (!ths || !args || !private_buf) {
-        LAVAMD_DBG("CPU phase malloc failed: ths=%p args=%p private_buf=%p",
-                   (void *)ths, (void *)args, (void *)private_buf);
+    if (!ths || !args) {
+        LAVAMD_DBG("CPU phase malloc failed: ths=%p args=%p",
+                   (void *)ths, (void *)args);
         free(ths);
         free(args);
-        free(private_buf);
         exit(-1);
-    }
-
-    for (size_t i = 0;
-         i < (size_t)active_threads * private_elems_per_thread;
-         i++) {
-        private_buf[i] = 0;
     }
 
     LAVAMD_DBG("CPU phase before pthread_create loop");
@@ -158,15 +170,9 @@ static void rodinia_mt_cpu_phase(void *shared, size_t shared_bytes, int iters)
     for (int t = 0; t < active_threads; t++) {
         args[t].tid = t;
         args[t].active_threads = active_threads;
-        args[t].iters = iters;
-
-        args[t].shared_read = (volatile unsigned char *)shared;
-        args[t].shared_bytes = shared_bytes;
-
-        args[t].private_write =
-            private_buf + (size_t)t * private_elems_per_thread;
-        args[t].private_elems = private_elems_per_thread;
-
+        args[t].shared_base = (volatile unsigned char *)shared;
+        args[t].shared_elems = shared_bytes / elem_size;
+        args[t].elem_size = elem_size;
         args[t].sink = 0;
 
         LAVAMD_DBG("CPU phase before pthread_create: t=%d", t);
@@ -179,6 +185,8 @@ static void rodinia_mt_cpu_phase(void *shared, size_t shared_bytes, int iters)
 
         LAVAMD_DBG("CPU phase after pthread_create: t=%d", t);
     }
+
+    atomic_store_explicit(&rodinia_mt_start_flag, 1, memory_order_release);
 
     LAVAMD_DBG("CPU phase before pthread_join loop");
 
@@ -197,7 +205,6 @@ static void rodinia_mt_cpu_phase(void *shared, size_t shared_bytes, int iters)
 
     LAVAMD_DBG("CPU phase all workers joined");
 
-    free(private_buf);
     free(ths);
     free(args);
 
@@ -511,35 +518,23 @@ int main(int argc, char *argv [])
 	LAVAMD_DBG("LAVAMD_MT: cpu_workers=%d gpu_cus=%d boxes1d=%d number_boxes=%ld",
        rodinia_mt_threads, num_cus, dim_cpu.boxes1d_arg, dim_cpu.number_boxes);
 
-	/*
-	* 先读 rv_cpu，再读 qv_cpu。
-	* 目的：让每个 CPU worker 都产生有效指令统计，避免 ipc=NaN。
-	*/
-	LAVAMD_DBG("LAVAMD_MT: CPU phase before GPU kernel");
+	/* ROI: CPU dummy phase first, then real GPU task, then GPU dummy phase. */
+#if defined(GEM5_FUSION)
+	LAVAMD_DBG("before m5_work_begin");
+	m5_work_begin(0, 0);
+	LAVAMD_DBG("after m5_work_begin");
+#elif defined(GEM5_FS)
+	map_m5_mem();
+	LAVAMD_DBG("before m5_work_begin");
+	m5_work_begin_addr(0, 0);
+	LAVAMD_DBG("after m5_work_begin");
+#endif
 
-	size_t cpu_shared_bytes = (size_t)rodinia_mt_threads * 1024 * 1024;
-
-	LAVAMD_DBG("before malloc cpu_shared_buf: bytes=%lu",
-			(unsigned long)cpu_shared_bytes);
-
-	unsigned char *cpu_shared_buf = (unsigned char *)malloc(cpu_shared_bytes);
-	if (cpu_shared_buf == NULL) {
-		LAVAMD_DBG("malloc cpu_shared_buf failed");
-		exit(-1);
-	}
-
-	for (size_t ii = 0; ii < cpu_shared_bytes; ii++) {
-		cpu_shared_buf[ii] = (unsigned char)(ii & 0xff);
-	}
-
-	LAVAMD_DBG("after init cpu_shared_buf: ptr=%p", (void *)cpu_shared_buf);
-
-	LAVAMD_DBG("before CPU phase host shared read/private write");
-	rodinia_mt_cpu_phase(cpu_shared_buf, cpu_shared_bytes, 1024);
+	LAVAMD_DBG("LAVAMD_MT: CPU dummy phase before GPU kernel");
+	LAVAMD_DBG("before CPU phase host shared read/private write: shared=%p bytes=%lu",
+			(void *)rv_cpu, (unsigned long)dim_cpu.space_mem);
+	rodinia_mt_cpu_phase(qv_cpu, (size_t)dim_cpu.space_mem2, sizeof(fp), 1);
 	LAVAMD_DBG("after CPU phase host shared read/private write");
-
-	free(cpu_shared_buf);
-	LAVAMD_DBG("after free cpu_shared_buf");
 
 	time5 = get_time();
 
@@ -549,8 +544,19 @@ int main(int argc, char *argv [])
 							box_cpu,
 							rv_cpu,
 							qv_cpu,
-							fv_cpu);
+								fv_cpu);
 	LAVAMD_DBG("after kernel_gpu_cuda_wrapper");
+
+#if defined(GEM5_FUSION)
+	LAVAMD_DBG("before m5_work_end");
+	m5_work_end(0, 0);
+	LAVAMD_DBG("after m5_work_end");
+#elif defined(GEM5_FS)
+	LAVAMD_DBG("before m5_work_end");
+	m5_work_end_addr(0, 0);
+	LAVAMD_DBG("after m5_work_end");
+	unmap_m5_mem();
+#endif
 
 	time6 = get_time();
 
