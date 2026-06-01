@@ -250,13 +250,13 @@ add_resource_workload_args() {
           ;;
       esac
       ;;
-    rodinia-lavaMD)
-      case " ${selected_profiles} " in
-        *" cores.args2 "*|*" args2 "*)
-          cpu_offset=3
-          ;;
-      esac
-      ;;
+    # rodinia-lavaMD)
+    #   case " ${selected_profiles} " in
+    #     *" cores.args2 "*|*" args2 "*)
+    #       cpu_offset=3
+    #       ;;
+    #   esac
+    #   ;;
   esac
 
   cpu_workers=$(( cpus - cpu_offset ))

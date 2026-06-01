@@ -55,18 +55,19 @@ static inline void unmap_m5_mem(void) {}
 } while (0)
 
 typedef struct {
-    int tid;
-    int active_threads;
-    volatile unsigned char *shared_base;
-    size_t shared_elems;
-    size_t elem_size;
+    const double *input;
+    size_t elements;
+    volatile long long *sinks;
+    atomic_bool start;
+    int actual_workers;
+} rodinia_mt_plan_t;
 
-    volatile unsigned int sink;
-} rodinia_mt_arg_t;
+typedef struct {
+    rodinia_mt_plan_t *plan;
+    int worker_id;
+} rodinia_mt_worker_state_t;
 
 static int rodinia_mt_threads = 1;
-static atomic_int rodinia_mt_start_flag = 0;
-static const size_t RODINIA_MT_CPU_READ_ELEMS_LIMIT = 128;
 
 static void rodinia_mt_set_threads(int n)
 {
@@ -76,139 +77,158 @@ static void rodinia_mt_set_threads(int n)
 
 static void *rodinia_mt_worker(void *vp)
 {
-    rodinia_mt_arg_t *a = (rodinia_mt_arg_t *)vp;
+    rodinia_mt_worker_state_t *state = (rodinia_mt_worker_state_t *)vp;
+    rodinia_mt_plan_t *plan = state->plan;
 
-    volatile unsigned int acc = 0;
-    volatile unsigned char *shared = a->shared_base;
-    size_t shared_elems = a->shared_elems;
-    size_t elem_size = a->elem_size;
-
-    LAVAMD_DBG("CPU worker start: tid=%d active_threads=%d shared_elems=%lu elem_size=%lu",
-               a->tid,
-               a->active_threads,
-               (unsigned long)shared_elems,
-               (unsigned long)elem_size);
-
-    if (shared == NULL || shared_elems == 0 || elem_size == 0) {
-        LAVAMD_DBG("CPU worker early return: tid=%d", a->tid);
-        a->sink = 0;
+    if (plan->input == NULL || plan->elements == 0) {
+        plan->sinks[state->worker_id] = 0;
         return NULL;
     }
 
-    while (!atomic_load_explicit(&rodinia_mt_start_flag, memory_order_acquire)) {
+    while (!atomic_load_explicit(&plan->start, memory_order_acquire)) {
         sched_yield();
     }
 
-    size_t elem_begin =
-        (shared_elems * (size_t)a->tid) / (size_t)a->active_threads;
-    size_t elem_end =
-        (shared_elems * (size_t)(a->tid + 1)) / (size_t)a->active_threads;
-    size_t elem_count = elem_end > elem_begin ? (elem_end - elem_begin) : 0;
-    if (elem_count == 0) {
-        elem_begin = 0;
-        elem_end = shared_elems;
-        elem_count = shared_elems;
+    const int worker_count = plan->actual_workers;
+    const size_t begin =
+        (plan->elements * (size_t)state->worker_id) / (size_t)worker_count;
+    const size_t end =
+        (plan->elements * (size_t)(state->worker_id + 1)) /
+        (size_t)worker_count;
+    long long local = 0;
+
+    for (size_t tid = begin; tid < end; ++tid) {
+        double value = plan->input[tid];
+        double next =
+            (tid + 1 < plan->elements) ? plan->input[tid + 1] : value;
+        local += (long long)(value * 1024.0f) + (long long)(next * 1024.0f);
     }
 
-    size_t scan_elems =
-        elem_count < RODINIA_MT_CPU_READ_ELEMS_LIMIT ?
-        elem_count : RODINIA_MT_CPU_READ_ELEMS_LIMIT;
-    for (size_t n = 0; n < scan_elems; n++) {
-        /* Shared input read: linearly walk a capped element range. */
-        size_t elem_idx = elem_begin + n;
-        size_t byte_idx = elem_idx * elem_size;
-        unsigned int v = 0;
-        v += (unsigned int)shared[byte_idx];
-        v += (unsigned int)shared[byte_idx + (elem_size / 4)];
-        v += (unsigned int)shared[byte_idx + (elem_size / 2)];
-        v += (unsigned int)shared[byte_idx + ((elem_size * 3) / 4)];
-
-        acc += v + (unsigned int)n + (unsigned int)a->tid;
-        acc = acc * 1664525u + 1013904223u;
+    {
+        const size_t range_size = end - begin;
+        const size_t extra_window = range_size < 1024 ? range_size : 1024;
+        const int extra_rounds = state->worker_id % 4;
+        for (int round = 0; round < extra_rounds; ++round) {
+            for (size_t offset = 0; offset < extra_window; ++offset) {
+                size_t tid = begin + offset;
+                double value = plan->input[tid];
+                double next =
+                    (tid + 1 < plan->elements) ? plan->input[tid + 1] : value;
+                local += (long long)(value * 1024.0f) +
+                         (long long)(next * 1024.0f) + round;
+            }
+        }
     }
 
-    a->sink = acc;
-
-    LAVAMD_DBG("CPU worker end: tid=%d sink=%u", a->tid, a->sink);
+    plan->sinks[state->worker_id] = local;
     return NULL;
 }
 
-static void rodinia_mt_cpu_phase(void *shared, size_t shared_bytes, size_t elem_size, int iters)
+static void rodinia_mt_cpu_phase(const double *input, size_t elements)
 {
-    LAVAMD_DBG("CPU phase enter: shared=%p elems=%lu elem_size=%lu requested_threads=%d",
-               shared,
-               (unsigned long)(elem_size ? (shared_bytes / elem_size) : 0),
-               (unsigned long)elem_size,
-               rodinia_mt_threads);
-
-    if (rodinia_mt_threads <= 0 || shared == NULL || shared_bytes == 0 || elem_size == 0) {
-        LAVAMD_DBG("CPU phase skip");
+    if (rodinia_mt_threads <= 0 || input == NULL || elements == 0) {
         return;
     }
 
-    int active_threads = rodinia_mt_threads;
-    atomic_store_explicit(&rodinia_mt_start_flag, 0, memory_order_release);
+    {
+        size_t max_useful_workers =
+            elements < (size_t)INT_MAX ? elements : (size_t)INT_MAX;
+        int planned_workers =
+            (int)((size_t)rodinia_mt_threads < max_useful_workers ?
+                  (size_t)rodinia_mt_threads : max_useful_workers);
+        pthread_t *threads = NULL;
+        rodinia_mt_worker_state_t *states = NULL;
+        long long *sinks = NULL;
+        rodinia_mt_plan_t plan;
+        pthread_attr_t thread_attr;
+        int attr_status;
+        size_t created_workers = 0;
 
-    LAVAMD_DBG("CPU phase active_threads=%d requested_threads=%d",
-               active_threads, rodinia_mt_threads);
+        if (planned_workers <= 0) {
+            return;
+        }
 
-    pthread_t *ths =
-        (pthread_t *)malloc((size_t)active_threads * sizeof(pthread_t));
-    rodinia_mt_arg_t *args =
-        (rodinia_mt_arg_t *)malloc((size_t)active_threads * sizeof(rodinia_mt_arg_t));
-
-    if (!ths || !args) {
-        LAVAMD_DBG("CPU phase malloc failed: ths=%p args=%p",
-                   (void *)ths, (void *)args);
-        free(ths);
-        free(args);
-        exit(-1);
-    }
-
-    LAVAMD_DBG("CPU phase before pthread_create loop");
-
-    for (int t = 0; t < active_threads; t++) {
-        args[t].tid = t;
-        args[t].active_threads = active_threads;
-        args[t].shared_base = (volatile unsigned char *)shared;
-        args[t].shared_elems = shared_bytes / elem_size;
-        args[t].elem_size = elem_size;
-        args[t].sink = 0;
-
-        LAVAMD_DBG("CPU phase before pthread_create: t=%d", t);
-
-        int ret = pthread_create(&ths[t], NULL, rodinia_mt_worker, &args[t]);
-        if (ret != 0) {
-            LAVAMD_DBG("pthread_create failed: t=%d ret=%d", t, ret);
+        threads = (pthread_t *)malloc((size_t)planned_workers * sizeof(pthread_t));
+        states = (rodinia_mt_worker_state_t *)malloc((size_t)planned_workers *
+                                                     sizeof(rodinia_mt_worker_state_t));
+        sinks = (long long *)calloc((size_t)planned_workers, sizeof(long long));
+        if (!threads || !states || !sinks) {
+            free(threads);
+            free(states);
+            free(sinks);
             exit(-1);
         }
 
-        LAVAMD_DBG("CPU phase after pthread_create: t=%d", t);
-    }
+        plan.input = input;
+        plan.elements = elements;
+        plan.sinks = sinks;
+        atomic_init(&plan.start, false);
+        plan.actual_workers = planned_workers;
 
-    atomic_store_explicit(&rodinia_mt_start_flag, 1, memory_order_release);
-
-    LAVAMD_DBG("CPU phase before pthread_join loop");
-
-    for (int t = 0; t < active_threads; t++) {
-        LAVAMD_DBG("CPU phase before pthread_join: t=%d", t);
-
-        int ret = pthread_join(ths[t], NULL);
-        if (ret != 0) {
-            LAVAMD_DBG("pthread_join failed: t=%d ret=%d", t, ret);
+        attr_status = pthread_attr_init(&thread_attr);
+        if (attr_status != 0) {
+            fprintf(stderr, "pthread_attr_init failed: %s\n", strerror(attr_status));
             exit(-1);
         }
 
-        LAVAMD_DBG("CPU phase after pthread_join: t=%d sink=%u",
-                   t, args[t].sink);
+        {
+            size_t stack_bytes = 64 * 1024;
+            if (stack_bytes < PTHREAD_STACK_MIN) {
+                stack_bytes = PTHREAD_STACK_MIN;
+            }
+            attr_status = pthread_attr_setstacksize(&thread_attr, stack_bytes);
+            if (attr_status != 0) {
+                fprintf(stderr, "pthread_attr_setstacksize(%zu) failed: %s\n",
+                        stack_bytes, strerror(attr_status));
+                pthread_attr_destroy(&thread_attr);
+                exit(-1);
+            }
+        }
+
+        printf("Before CPU worker creation\n");
+        fflush(stdout);
+        for (int worker = 0; worker < planned_workers; ++worker) {
+            states[worker].plan = &plan;
+            states[worker].worker_id = worker;
+            if (pthread_create(&threads[worker], &thread_attr,
+                               rodinia_mt_worker, &states[worker]) != 0) {
+                break;
+            }
+            ++created_workers;
+        }
+        pthread_attr_destroy(&thread_attr);
+
+        plan.actual_workers = (int)created_workers;
+        if (created_workers > 0) {
+            atomic_store_explicit(&plan.start, true, memory_order_release);
+        }
+
+        printf("Created %zu/%d CPU workers\n", created_workers, rodinia_mt_threads);
+        fflush(stdout);
+        if (created_workers == 0 && rodinia_mt_threads > 0) {
+            printf("CPU shared load skipped because no worker threads were created\n");
+            fflush(stdout);
+        }
+
+        printf("Before CPU workers join\n");
+        fflush(stdout);
+        for (size_t index = 0; index < created_workers; ++index) {
+            printf("Joining CPU worker thread %zu\n", index);
+            fflush(stdout);
+            if (pthread_join(threads[index], NULL) != 0) {
+                exit(-1);
+            }
+            printf("Joined CPU worker thread %zu\n", index);
+            fflush(stdout);
+        }
+        printf("CPU workers joined\n");
+        fflush(stdout);
+
+        free(threads);
+        free(states);
+        free(sinks);
+        return;
     }
-
-    LAVAMD_DBG("CPU phase all workers joined");
-
-    free(ths);
-    free(args);
-
-    LAVAMD_DBG("CPU phase exit");
 }
 
 
@@ -533,7 +553,7 @@ int main(int argc, char *argv [])
 	LAVAMD_DBG("LAVAMD_MT: CPU dummy phase before GPU kernel");
 	LAVAMD_DBG("before CPU phase host shared read/private write: shared=%p bytes=%lu",
 			(void *)rv_cpu, (unsigned long)dim_cpu.space_mem);
-	rodinia_mt_cpu_phase(qv_cpu, (size_t)dim_cpu.space_mem2, sizeof(fp), 1);
+	rodinia_mt_cpu_phase(qv_cpu, (size_t)dim_cpu.space_elem);
 	LAVAMD_DBG("after CPU phase host shared read/private write");
 
 	time5 = get_time();

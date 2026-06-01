@@ -36,6 +36,23 @@
 #include "dwt.h"
 #include "common.h"
 
+#ifndef DWT2D_TRACE
+#define DWT2D_TRACE 1
+#endif
+
+#if DWT2D_TRACE
+#define DWT2D_LOG(fmt, ...) do { \
+    struct timeval _dwt2d_tv; \
+    gettimeofday(&_dwt2d_tv, NULL); \
+    printf("[DWT2D][%ld.%06ld][%s:%d] " fmt "\n", \
+           (long)_dwt2d_tv.tv_sec, (long)_dwt2d_tv.tv_usec, \
+           __func__, __LINE__, ##__VA_ARGS__); \
+    fflush(stdout); \
+} while (0)
+#else
+#define DWT2D_LOG(fmt, ...) do { } while (0)
+#endif
+
 inline void fdwt(float *in, float *out, int width, int height, int levels)
 {
         dwt_cuda::fdwt97(in, out, width, height, levels);
@@ -75,6 +92,9 @@ inline void rdwt(int *in, int *out, int width, int height, int levels)
 template<typename T>
 int nStage2dDWT(T * in, T * out, T * backup, int pixWidth, int pixHeight, int stages, bool forward)
 {
+    DWT2D_LOG("nStage2dDWT enter: in=%p out=%p backup=%p width=%d height=%d stages=%d forward=%d sizeof(T)=%zu",
+              (void *)in, (void *)out, (void *)backup,
+              pixWidth, pixHeight, stages, forward, sizeof(T));
     printf("\n*** %d stages of 2D forward DWT:\n", stages);
     
     /* create backup of input, because each test iteration overwrites it */
@@ -83,12 +103,18 @@ int nStage2dDWT(T * in, T * out, T * backup, int pixWidth, int pixHeight, int st
     // 原来：device buffers 间拷贝；现在：managed 内存仍可以走 D2D
     hipMemcpy(backup, in, size, hipMemcpyDeviceToDevice);
     cudaCheckError("Memcopy device to device");
+    DWT2D_LOG("nStage2dDWT backup copy end: bytes=%d", size);
     
     /* Measure time of individual levels. */
-    if(forward)
+    if(forward) {
+        DWT2D_LOG("fdwt begin");
         fdwt(in, out, pixWidth, pixHeight, stages);
-    else
+        DWT2D_LOG("fdwt end");
+    } else {
+        DWT2D_LOG("rdwt begin");
         rdwt(in, out, pixWidth, pixHeight, stages);
+        DWT2D_LOG("rdwt end");
+    }
     
     // Measure overall time of DWT. 
 /*    #ifdef GPU_DWT_TESTING_1
@@ -109,7 +135,8 @@ int nStage2dDWT(T * in, T * out, T * backup, int pixWidth, int pixHeight, int st
     #endif  // GPU_DWT_TESTING 
     
     cudaCheckAsyncError("DWT Kernel calls");
-*/    return 0;
+*/    DWT2D_LOG("nStage2dDWT exit");
+    return 0;
 }
 template int nStage2dDWT<float>(float*, float*, float*, int, int, int, bool);
 template int nStage2dDWT<int>(int*, int*, int*, int, int, int, bool);
@@ -188,6 +215,8 @@ template<typename T>
 int writeLinear(T *component_cuda, int pixWidth, int pixHeight,
                 const char * filename, const char * suffix)
 {
+    DWT2D_LOG("writeLinear enter: component=%p width=%d height=%d file=%s suffix=%s",
+              (void *)component_cuda, pixWidth, pixHeight, filename, suffix);
     unsigned char * result;
     T *gpu_output;
     int i;
@@ -198,6 +227,7 @@ int writeLinear(T *component_cuda, int pixWidth, int pixHeight,
 	result = (unsigned char *)malloc(samplesNum);
 	// 统一内存下，CPU 读取 component_cuda 前先同步（替代 D2H memcpy 的隐式同步）
 	hipDeviceSynchronize();
+    DWT2D_LOG("writeLinear synchronize end");
 
 	/* T to char */
 	samplesToChar(result, component_cuda, samplesNum);
@@ -215,9 +245,11 @@ int writeLinear(T *component_cuda, int pixWidth, int pixHeight,
     ssize_t x ;
     x = write(i, result, samplesNum);
     close(i);
+    DWT2D_LOG("writeLinear file write end: bytes=%ld", (long)x);
 
 	/* Clean up */
 	free(result);
+    DWT2D_LOG("writeLinear exit");
 	if(x == 0) return 1;
 	return 0;
 }
@@ -229,6 +261,8 @@ template<typename T>
 int writeNStage2DDWT(T *component_cuda, int pixWidth, int pixHeight, 
                      int stages, const char * filename, const char * suffix) 
 {
+    DWT2D_LOG("writeNStage2DDWT enter: component=%p width=%d height=%d stages=%d file=%s suffix=%s",
+              (void *)component_cuda, pixWidth, pixHeight, stages, filename, suffix);
     struct band {
         int dimX; 
         int dimY;
@@ -286,6 +320,7 @@ int writeNStage2DDWT(T *component_cuda, int pixWidth, int pixHeight,
 	memset(dst, 0, size);
 	result = (unsigned char *)malloc(samplesNum);
 	hipDeviceSynchronize();
+    DWT2D_LOG("writeNStage2DDWT synchronize end");
 	src = component_cuda;
 
     // LL Band
@@ -340,10 +375,12 @@ int writeNStage2DDWT(T *component_cuda, int pixWidth, int pixHeight,
     ssize_t x;
     x = write(i, result, samplesNum);
     close(i);
+    DWT2D_LOG("writeNStage2DDWT file write end: bytes=%ld", (long)x);
 
 	free(dst);
 	free(result);
 	free(bandDims);
+    DWT2D_LOG("writeNStage2DDWT exit");
 	if (x == 0) return 1;
     return 0;
 }

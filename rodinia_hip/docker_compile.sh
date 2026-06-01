@@ -7,6 +7,9 @@ CONTAINER_NAME="${CONTAINER_NAME:-rodinia-hip-build}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 RODINIA_ROOT="${RODINIA_ROOT:-${SCRIPT_DIR}}"
 WORKDIR_IN_DOCKER="${WORKDIR_IN_DOCKER:-/workspace/rodinia_hip}"
+GEM5_ROOT_HOST_DEFAULT="$(cd "${RODINIA_ROOT}/.." >/dev/null 2>&1 && pwd)"
+GEM5_ROOT_HOST="${GEM5_ROOT_HOST:-${GEM5_ROOT_HOST_DEFAULT}}"
+GEM5_ROOT_IN_DOCKER="${GEM5_ROOT_IN_DOCKER:-/workspace/gem5}"
 
 # 默认使用 hip_mod 版本
 RODINIA_TREE="${RODINIA_TREE:-hip_mod}"
@@ -87,10 +90,21 @@ if [[ ! -d "${RODINIA_ROOT}/${TARGET_REL}" ]]; then
     exit 1
 fi
 
+if [[ ! -d "${GEM5_ROOT_HOST}" ]]; then
+    echo "error: GEM5_ROOT_HOST does not exist: ${GEM5_ROOT_HOST}" >&2
+    exit 1
+fi
+
+if [[ ! -f "${GEM5_ROOT_HOST}/include/gem5/m5ops.h" ]]; then
+    echo "warning: GEM5_ROOT_HOST does not look like a gem5 tree: ${GEM5_ROOT_HOST}" >&2
+fi
+
 echo "docker image: ${DOCKER_IMAGE}"
 echo "container name: ${CONTAINER_NAME}"
 echo "rodinia root: ${RODINIA_ROOT}"
 echo "workdir in docker: ${WORKDIR_IN_DOCKER}"
+echo "gem5 root host: ${GEM5_ROOT_HOST}"
+echo "gem5 root in docker: ${GEM5_ROOT_IN_DOCKER}"
 echo "input target: ${ARG}"
 echo "resolved target: ${TARGET_REL}"
 echo "bin output: ${HOST_BIN_OUT}"
@@ -105,6 +119,7 @@ set -u
 cd "{{TARGET_IN_DOCKER}}"
 
 echo "[docker] ROCM_PATH=${ROCM_PATH}"
+echo "[docker] GEM5_ROOT=${GEM5_ROOT:-}"
 echo "[docker] compiling: {{TARGET_IN_DOCKER}}"
 
 total=0
@@ -200,8 +215,10 @@ printf '%s\n' "$INNER_SCRIPT" | docker run --rm -i \
     --name "${CONTAINER_NAME}" \
     -u "$(id -u):$(id -g)" \
     -v "${RODINIA_ROOT}:${WORKDIR_IN_DOCKER}" \
+    -v "${GEM5_ROOT_HOST}:${GEM5_ROOT_IN_DOCKER}:ro" \
     -w "${WORKDIR_IN_DOCKER}" \
     -e ROCM_PATH="${ROCM_PATH:-/opt/rocm}" \
+    -e GEM5_ROOT="${GEM5_ROOT_IN_DOCKER}" \
     "${DOCKER_IMAGE}" \
     bash -s
 

@@ -41,12 +41,43 @@
 #include <sched.h>
 #endif
 
-#if defined(GEM5_FUSION) || defined(GEM5_FS)
+#if defined(__has_include)
+#if __has_include(<gem5/m5ops.h>)
 #include <gem5/m5ops.h>
 #endif
+#if __has_include(<gem5/m5_mmap.h>)
+#include <gem5/m5_mmap.h>
+#endif
+#if !defined(m5_work_begin) && __has_include("../../../include/gem5/m5ops.h")
+#include "../../../include/gem5/m5ops.h"
+#endif
+#if !defined(map_m5_mem) && __has_include("../../../util/m5/src/m5_mmap.h")
+#include "../../../util/m5/src/m5_mmap.h"
+#endif
+#endif
 
-#ifdef GEM5_FS
-#include <util/m5/src/m5_mmap.h>
+#ifndef m5_work_begin
+#define m5_work_begin(a, b) ((void)0)
+#endif
+
+#ifndef m5_work_end
+#define m5_work_end(a, b) ((void)0)
+#endif
+
+#ifndef m5_work_begin_addr
+#define m5_work_begin_addr(a, b) ((void)0)
+#endif
+
+#ifndef m5_work_end_addr
+#define m5_work_end_addr(a, b) ((void)0)
+#endif
+
+#ifndef map_m5_mem
+static inline void map_m5_mem(void) {}
+#endif
+
+#ifndef unmap_m5_mem
+static inline void unmap_m5_mem(void) {}
 #endif
 
 #ifndef DWT2D_TRACE
@@ -96,7 +127,7 @@ int getImg(char * srcFilename, unsigned char *srcImg, int inputSize)
 {
     DWT2D_LOG("getImg begin: src=%s inputSize=%d", srcFilename, inputSize);
     // printf("Loading ipnput: %s\n", srcFilename);
-    char *path = "../../data/dwt2d/";
+    const char *path = "../../data/dwt2d/";
     char *newSrc = NULL;
 
     // Only prepend the default dataset path when the user passes a bare filename.
@@ -746,14 +777,13 @@ int main(int argc, char **argv)
             processDWT<float>(d, forward, writeVisual);
         else // 5/3
             processDWT<int>(d, forward, writeVisual);
-    }
-    DWT2D_LOG("real GPU DWT path completed");
-    else { // reverse
+    } else { // reverse
         if(dwt97 == 1 )
             processDWT<float>(d, forward, writeVisual);
         else // 5/3
             processDWT<int>(d, forward, writeVisual);
     }
+    DWT2D_LOG("real GPU DWT path completed");
 
     /* Finally, run a separate GPU-only dummy phase sized by the requested CU
        count, following the lavaMD post-kernel filler pattern. */

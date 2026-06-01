@@ -22,16 +22,21 @@ INCLUDES := -I.
 
 include ../../common/make.config
 
+GEM5_ROOT ?= /workspace/gem5
+GEM5_LIBDIR ?= $(GEM5_ROOT)/util/m5/build/x86/out
+GEM5_INCLUDE += -I$(GEM5_ROOT)/include
+GEM5_DEFS += -DGEM5_FUSION
 
 # Common flags
 COMMONFLAGS += $(INCLUDES) $(GEM5_INCLUDE)
+COMMONFLAGS += -pthread
 NVCCFLAGS += $(COMMONFLAGS)
 CXXFLAGS += $(COMMONFLAGS)
 CFLAGS += $(COMMONFLAGS) -std=c99 
 NVCCFLAGS += $(GEM5_DEFS)
 CXXFLAGS += $(GEM5_DEFS)
 CFLAGS += $(GEM5_DEFS)
-LDFLAGS +=
+LDFLAGS += -L$(GEM5_LIBDIR) -lm5 -pthread
 #-L$(CUDA_INSTALL_PATH)/lib64 
 
 # Warning flags (from cuda common.mk)
