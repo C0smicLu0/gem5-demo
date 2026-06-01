@@ -43,7 +43,6 @@ result.txt
 /rodinia_hip/hip
 /rodinia_hip/hip_backup
 /rodinia_hip/LICENSE
-/rodinia_hip/common
 
 rodinia_hip/data/*
 !rodinia_hip/data/bfs/
