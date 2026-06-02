@@ -12,7 +12,7 @@
 #include <sched.h>
 #endif
 
-static const int LAVAMD_REAL_BLOCK_CHUNK = 32;
+static const int LAVAMD_REAL_BLOCK_CHUNK = 12;
 
 __global__ void lavamd_gpu_keepalive_kernel(int *buf, int n, int repeat)
 {
@@ -153,7 +153,7 @@ kernel_gpu_cuda_wrapper(int num_cus,
 
         checkCUDAError("Start");
         // Synchronize after each batch so the real work never has more than
-        // 32 blocks in flight at once, while still covering every box.
+        // 12 blocks in flight at once, while still covering every box.
         hipError_t err = hipDeviceSynchronize();
         if (err != hipSuccess) {
             fprintf(stderr, "lavaMD kernel failed: %s\n",
