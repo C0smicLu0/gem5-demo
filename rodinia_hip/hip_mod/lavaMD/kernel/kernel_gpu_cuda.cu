@@ -5,6 +5,7 @@
 
 __global__ void kernel_gpu_cuda(par_str d_par_gpu,
 								dim_str d_dim_gpu,
+								int d_box_offset,
 								box_str* d_box_gpu,
 								FOUR_VECTOR* d_rv_gpu,
 								fp* d_qv_gpu,
@@ -15,7 +16,7 @@ __global__ void kernel_gpu_cuda(par_str d_par_gpu,
 	//	THREAD PARAMETERS
 	//--------------------------------------------------------------------------------------------------------------------------------------------------------------------------180
 
-	int bx = blockIdx.x;																// get current horizontal block index (0-n)
+	int bx = blockIdx.x + d_box_offset;													// get current horizontal block index (0-n)
 	int tx = threadIdx.x;															// get current horizontal thread index (0-n)
 	// int ax = bx*NUMBER_THREADS+tx;
 	// int wbx = bx;
