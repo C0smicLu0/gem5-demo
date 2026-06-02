@@ -55,10 +55,10 @@ static void lavamd_gpu_keepalive(int num_cus)
         warmup_buf[i] = i;
 
     printf("LAVAMD_MT: GPU dummy blocks=%d threads=%d repeat=%d\n",
-           warmup_blocks, warmup_threads, 64);
+           warmup_blocks, warmup_threads, 8);
 
     lavamd_gpu_keepalive_kernel<<<warmup_blocks, warmup_threads>>>(
-        warmup_buf, warmup_n, 64);
+        warmup_buf, warmup_n, 8);
 
     err = hipDeviceSynchronize();
     if (err != hipSuccess) {

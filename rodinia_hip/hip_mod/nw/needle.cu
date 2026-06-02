@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <atomic>
 
 #ifdef __linux__
 #include <sched.h>
@@ -21,103 +22,91 @@
 #include "timing.h"
 #endif
 
+#if defined(GEM5_FUSION) || defined(GEM5_FS)
+#include <gem5/m5ops.h>
+#endif
+#if defined(GEM5_FS)
+#include <util/m5/src/m5_mmap.h>
+#endif
+#if !defined(GEM5_FUSION) && !defined(GEM5_FS)
+static inline void m5_work_begin(uint64_t, uint64_t) {}
+static inline void m5_work_end(uint64_t, uint64_t) {}
+static inline void map_m5_mem(void) {}
+static inline void unmap_m5_mem(void) {}
+static inline void m5_work_begin_addr(uint64_t, uint64_t) {}
+static inline void m5_work_end_addr(uint64_t, uint64_t) {}
+#endif
+
 #define NW_TRACE(fmt, ...) do {                                      \
     printf("[nw] " fmt "\n", ##__VA_ARGS__);                  \
     fflush(stdout);                                                  \
 } while (0)
 
-// ---- CPU multithread phase injected for heterogeneous MT experiments ----
-typedef struct {
-    int tid;
-    int iters;
-    unsigned int seed;
-    volatile unsigned int sink;
+static const int NW_REAL_BLOCK_CHUNK = 12;
 
-    volatile int *shared;
-    size_t shared_elems;
-
-    size_t start;
-    size_t end;
-
-    int *private_buf;
-    int private_size;
-} rodinia_mt_arg_t;
-
-typedef struct {
-    pthread_mutex_t mutex;
-    pthread_cond_t  cond;
-    int             count;
-    int             total;
-    int             generation;
-} simple_barrier_t;
-
-static void simple_barrier_init(simple_barrier_t *b, int n)
+__global__ void nw_gpu_keepalive_kernel(int *buf, int n, int repeat)
 {
-    pthread_mutex_init(&b->mutex, NULL);
-    pthread_cond_init(&b->cond, NULL);
-    b->count = 0;
-    b->total = n;
-    b->generation = 0;
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
+
+    for (int i = tid; i < n; i += stride) {
+        int x = buf[i];
+
+        for (int r = 0; r < repeat; r++) {
+            x = (x ^ (r + tid)) + 0x9e3779b9;
+            x = x * 1664525 + 1013904223;
+        }
+
+        buf[i] = x;
+    }
 }
 
-static void simple_barrier_wait(simple_barrier_t *b)
+static void nw_gpu_keepalive(int num_cus)
 {
-    pthread_mutex_lock(&b->mutex);
+    if (num_cus <= 0)
+        return;
 
-    int gen = b->generation;
-    b->count++;
+    int warmup_threads = BLOCK_SIZE;
+    int warmup_blocks = num_cus;
+    int warmup_n = warmup_blocks * warmup_threads;
+    int *warmup_buf = NULL;
 
-    if (b->count == b->total) {
-        b->count = 0;
-        b->generation++;
-        pthread_cond_broadcast(&b->cond);
-    } else {
-        while (gen == b->generation) {
-            pthread_cond_wait(&b->cond, &b->mutex);
-        }
+    hipError_t err = hipMallocManaged((void **)&warmup_buf,
+                                      sizeof(int) * warmup_n,
+                                      hipMemAttachGlobal);
+    if (err != hipSuccess) {
+        fprintf(stderr, "hipMallocManaged warmup_buf failed: %s\n",
+                hipGetErrorString(err));
+        exit(-1);
     }
 
-    pthread_mutex_unlock(&b->mutex);
+    for (int i = 0; i < warmup_n; i++)
+        warmup_buf[i] = i;
+
+    NW_TRACE("gpu dummy config: blocks=%d threads=%d repeat=%d",
+             warmup_blocks, warmup_threads, 8);
+
+    nw_gpu_keepalive_kernel<<<warmup_blocks, warmup_threads>>>(
+        warmup_buf, warmup_n, 8);
+    HIP_CHECK(hipGetLastError());
+    HIP_CHECK(hipDeviceSynchronize());
+    hipFree(warmup_buf);
 }
 
-static void simple_barrier_destroy(simple_barrier_t *b)
-{
-    pthread_cond_destroy(&b->cond);
-    pthread_mutex_destroy(&b->mutex);
-}
+typedef struct {
+    const int *input;
+    size_t elements;
+    volatile long long *sinks;
+    std::atomic<bool> start;
+    int actual_workers;
+} rodinia_mt_plan_t;
 
-static simple_barrier_t g_cpu_start_barrier;
+typedef struct {
+    rodinia_mt_plan_t *plan;
+    int worker_id;
+} rodinia_mt_worker_state_t;
 
 static int rodinia_mt_threads = 4;
-static int rodinia_mt_work_percent = 8;
-static unsigned int rodinia_mt_seed = 1;
-static int rodinia_mt_inited = 0;
-
-static inline unsigned int rodinia_mt_xorshift32(unsigned int *state) {
-    unsigned int x = *state;
-    x ^= x << 13;
-    x ^= x >> 17;
-    x ^= x << 5;
-    *state = x ? x : 1u;
-    return *state;
-}
-
-static void rodinia_mt_init_cfg(void) {
-    if (rodinia_mt_inited) return;
-
-    const char *s_work = getenv("RODINIA_SHARE_PERCENT");
-    const char *s_seed = getenv("RODINIA_SHARE_SEED");
-
-    if (s_work) rodinia_mt_work_percent = atoi(s_work);
-    if (s_seed) rodinia_mt_seed = (unsigned int)atoi(s_seed);
-
-    if (rodinia_mt_threads <= 0) rodinia_mt_threads = 1;
-    if (rodinia_mt_work_percent < 0) rodinia_mt_work_percent = 0;
-    if (rodinia_mt_work_percent > 100) rodinia_mt_work_percent = 100;
-    if (rodinia_mt_seed == 0) rodinia_mt_seed = 1;
-
-    rodinia_mt_inited = 1;
-}
 
 static void rodinia_mt_set_threads(int n) {
     if (n > 0) {
@@ -125,132 +114,77 @@ static void rodinia_mt_set_threads(int n) {
     }
 }
 
-static void *rodinia_mt_worker(void *p) {
-    rodinia_mt_arg_t *a = (rodinia_mt_arg_t *)p;
-    volatile unsigned int acc = 0;
+static void *rodinia_mt_worker(void *opaque)
+{
+    rodinia_mt_worker_state_t *state = (rodinia_mt_worker_state_t *)opaque;
+    rodinia_mt_plan_t *plan = state->plan;
 
-    simple_barrier_wait(&g_cpu_start_barrier);
-
-    NW_TRACE("cpu worker released: tid=%d iters=%d", a->tid, a->iters);
-
-    size_t own_count = 0;
-    if (a->end > a->start) {
-        own_count = a->end - a->start;
+    while (!plan->start.load(std::memory_order_acquire)) {
+        sched_yield();
     }
 
-    if (a->shared && a->shared_elems > 0 && own_count > 0) {
-        unsigned int state =
-            a->seed ^
-            (unsigned int)(a->tid + 1) * 0x9e3779b9u;
+    size_t begin = (plan->elements * (size_t)state->worker_id) /
+                   (size_t)plan->actual_workers;
+    size_t end = (plan->elements * (size_t)(state->worker_id + 1)) /
+                 (size_t)plan->actual_workers;
+    size_t range_size = end - begin;
+    size_t extra_window = range_size < 1024 ? range_size : 1024;
+    int extra_rounds = state->worker_id % 4;
+    long long local = 0;
 
-        for (int i = 0; i < a->iters; i++) {
-            size_t idx = a->start +
-                         (size_t)(rodinia_mt_xorshift32(&state) %
-                                  (unsigned int)own_count);
+    for (size_t idx = begin; idx < end; idx++) {
+        local += plan->input[idx];
+    }
 
-            int v = a->shared[idx];
-            acc += (unsigned int)v;
-
-            if (a->private_buf && a->private_size > 0) {
-                int pidx = (int)(rodinia_mt_xorshift32(&state) %
-                                 (unsigned int)a->private_size);
-                volatile int *pbuf = (volatile int *)a->private_buf;
-                pbuf[pidx] = v + a->tid + i;
-            }
+    for (int round = 0; round < extra_rounds; round++) {
+        for (size_t offset = 0; offset < extra_window; offset++) {
+            local += plan->input[begin + offset];
         }
     }
 
-    a->sink = acc;
-
-    NW_TRACE("cpu worker finished work: tid=%d sink=%u", a->tid, a->sink);
-
+    plan->sinks[state->worker_id] = local;
     return NULL;
 }
 
-static void rodinia_mt_cpu_phase(int *shared, size_t shared_elems) {
-    rodinia_mt_init_cfg();
-
-    NW_TRACE("cpu cfg: threads=%d work_percent=%d seed=%u",
-             rodinia_mt_threads, rodinia_mt_work_percent, rodinia_mt_seed);
-
-    if (rodinia_mt_work_percent <= 0) {
-        NW_TRACE("cpu phase skipped: work_percent=%d", rodinia_mt_work_percent);
+static void rodinia_mt_cpu_phase(const int *input, size_t elements)
+{
+    int n = rodinia_mt_threads;
+    if (n <= 0 || !input || elements == 0) {
         return;
     }
 
-    int n = rodinia_mt_threads;
-
     pthread_t *cpu_threads =
         (pthread_t *)malloc((size_t)n * sizeof(pthread_t));
+    rodinia_mt_worker_state_t *cpu_states =
+        (rodinia_mt_worker_state_t *)malloc((size_t)n *
+                                            sizeof(rodinia_mt_worker_state_t));
+    volatile long long *cpu_sinks =
+        (volatile long long *)calloc((size_t)n, sizeof(long long));
 
-    rodinia_mt_arg_t *cpu_args =
-        (rodinia_mt_arg_t *)malloc((size_t)n * sizeof(rodinia_mt_arg_t));
-
-    if (!cpu_threads || !cpu_args) {
+    if (!cpu_threads || !cpu_states || !cpu_sinks) {
         fprintf(stderr, "failed to allocate CPU thread metadata\n");
         exit(1);
     }
 
-    int base_iters = 1000 * rodinia_mt_work_percent;
+    rodinia_mt_plan_t cpu_plan;
+    cpu_plan.input = input;
+    cpu_plan.elements = elements;
+    cpu_plan.sinks = cpu_sinks;
+    cpu_plan.actual_workers = n;
+    cpu_plan.start.store(false, std::memory_order_relaxed);
 
-    const char *s_iters = getenv("RODINIA_CPU_ITERS");
-    if (s_iters) {
-        int v = atoi(s_iters);
-        if (v > 0) {
-            base_iters = v;
-        }
-    }
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, 64 * 1024);
 
-    simple_barrier_init(&g_cpu_start_barrier, n + 1);
-
-    int private_stride = 1024;
-    int *cpu_private_buf =
-        (int *)calloc((size_t)n * (size_t)private_stride, sizeof(int));
-
-    if (!cpu_private_buf) {
-        fprintf(stderr, "failed to allocate cpu_private_buf\n");
-        exit(1);
-    }
-
-    size_t chunk = shared_elems / (size_t)n;
-    if (chunk == 0) {
-        chunk = 1;
-    }
-
-    NW_TRACE("cpu phase begin: workers=%d base_iters=%d shared=%p elems=%lu",
-             n, base_iters, (void *)shared, (unsigned long)shared_elems);
-
+    NW_TRACE("Before CPU worker creation");
+    int created = 0;
     for (int t = 0; t < n; t++) {
-        size_t start = (size_t)t * chunk;
-        size_t end = (t == n - 1) ? shared_elems : ((size_t)t + 1) * chunk;
+        cpu_states[t].plan = &cpu_plan;
+        cpu_states[t].worker_id = t;
 
-        if (start > shared_elems) {
-            start = shared_elems;
-        }
-        if (end > shared_elems) {
-            end = shared_elems;
-        }
-
-        cpu_args[t].tid = t;
-        cpu_args[t].iters = base_iters;
-        cpu_args[t].seed = rodinia_mt_seed ^ (unsigned int)(t + 1);
-        cpu_args[t].sink = 0;
-
-        cpu_args[t].shared = (volatile int *)shared;
-        cpu_args[t].shared_elems = shared_elems;
-        cpu_args[t].start = start;
-        cpu_args[t].end = end;
-
-        cpu_args[t].private_buf = cpu_private_buf + t * private_stride;
-        cpu_args[t].private_size = private_stride;
-    }
-
-    for (int t = 0; t < n; t++) {
-        NW_TRACE("Creating pthread tid=%d", t);
-
-        int ret = pthread_create(&cpu_threads[t], NULL,
-                                 rodinia_mt_worker, &cpu_args[t]);
-
+        int ret = pthread_create(&cpu_threads[t], &attr,
+                                 rodinia_mt_worker, &cpu_states[t]);
         if (ret != 0) {
             fprintf(stderr,
                     "pthread_create failed in NW CPU phase at t=%d ret=%d\n",
@@ -258,19 +192,16 @@ static void rodinia_mt_cpu_phase(int *shared, size_t shared_elems) {
             fflush(stderr);
             exit(1);
         }
-
-        NW_TRACE("pthread_create success tid=%d", t);
+        created++;
     }
+    pthread_attr_destroy(&attr);
+    NW_TRACE("Created %d/%d CPU workers", created, n);
 
-    NW_TRACE("Main thread waiting at CPU start barrier");
+    cpu_plan.start.store(true, std::memory_order_release);
 
-    simple_barrier_wait(&g_cpu_start_barrier);
-
-    NW_TRACE("CPU workers released");
-
+    NW_TRACE("Before CPU workers join");
     for (int t = 0; t < n; t++) {
-        NW_TRACE("Joining pthread tid=%d", t);
-
+        NW_TRACE("Joining CPU worker thread %d", t);
         int ret = pthread_join(cpu_threads[t], NULL);
         if (ret != 0) {
             fprintf(stderr,
@@ -279,19 +210,13 @@ static void rodinia_mt_cpu_phase(int *shared, size_t shared_elems) {
             fflush(stderr);
             exit(1);
         }
-
-        NW_TRACE("Joined pthread tid=%d sink=%u", t, cpu_args[t].sink);
+        NW_TRACE("Joined CPU worker thread %d", t);
     }
+    NW_TRACE("CPU workers joined");
 
-    NW_TRACE("CPU workers finished work");
-
-    // simple_barrier_destroy(&g_cpu_start_barrier);
-
-    free(cpu_private_buf);
+    free((void *)cpu_sinks);
     free(cpu_threads);
-    free(cpu_args);
-
-    NW_TRACE("cpu phase end: workers=%d", n);
+    free(cpu_states);
 }
 
 struct timeval tv;
@@ -508,6 +433,15 @@ void runTest( int argc, char** argv)
 	dim3 dimBlock(BLOCK_SIZE, 1);
 	int block_width = ( max_cols - 1 )/BLOCK_SIZE;
 
+    NW_TRACE("before m5_work_begin");
+#if defined(GEM5_FUSION)
+    m5_work_begin(0, 0);
+#elif defined(GEM5_FS)
+    map_m5_mem();
+    m5_work_begin_addr(0, 0);
+#endif
+    NW_TRACE("after m5_work_begin");
+
     NW_TRACE("before cpu phase");
     rodinia_mt_cpu_phase(referrence, (size_t)size);
     NW_TRACE("after cpu phase, before gpu phase");
@@ -524,24 +458,37 @@ void runTest( int argc, char** argv)
 
     //process top-left matrix
     for( int i = 1 ; i <= block_width ; i++){
-        dimGrid.x = i;
-        dimGrid.y = 1;
-        needle_cuda_shared_1<<<dimGrid, dimBlock>>>(referrence_cuda, matrix_cuda,
-                                            max_cols, penalty, i, block_width); 
-        HIP_CHECK(hipGetLastError());
-        HIP_CHECK(hipDeviceSynchronize());
+        for (int block_base = 0; block_base < i; block_base += NW_REAL_BLOCK_CHUNK) {
+            int launch_blocks = (i - block_base) < NW_REAL_BLOCK_CHUNK ?
+                (i - block_base) : NW_REAL_BLOCK_CHUNK;
+            dimGrid.x = launch_blocks;
+            dimGrid.y = 1;
+            needle_cuda_shared_1<<<dimGrid, dimBlock>>>(referrence_cuda, matrix_cuda,
+                                                max_cols, penalty, i, block_width,
+                                                block_base);
+            HIP_CHECK(hipGetLastError());
+            HIP_CHECK(hipDeviceSynchronize());
+        }
     }
 
 	NW_TRACE("gpu bottom-right begin: block_width=%d", block_width);
     //process bottom-right matrix
 	for( int i = block_width - 1  ; i >= 1 ; i--){
-		dimGrid.x = i;
-		dimGrid.y = 1;
-		needle_cuda_shared_2<<<dimGrid, dimBlock>>>(referrence_cuda, matrix_cuda
-		                                      ,max_cols, penalty, i, block_width); 
-        HIP_CHECK(hipGetLastError());
-        HIP_CHECK(hipDeviceSynchronize());
+		for (int block_base = 0; block_base < i; block_base += NW_REAL_BLOCK_CHUNK) {
+			int launch_blocks = (i - block_base) < NW_REAL_BLOCK_CHUNK ?
+				(i - block_base) : NW_REAL_BLOCK_CHUNK;
+			dimGrid.x = launch_blocks;
+			dimGrid.y = 1;
+			needle_cuda_shared_2<<<dimGrid, dimBlock>>>(referrence_cuda, matrix_cuda,
+			                                      max_cols, penalty, i, block_width,
+			                                      block_base); 
+        	HIP_CHECK(hipGetLastError());
+        	HIP_CHECK(hipDeviceSynchronize());
+		}
 	}
+    NW_TRACE("before gpu dummy");
+    nw_gpu_keepalive(num_cus);
+    NW_TRACE("after gpu dummy");
     NW_TRACE("before hipDeviceSynchronize");
 
 #ifdef  TIMING
@@ -554,6 +501,15 @@ void runTest( int argc, char** argv)
 	// 原来：通过 hipMemcpy D2H 取回结果
 	// 现在：managed 内存下只需同步后 memcpy（或直接读 matrix_cuda）
 	memcpy(output_itemsets, matrix_cuda, sizeof(int) * size);
+
+    NW_TRACE("before m5_work_end");
+#if defined(GEM5_FUSION)
+    m5_work_end(0, 0);
+#elif defined(GEM5_FS)
+    m5_work_end_addr(0, 0);
+    unmap_m5_mem();
+#endif
+    NW_TRACE("after m5_work_end");
 	
 //#define TRACEBACK
 #ifdef TRACEBACK

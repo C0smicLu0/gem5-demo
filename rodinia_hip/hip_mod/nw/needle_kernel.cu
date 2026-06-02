@@ -39,9 +39,10 @@ needle_cuda_shared_1(
   int cols,
   int penalty,
   int i,
-  int block_width) 
+  int block_width,
+  int block_offset) 
 {
-  int bx = blockIdx.x;
+  int bx = blockIdx.x + block_offset;
   int tx = threadIdx.x;
 
   int b_index_x = bx;
@@ -121,9 +122,10 @@ needle_cuda_shared_2(  int* referrence,
 			  int cols,
 			  int penalty,
 			  int i,
-			  int block_width) 
+			  int block_width,
+			  int block_offset) 
 {
-  int bx = blockIdx.x;
+  int bx = blockIdx.x + block_offset;
   int tx = threadIdx.x;
 
   int b_index_x = bx + block_width - i  ;
