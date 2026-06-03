@@ -9,13 +9,13 @@ SRC = hotspot.cu
 EXE = hotspot
 
 release: $(SRC)
-	$(CC) $(KERNEL_DIM) $(SRC) -o $(EXE)  -lpthread
+	$(CC) $(KERNEL_DIM) $(SRC) -o $(EXE) $(GEM5_INCLUDE) $(GEM5_DEFS) $(GEM5_LDFLAGS) -lpthread
 
 enum: $(SRC)
 	$(CC) $(KERNEL_DIM) -deviceemu $(SRC) -o $(EXE)
 
 debug: $(SRC)
-	$(CC) $(KERNEL_DIM) -g $(SRC) -o $(EXE) 
+	$(CC) $(KERNEL_DIM) -g $(SRC) -o $(EXE) $(GEM5_INCLUDE) $(GEM5_DEFS) $(GEM5_LDFLAGS) -lpthread
 
 debugenum: $(SRC)
 	$(CC) $(KERNEL_DIM) -g -deviceemu $(SRC) -o $(EXE) 

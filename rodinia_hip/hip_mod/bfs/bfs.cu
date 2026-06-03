@@ -22,6 +22,21 @@
 #include <math.h>
 #include <hip/hip_runtime.h>
 
+#if defined(GEM5_FUSION) || defined(GEM5_FS)
+#include <gem5/m5ops.h>
+#endif
+#if defined(GEM5_FS)
+#include <util/m5/src/m5_mmap.h>
+#endif
+#if !defined(GEM5_FUSION) && !defined(GEM5_FS)
+static inline void m5_work_begin(uint64_t, uint64_t) {}
+static inline void m5_work_end(uint64_t, uint64_t) {}
+static inline void map_m5_mem(void) {}
+static inline void unmap_m5_mem(void) {}
+static inline void m5_work_begin_addr(uint64_t, uint64_t) {}
+static inline void m5_work_end_addr(uint64_t, uint64_t) {}
+#endif
+
 #ifdef TIMING
 #include "timing.h"
 #endif
@@ -266,10 +281,15 @@ void BFSGraph( int argc, char** argv)
 	// allocate device memory for result
 	int* d_cost = h_cost;
 
-	//make a bool to check if the execution is over
-	// 原来：d_over 在 device，CPU 端需要 D2H 拷贝拿到 stop
-	// 现在：d_over managed，kernel 后同步即可直接读
-	bool *d_over = (bool *)checked_hip_malloc_managed(sizeof(bool));
+	// Device-side convergence flag. Keep CPU polling on a local host bool
+	// so we do not add managed-memory accesses every BFS iteration.
+	bool *d_over = NULL;
+	hipError_t over_alloc_err = hipMalloc((void **)&d_over, sizeof(bool));
+	if (over_alloc_err != hipSuccess) {
+		fprintf(stderr, "hipMalloc d_over failed: %s\n",
+		        hipGetErrorString(over_alloc_err));
+		exit(-1);
+	}
 #ifdef  TIMING
     gettimeofday(&tv_mem_alloc_end, NULL);
     tvsub(&tv_mem_alloc_end, &tv_total_start, &tv);
@@ -285,6 +305,18 @@ void BFSGraph( int argc, char** argv)
 	int k=0;
 	printf("Start traversing the tree\n");
 	bool stop;
+
+	printf("[bfs] before m5_work_begin\n");
+	fflush(stdout);
+#if defined(GEM5_FUSION)
+	m5_work_begin(0, 0);
+#elif defined(GEM5_FS)
+	map_m5_mem();
+	m5_work_begin_addr(0, 0);
+#endif
+	printf("[bfs] after m5_work_begin\n");
+	fflush(stdout);
+
 	//Call the Kernel untill all the elements of Frontier are not false
 	do
 	{
@@ -293,7 +325,12 @@ void BFSGraph( int argc, char** argv)
 #ifdef  TIMING
 		gettimeofday(&tv_h2d_start, NULL);
 #endif
-		*d_over = false;
+		hipError_t over_reset_err = hipMemset(d_over, 0, sizeof(bool));
+		if (over_reset_err != hipSuccess) {
+			fprintf(stderr, "hipMemset d_over failed: %s\n",
+			        hipGetErrorString(over_reset_err));
+			exit(-1);
+		}
 #ifdef  TIMING
 		gettimeofday(&tv_h2d_end, NULL);
 		tvsub(&tv_h2d_end, &tv_h2d_start, &tv);
@@ -335,7 +372,12 @@ void BFSGraph( int argc, char** argv)
 		kernel_time += tv.tv_sec * 1000.0 + (float) tv.tv_usec / 1000.0;
 #endif
 
-		stop = *d_over;
+		hipError_t over_copy_err = hipMemcpy(&stop, d_over, sizeof(bool), hipMemcpyDeviceToHost);
+		if (over_copy_err != hipSuccess) {
+			fprintf(stderr, "hipMemcpy d_over failed: %s\n",
+			        hipGetErrorString(over_copy_err));
+			exit(-1);
+		}
 #ifdef  TIMING
 		gettimeofday(&tv_d2h_end, NULL);
 		tvsub(&tv_d2h_end, &tv_kernel_end, &tv);
@@ -346,6 +388,16 @@ void BFSGraph( int argc, char** argv)
 	}
 	while(stop);
 
+	printf("[bfs] before m5_work_end\n");
+	fflush(stdout);
+#if defined(GEM5_FUSION)
+	m5_work_end(0, 0);
+#elif defined(GEM5_FS)
+	m5_work_end_addr(0, 0);
+	unmap_m5_mem();
+#endif
+	printf("[bfs] after m5_work_end\n");
+	fflush(stdout);
 
 	printf("Kernel Executed %d times\n",k);
 
@@ -363,12 +415,22 @@ void BFSGraph( int argc, char** argv)
 	d2h_time += tv.tv_sec * 1000.0 + (float) tv.tv_usec / 1000.0;
 #endif
 
-	//Store the result into a file
-	FILE *fpo = fopen("result.txt","w");
-	for(int i=0;i<no_of_nodes;i++)
-		fprintf(fpo,"%d) cost:%d\n",i,h_cost[i]);
-	fclose(fpo);
-	printf("Result stored in result.txt\n");
+	// Store the result only when explicitly requested. The default path
+	// skips this CPU-heavy walk to keep BFS CPU samples focused on real work.
+	const char *write_result = getenv("BFS_WRITE_RESULT");
+	if (write_result && strcmp(write_result, "0") != 0) {
+		FILE *fpo = fopen("result.txt", "w");
+		if (!fpo) {
+			fprintf(stderr, "Error opening result.txt for write\n");
+			exit(1);
+		}
+		for (int i = 0; i < no_of_nodes; i++)
+			fprintf(fpo, "%d) cost:%d\n", i, h_cost[i]);
+		fclose(fpo);
+		printf("Result stored in result.txt\n");
+	} else {
+		printf("Result output skipped (set BFS_WRITE_RESULT=1 to enable)\n");
+	}
 
 
 	// cleanup memory
