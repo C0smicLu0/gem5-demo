@@ -19,10 +19,11 @@
 #endif                                                                                   
 
 #define STR_SIZE 256
+static const int HOTSPOT_REAL_BLOCK_CHUNK = 4;
 
 #define HOTSPOT_TRACE(fmt, ...)                                      \
     do {                                                             \
-        printf("[hotspot][trace] " fmt "\n", ##__VA_ARGS__);         \
+        printf("[hotspot] " fmt "\n", ##__VA_ARGS__);              \
         fflush(stdout);                                              \
     } while (0)
 
@@ -38,6 +39,65 @@ static void *checked_hip_malloc_managed(size_t size)
         exit(-1);
     }
     return ptr;
+}
+
+
+
+
+__global__ void hotspot_gpu_keepalive_kernel(int *buf, int n, int repeat)
+{
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
+
+    for (int i = tid; i < n; i += stride) {
+        int x = buf[i];
+
+        for (int r = 0; r < repeat; r++) {
+            x = (x ^ (r + tid)) + 0x9e3779b9;
+            x = x * 1664525 + 1013904223;
+        }
+
+        buf[i] = x;
+    }
+}
+
+static void hotspot_gpu_keepalive(int num_cus)
+{
+    if (num_cus <= 0)
+        return;
+
+    int warmup_threads = BLOCK_SIZE * BLOCK_SIZE;
+    int warmup_blocks = num_cus;
+    int warmup_n = warmup_blocks * warmup_threads;
+
+    int *warmup_buf = NULL;
+
+    hipError_t err = hipMallocManaged((void **)&warmup_buf,
+                                      sizeof(int) * warmup_n,
+                                      hipMemAttachGlobal);
+    if (err != hipSuccess) {
+        fprintf(stderr, "hipMallocManaged warmup_buf failed: %s\n",
+                hipGetErrorString(err));
+        exit(-1);
+    }
+
+    for (int i = 0; i < warmup_n; i++)
+        warmup_buf[i] = i;
+
+    printf("HOTSPOT_MT: GPU dummy blocks=%d threads=%d repeat=%d\n",
+           warmup_blocks, warmup_threads, 64);
+
+    hotspot_gpu_keepalive_kernel<<<warmup_blocks, warmup_threads>>>(
+        warmup_buf, warmup_n, 64);
+
+    err = hipDeviceSynchronize();
+    if (err != hipSuccess) {
+        fprintf(stderr, "hotspot GPU keepalive failed: %s\n",
+                hipGetErrorString(err));
+        exit(-1);
+    }
+
+    hipFree(warmup_buf);
 }
 
 /* maximum power density possible (say 300W for a 10mm x 10mm chip)	*/
@@ -69,12 +129,22 @@ typedef struct {
 static int rodinia_mt_threads = 1;
 static int rodinia_mt_work_percent = 8;
 static unsigned int rodinia_mt_seed = 1;
+static int rodinia_mt_inited = 0;
+static int rodinia_mt_threads_set_by_arg = 0;
 static int num_cus = 0;
 
 static pthread_t *rodinia_mt_pool = NULL;
 static rodinia_mt_arg_t *rodinia_mt_args = NULL;
-static volatile int rodinia_mt_stop = 0;
-static int rodinia_mt_started = 0;
+
+typedef struct {
+    pthread_mutex_t mutex;
+    pthread_cond_t  cond;
+    int             count;
+    int             total;
+    int             generation;
+} simple_barrier_t;
+
+static simple_barrier_t rodinia_mt_start_barrier;
 
 static volatile float *rodinia_mt_power = NULL;
 static volatile float *rodinia_mt_temp0 = NULL;
@@ -84,8 +154,40 @@ static int rodinia_mt_items = 0;
 static volatile unsigned int *rodinia_mt_private = NULL;
 static size_t rodinia_mt_private_words_per_thread = 0;
 
-static unsigned int *hotspot_keepalive_buf = NULL;
-static int hotspot_keepalive_n = 0;
+static void simple_barrier_init(simple_barrier_t *b, int n)
+{
+    pthread_mutex_init(&b->mutex, NULL);
+    pthread_cond_init(&b->cond, NULL);
+    b->count = 0;
+    b->total = n;
+    b->generation = 0;
+}
+
+static void simple_barrier_wait(simple_barrier_t *b)
+{
+    pthread_mutex_lock(&b->mutex);
+
+    int gen = b->generation;
+    b->count++;
+
+    if (b->count == b->total) {
+        b->count = 0;
+        b->generation++;
+        pthread_cond_broadcast(&b->cond);
+    } else {
+        while (gen == b->generation) {
+            pthread_cond_wait(&b->cond, &b->mutex);
+        }
+    }
+
+    pthread_mutex_unlock(&b->mutex);
+}
+
+static void simple_barrier_destroy(simple_barrier_t *b)
+{
+    pthread_cond_destroy(&b->cond);
+    pthread_mutex_destroy(&b->mutex);
+}
 
 static inline unsigned int rodinia_mt_xorshift32(unsigned int *state)
 {
@@ -99,121 +201,155 @@ static inline unsigned int rodinia_mt_xorshift32(unsigned int *state)
 
 static void rodinia_mt_set_threads(int n)
 {
-    if (n > 0)
-        rodinia_mt_threads = n;
+    rodinia_mt_threads = (n > 0) ? n : 1;
+    rodinia_mt_threads_set_by_arg = 1;
 }
 
-static void *rodinia_mt_worker(void *p)
+static void rodinia_mt_init_cfg(void)
 {
-    rodinia_mt_arg_t *arg = (rodinia_mt_arg_t *)p;
-    unsigned int s = arg->seed ^ (unsigned int)(arg->tid + 1) * 0x9e3779b9u;
-
-    while (!rodinia_mt_stop) {
-        int nitems = rodinia_mt_items;
-
-        if (nitems <= 0 || rodinia_mt_threads <= 0) {
-            volatile unsigned int acc = 0;
-            for (int i = 0; i < 1024 && !rodinia_mt_stop; i++)
-                acc += rodinia_mt_xorshift32(&s);
-            arg->loops++;
-            continue;
-        }
-
-        int begin = (nitems * arg->tid) / rodinia_mt_threads;
-        int end   = (nitems * (arg->tid + 1)) / rodinia_mt_threads;
-        int own_count = end - begin;
-
-        if (own_count <= 0) {
-            arg->loops++;
-            continue;
-        }
-
-        int sample_count = (own_count * rodinia_mt_work_percent) / 100;
-        if (sample_count < 64)
-            sample_count = 64;
-
-        int window_start = begin - own_count;
-        int window_end   = end + own_count;
-
-        if (window_start < 0)
-            window_start = 0;
-        if (window_end > nitems)
-            window_end = nitems;
-
-        int window_count = window_end - window_start;
-        if (window_count <= 0)
-            window_count = own_count;
-
-        volatile unsigned int acc = 0;
-
-        // Phase A-like: 随机读本线程负责的局部区域，写 CPU 私有区
-        for (int r = 0; r < sample_count && !rodinia_mt_stop; r++) {
-            int idx = begin + (int)(rodinia_mt_xorshift32(&s) %
-                                    (unsigned int)own_count);
-
-            float v = 0.0f;
-
-            if (rodinia_mt_power)
-                v += rodinia_mt_power[idx];
-            if (rodinia_mt_temp0)
-                v += rodinia_mt_temp0[idx];
-            if (rodinia_mt_temp1)
-                v += rodinia_mt_temp1[idx];
-
-            acc += (unsigned int)(((int)(v * 1000.0f)) ^ idx);
-
-            if (arg->private_buf != NULL && arg->private_words > 0) {
-                size_t pidx = (size_t)(rodinia_mt_xorshift32(&s) %
-                                       (unsigned int)arg->private_words);
-                arg->private_buf[pidx] =
-                    acc + (unsigned int)arg->tid + (unsigned int)r;
-            }
-        }
-
-        // Phase B-like: 随机读邻域窗口，模拟 BFS 的局部邻域访问
-        for (int r = 0; r < sample_count && !rodinia_mt_stop; r++) {
-            int idx = window_start + (int)(rodinia_mt_xorshift32(&s) %
-                                           (unsigned int)window_count);
-
-            float v = 0.0f;
-
-            if (rodinia_mt_power)
-                v += rodinia_mt_power[idx];
-            if (rodinia_mt_temp0)
-                v += rodinia_mt_temp0[idx];
-            if (rodinia_mt_temp1)
-                v += rodinia_mt_temp1[idx];
-
-            acc += (unsigned int)(((int)(v * 1000.0f)) ^ idx);
-        }
-
-        arg->loops++;
-    }
-
-    return NULL;
-}
-
-static void rodinia_mt_start_pool(float *power, float *temp0, float *temp1, int nitems)
-{
-    if (rodinia_mt_started || rodinia_mt_work_percent <= 0)
+    if (rodinia_mt_inited)
         return;
 
     const char *s_work = getenv("RODINIA_SHARE_PERCENT");
     const char *s_seed = getenv("RODINIA_SHARE_SEED");
+
+    /*
+     * Keep the same behavior as Gaussian:
+     * - without --cpu-workers, use one worker by default;
+     * - with --cpu-workers N, use N workers.
+     */
+    if (!rodinia_mt_threads_set_by_arg)
+        rodinia_mt_threads = 1;
 
     if (s_work)
         rodinia_mt_work_percent = atoi(s_work);
     if (s_seed)
         rodinia_mt_seed = (unsigned int)atoi(s_seed);
 
+    if (rodinia_mt_threads <= 0)
+        rodinia_mt_threads = 1;
     if (rodinia_mt_work_percent < 0)
         rodinia_mt_work_percent = 0;
     if (rodinia_mt_work_percent > 100)
         rodinia_mt_work_percent = 100;
     if (rodinia_mt_seed == 0)
         rodinia_mt_seed = 1;
-    if (rodinia_mt_threads <= 0)
-        rodinia_mt_threads = 1;
+
+    HOTSPOT_TRACE("mt cfg: threads=%d work_percent=%d seed=%u",
+                  rodinia_mt_threads,
+                  rodinia_mt_work_percent,
+                  rodinia_mt_seed);
+
+    rodinia_mt_inited = 1;
+}
+
+static void *rodinia_mt_worker_once(void *p)
+{
+    rodinia_mt_arg_t *arg = (rodinia_mt_arg_t *)p;
+
+    simple_barrier_wait(&rodinia_mt_start_barrier);
+
+    unsigned int s = arg->seed ^ (unsigned int)(arg->tid + 1) * 0x9e3779b9u;
+
+    int nitems = rodinia_mt_items;
+
+    if (nitems <= 0 || rodinia_mt_threads <= 0) {
+        volatile unsigned int acc = 0;
+        for (int i = 0; i < 1024; i++)
+            acc += rodinia_mt_xorshift32(&s);
+        arg->loops++;
+        return NULL;
+    }
+
+    int begin = (nitems * arg->tid) / rodinia_mt_threads;
+    int end   = (nitems * (arg->tid + 1)) / rodinia_mt_threads;
+    int own_count = end - begin;
+
+    if (own_count <= 0) {
+        arg->loops++;
+        return NULL;
+    }
+
+    int sample_count = (own_count * rodinia_mt_work_percent) / 100;
+    if (sample_count < 64)
+        sample_count = 64;
+
+    int window_start = begin - own_count;
+    int window_end   = end + own_count;
+
+    if (window_start < 0)
+        window_start = 0;
+    if (window_end > nitems)
+        window_end = nitems;
+
+    int window_count = window_end - window_start;
+    if (window_count <= 0)
+        window_count = own_count;
+
+    volatile unsigned int acc = 0;
+
+    /*
+     * Phase A-like:
+     * random reads from this worker's local range in the managed arrays,
+     * writes only to the CPU-private buffer.
+     */
+    for (int r = 0; r < sample_count; r++) {
+        int idx = begin + (int)(rodinia_mt_xorshift32(&s) %
+                                (unsigned int)own_count);
+
+        float v = 0.0f;
+
+        if (rodinia_mt_power)
+            v += rodinia_mt_power[idx];
+        if (rodinia_mt_temp0)
+            v += rodinia_mt_temp0[idx];
+        if (rodinia_mt_temp1)
+            v += rodinia_mt_temp1[idx];
+
+        acc += (unsigned int)(((int)(v * 1000.0f)) ^ idx);
+
+        if (arg->private_buf != NULL && arg->private_words > 0) {
+            size_t pidx = (size_t)(rodinia_mt_xorshift32(&s) %
+                                   (unsigned int)arg->private_words);
+            arg->private_buf[pidx] =
+                acc + (unsigned int)arg->tid + (unsigned int)r;
+        }
+    }
+
+    /*
+     * Phase B-like:
+     * random reads from a neighboring window, similar to Gaussian's
+     * second local-neighborhood pass.
+     */
+    for (int r = 0; r < sample_count; r++) {
+        int idx = window_start + (int)(rodinia_mt_xorshift32(&s) %
+                                       (unsigned int)window_count);
+
+        float v = 0.0f;
+
+        if (rodinia_mt_power)
+            v += rodinia_mt_power[idx];
+        if (rodinia_mt_temp0)
+            v += rodinia_mt_temp0[idx];
+        if (rodinia_mt_temp1)
+            v += rodinia_mt_temp1[idx];
+
+        acc += (unsigned int)(((int)(v * 1000.0f)) ^ idx);
+    }
+
+    arg->loops++;
+    return NULL;
+}
+
+static void rodinia_mt_cpu_phase(float *power, float *temp0, float *temp1, int nitems, int iter)
+{
+    rodinia_mt_init_cfg();
+
+    if (rodinia_mt_work_percent <= 0) {
+        HOTSPOT_TRACE("CPU phase skipped iter=%d work_percent=%d",
+                      iter, rodinia_mt_work_percent);
+        return;
+    }
 
     rodinia_mt_power = (volatile float *)power;
     rodinia_mt_temp0 = (volatile float *)temp0;
@@ -222,99 +358,93 @@ static void rodinia_mt_start_pool(float *power, float *temp0, float *temp1, int 
 
     int n = rodinia_mt_threads;
 
-    rodinia_mt_pool = (pthread_t *)malloc((size_t)n * sizeof(pthread_t));
-    rodinia_mt_args = (rodinia_mt_arg_t *)malloc((size_t)n * sizeof(rodinia_mt_arg_t));
+    simple_barrier_init(&rodinia_mt_start_barrier, n + 1);
 
-    rodinia_mt_private_words_per_thread = 8192;
-    rodinia_mt_private =
-        (volatile unsigned int *)calloc((size_t)n * rodinia_mt_private_words_per_thread,
-                                        sizeof(unsigned int));
+    if (rodinia_mt_pool == NULL) {
+        rodinia_mt_pool = (pthread_t *)malloc((size_t)n * sizeof(pthread_t));
+    }
+
+    if (rodinia_mt_args == NULL) {
+        rodinia_mt_args = (rodinia_mt_arg_t *)malloc((size_t)n * sizeof(rodinia_mt_arg_t));
+    }
+
+    if (rodinia_mt_private == NULL) {
+        rodinia_mt_private_words_per_thread = 8192;
+        rodinia_mt_private =
+            (volatile unsigned int *)calloc((size_t)n * rodinia_mt_private_words_per_thread,
+                                            sizeof(unsigned int));
+    }
 
     if (!rodinia_mt_pool || !rodinia_mt_args || !rodinia_mt_private) {
-        fprintf(stderr, "[rodinia_mt][hotspot] failed to allocate CPU worker data\n");
+        fprintf(stderr, "failed to allocate CPU worker data\n");
         exit(1);
     }
 
-    rodinia_mt_stop = 0;
+    HOTSPOT_TRACE("CPU phase start iter=%d threads=%d total_items=%d work_percent=%d",
+                  iter, n, nitems, rodinia_mt_work_percent);
 
     for (int t = 0; t < n; t++) {
         rodinia_mt_args[t].tid = t;
-        rodinia_mt_args[t].seed = rodinia_mt_seed ^ (unsigned int)(t + 1);
+        rodinia_mt_args[t].seed = rodinia_mt_seed ^ (unsigned int)(t + 1) ^ (unsigned int)iter;
         rodinia_mt_args[t].loops = 0;
         rodinia_mt_args[t].private_buf =
             rodinia_mt_private + (size_t)t * rodinia_mt_private_words_per_thread;
         rodinia_mt_args[t].private_words = rodinia_mt_private_words_per_thread;
 
+        HOTSPOT_TRACE("Creating pthread tid=%d iter=%d", t, iter);
+
         int rc = pthread_create(&rodinia_mt_pool[t], NULL,
-                                rodinia_mt_worker, &rodinia_mt_args[t]);
-        HOTSPOT_TRACE("[rodinia_mt][hotspot] create tid=%d rc=%d", t, rc);
+                                rodinia_mt_worker_once,
+                                &rodinia_mt_args[t]);
 
         if (rc != 0) {
-            fprintf(stderr, "[rodinia_mt][hotspot] pthread_create failed tid=%d rc=%d\n", t, rc);
+            fprintf(stderr,
+                    "pthread_create failed tid=%d iter=%d rc=%d\n",
+                    t, iter, rc);
             exit(1);
         }
+
+        HOTSPOT_TRACE("pthread_create success tid=%d iter=%d", t, iter);
     }
 
-    rodinia_mt_started = 1;
-}
+    HOTSPOT_TRACE("Main thread waiting at CPU start barrier iter=%d", iter);
 
-static void rodinia_mt_stop_pool(void)
-{
-    if (!rodinia_mt_started)
-        return;
+    simple_barrier_wait(&rodinia_mt_start_barrier);
 
-    rodinia_mt_stop = 1;
+    HOTSPOT_TRACE("CPU workers released iter=%d", iter);
 
-    for (int t = 0; t < rodinia_mt_threads; t++) {
-        pthread_join(rodinia_mt_pool[t], NULL);
+    /*
+     * pthread_join waits until each one-shot worker has completed its CPU work.
+     */
+    for (int t = 0; t < n; t++) {
+        HOTSPOT_TRACE("Joining pthread tid=%d iter=%d", t, iter);
+
+        int rc = pthread_join(rodinia_mt_pool[t], NULL);
+        if (rc != 0) {
+            fprintf(stderr,
+                    "pthread_join failed tid=%d iter=%d rc=%d\n",
+                    t, iter, rc);
+            exit(1);
+        }
+
+        HOTSPOT_TRACE("Joined pthread tid=%d iter=%d loops=%llu",
+                      t, iter,
+                      (unsigned long long)rodinia_mt_args[t].loops);
     }
 
-    for (int t = 0; t < rodinia_mt_threads; t++) {
-        HOTSPOT_TRACE("[rodinia_mt][hotspot] tid=%d loops=%llu",
-               t, (unsigned long long)rodinia_mt_args[t].loops);
-    }
-
-    free(rodinia_mt_pool);
-    free(rodinia_mt_args);
-    free((void *)rodinia_mt_private);
-
-    rodinia_mt_pool = NULL;
-    rodinia_mt_args = NULL;
-    rodinia_mt_private = NULL;
-    rodinia_mt_private_words_per_thread = 0;
+    // simple_barrier_destroy(&rodinia_mt_start_barrier);
 
     rodinia_mt_power = NULL;
     rodinia_mt_temp0 = NULL;
     rodinia_mt_temp1 = NULL;
     rodinia_mt_items = 0;
 
-    rodinia_mt_started = 0;
-}
-
-static void rodinia_mt_run_cpu_phase(float *power, float *temp0, float *temp1, int nitems)
-{
-    rodinia_mt_start_pool(power, temp0, temp1, nitems);
-
-    while (1) {
-        int done = 1;
-        for (int t = 0; t < rodinia_mt_threads; t++) {
-            if (rodinia_mt_args[t].loops < 100) {
-                done = 0;
-                break;
-            }
-        }
-        if (done)
-            break;
-
-        sched_yield();
-    }
-
-    rodinia_mt_stop_pool();
+    HOTSPOT_TRACE("CPU phase completed iter=%d", iter);
 }
 
 static void parse_optional_mt_args(int argc, char **argv)
 {
-    for (int i = 7; i < argc; i++) {
+    for (int i = 6; i < argc; i++) {
         if (strcmp(argv[i], "--cpu-workers") == 0 && i + 1 < argc) {
             rodinia_mt_set_threads(atoi(argv[++i]));
         } else if (strncmp(argv[i], "--cpu-workers=", 17) == 0) {
@@ -323,6 +453,10 @@ static void parse_optional_mt_args(int argc, char **argv)
             num_cus = atoi(argv[++i]);
         } else if (strncmp(argv[i], "--gpu-cus=", 10) == 0) {
             num_cus = atoi(argv[i] + 10);
+        } else if (strcmp(argv[i], "--share-percent") == 0 && i + 1 < argc) {
+            rodinia_mt_work_percent = atoi(argv[++i]);
+        } else if (strncmp(argv[i], "--share-percent=", 16) == 0) {
+            rodinia_mt_work_percent = atoi(argv[i] + 16);
         }
     }
 
@@ -367,30 +501,47 @@ void writeoutput(float *vect, int grid_rows, int grid_cols, char *file){
 }
 
 
-void readinput(float *vect, int grid_rows, int grid_cols, char *file){
+void readinput(float *vect, int grid_rows, int grid_cols, char *file)
+{
+    int i, j;
+    FILE *fp;
+    char str[STR_SIZE];
+    float val;
 
-  	int i,j;
-	FILE *fp;
-	char str[STR_SIZE];
-	float val;
+    fp = fopen(file, "r");
+    if (fp == NULL) {
+        fprintf(stderr, "error: cannot open input file: %s\n", file);
+        perror("fopen");
+        exit(1);
+    }
 
-	if( (fp  = fopen(file, "r" )) ==0 )
-        printf( "The file was not opened\n" );
+    for (i = 0; i < grid_rows; i++) {
+        for (j = 0; j < grid_cols; j++) {
+            if (fgets(str, STR_SIZE, fp) == NULL) {
+                fprintf(stderr,
+                        "error: not enough lines in file %s, expected %d lines, failed at line %d\n",
+                        file,
+                        grid_rows * grid_cols,
+                        i * grid_cols + j + 1);
+                fclose(fp);
+                exit(1);
+            }
 
-	for (i=0; i <= grid_rows-1; i++) 
-	 for (j=0; j <= grid_cols-1; j++)
-	 {
-		fgets(str, STR_SIZE, fp);
-		if (feof(fp))
-			fatal("not enough lines in file");
-		//if ((sscanf(str, "%d%f", &index, &val) != 2) || (index != ((i-1)*(grid_cols-2)+j-1)))
-		if ((sscanf(str, "%f", &val) != 1))
-			fatal("invalid file format");
-		vect[i*grid_cols+j] = val;
-	}
+            if (sscanf(str, "%f", &val) != 1) {
+                fprintf(stderr,
+                        "error: invalid file format in %s at line %d: %s\n",
+                        file,
+                        i * grid_cols + j + 1,
+                        str);
+                fclose(fp);
+                exit(1);
+            }
 
-	fclose(fp);	
+            vect[i * grid_cols + j] = val;
+        }
+    }
 
+    fclose(fp);
 }
 
 #define IN_RANGE(x, min, max)   ((x)>=(min) && (x)<=(max))
@@ -403,6 +554,8 @@ __global__ void calculate_temp(int iteration,  //number of iteration
                                float *temp_dst,    //temperature input/output
                                int grid_cols,  //Col of grid
                                int grid_rows,  //Row of grid
+                               int block_cols,
+                               int block_offset,
 							   int border_cols,  // border offset 
 							   int border_rows,  // border offset
                                float Cap,      //Capacitance
@@ -420,8 +573,9 @@ __global__ void calculate_temp(int iteration,  //number of iteration
         float step_div_Cap;
         float Rx_1,Ry_1,Rz_1;
         
-	int bx = blockIdx.x;
-        int by = blockIdx.y;
+	int global_block = blockIdx.x + block_offset;
+	int bx = global_block % block_cols;
+        int by = global_block / block_cols;
 
 	int tx=threadIdx.x;
 	int ty=threadIdx.y;
@@ -510,21 +664,6 @@ __global__ void calculate_temp(int iteration,  //number of iteration
       }
 }
 
-__global__ void hotspot_gpu_keepalive(unsigned int *buf, int n, int rounds)
-{
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned int x = (unsigned int)(tid + 1);
-
-    for (int i = 0; i < rounds; i++) {
-        x ^= x << 13;
-        x ^= x >> 17;
-        x ^= x << 5;
-    }
-
-    if (tid < n)
-        buf[tid] = x;
-}
-
 /*
    compute N time steps
 */
@@ -533,7 +672,6 @@ int compute_tran_temp(float *MatrixPower,float *MatrixTemp[2], int col, int row,
 		int total_iterations, int num_iterations, int blockCols, int blockRows, int borderCols, int borderRows) 
 {
     dim3 dimBlock(BLOCK_SIZE, BLOCK_SIZE);
-    dim3 dimGrid(blockCols, blockRows);  
 	
 	float grid_height = chip_height / row;
 	float grid_width = chip_width / col;
@@ -563,43 +701,45 @@ int compute_tran_temp(float *MatrixPower,float *MatrixTemp[2], int col, int row,
                   (int)t, src, dst,
                   MIN(num_iterations, total_iterations - t));
 
-        calculate_temp<<<dimGrid, dimBlock>>>(
-            MIN(num_iterations, total_iterations - t),
-            MatrixPower,
-            MatrixTemp[src],
-            MatrixTemp[dst],
-            col,
-            row,
-            borderCols,
-            borderRows,
-            Cap,
-            Rx,
-            Ry,
-            Rz,
-            step,
-            time_elapsed);
-        hipError_t launch_err = hipGetLastError();
-        HOTSPOT_TRACE("after calculate_temp launch t=%d err=%d %s",
-                    (int)t, launch_err, hipGetErrorString(launch_err));
+        int total_blocks = blockCols * blockRows;
+        for (int block_base = 0; block_base < total_blocks;
+             block_base += HOTSPOT_REAL_BLOCK_CHUNK) {
+            int remaining_blocks = total_blocks - block_base;
+            int launch_blocks = remaining_blocks < HOTSPOT_REAL_BLOCK_CHUNK ?
+                remaining_blocks : HOTSPOT_REAL_BLOCK_CHUNK;
+            dim3 batchGrid(launch_blocks, 1);
 
-        if (launch_err != hipSuccess) {
-            return dst;
-        }
+            calculate_temp<<<batchGrid, dimBlock>>>(
+                MIN(num_iterations, total_iterations - t),
+                MatrixPower,
+                MatrixTemp[src],
+                MatrixTemp[dst],
+                col,
+                row,
+                blockCols,
+                block_base,
+                borderCols,
+                borderRows,
+                Cap,
+                Rx,
+                Ry,
+                Rz,
+                step,
+                time_elapsed);
+            hipError_t launch_err = hipGetLastError();
+            HOTSPOT_TRACE("after calculate_temp launch t=%d block_base=%d blocks=%d err=%d %s",
+                        (int)t, block_base, launch_blocks,
+                        launch_err, hipGetErrorString(launch_err));
 
-        if (num_cus > 0 && hotspot_keepalive_buf != NULL) {
-            HOTSPOT_TRACE("launch hotspot_gpu_keepalive t=%d num_cus=%d n=%d rounds=%d",
-                        (int)t, num_cus, hotspot_keepalive_n, 256);
+            if (launch_err != hipSuccess) {
+                return dst;
+            }
 
-            hotspot_gpu_keepalive<<<num_cus, 64>>>(
-                hotspot_keepalive_buf,
-                hotspot_keepalive_n,
-                256);
-
-            hipError_t keep_err = hipGetLastError();
-            HOTSPOT_TRACE("after keepalive launch t=%d err=%d %s",
-                        (int)t, keep_err, hipGetErrorString(keep_err));
-
-            if (keep_err != hipSuccess) {
+            hipError_t sync_err = hipDeviceSynchronize();
+            if (sync_err != hipSuccess) {
+                HOTSPOT_TRACE("calculate_temp batch sync failed t=%d block_base=%d err=%d %s",
+                            (int)t, block_base,
+                            sync_err, hipGetErrorString(sync_err));
                 return dst;
             }
         }
@@ -610,7 +750,7 @@ int compute_tran_temp(float *MatrixPower,float *MatrixTemp[2], int col, int row,
 
 void usage(int argc, char **argv)
 {
-	fprintf(stderr, "Usage: %s <grid_rows/grid_cols> <pyramid_height> <sim_time> <temp_file> <power_file> <output_file>\n", argv[0]);
+	fprintf(stderr, "Usage: %s <grid_rows/grid_cols> <pyramid_height> <sim_time> <temp_file> <power_file> [output_file] [--cpu-workers N] [--gpu-cus N] [--share-percent P]\n", argv[0]);
 	fprintf(stderr, "\t<grid_rows/grid_cols>  - number of rows/cols in the grid (positive integer)\n");
 	fprintf(stderr, "\t<pyramid_height> - pyramid heigh(positive integer)\n");
 	fprintf(stderr, "\t<sim_time>   - number of iterations\n");
@@ -641,7 +781,7 @@ void run(int argc, char** argv)
     int total_iterations = 60;
     int pyramid_height = 1; // number of iterations
 	
-	if (argc < 7)
+	if (argc < 6)
 		usage(argc, argv);
 	if((grid_rows = atoi(argv[1]))<=0||
 	   (grid_cols = atoi(argv[1]))<=0||
@@ -651,7 +791,7 @@ void run(int argc, char** argv)
 		
 	tfile=argv[4];
     pfile=argv[5];
-    ofile=argv[6];
+    // ofile=argv[6];
 	parse_optional_mt_args(argc, argv);
 	
     size=grid_rows*grid_cols;
@@ -674,11 +814,11 @@ void run(int argc, char** argv)
         if (blockRows < target_side)
             blockRows = target_side;
 
-        HOTSPOT_TRACE("[hotspot] expand grid to %d x %d for gpu_cus=%d",
+        HOTSPOT_TRACE("expand grid to %d x %d for gpu_cus=%d",
             blockCols, blockRows, num_cus);
     }
 
-    HOTSPOT_TRACE("[hotspot] cpu_workers=%d gpu_cus=%d blockGrid=[%d,%d] blockSize=%dx%d",
+    HOTSPOT_TRACE("cpu_workers=%d gpu_cus=%d blockGrid=[%d,%d] blockSize=%dx%d",
         rodinia_mt_threads,
         num_cus,
         blockCols,
@@ -699,6 +839,7 @@ void run(int argc, char** argv)
     HOTSPOT_TRACE("pyramidHeight: %d gridSize: [%d, %d] border:[%d, %d] blockGrid:[%d, %d] targetBlock:[%d, %d]",\
 	pyramid_height, grid_cols, grid_rows, borderCols, borderRows, blockCols, blockRows, smallBlockCol, smallBlockRow);
 	
+    HOTSPOT_TRACE("Reading input from files %s and %s", tfile, pfile);
     readinput(FilesavingTemp, grid_rows, grid_cols, tfile);
     readinput(FilesavingPower, grid_rows, grid_cols, pfile);
 
@@ -712,44 +853,37 @@ void run(int argc, char** argv)
 
     MatrixPower = (float *)checked_hip_malloc_managed(sizeof(float)*size);
     memcpy(MatrixPower, FilesavingPower, sizeof(float)*size);
-    
-    if (num_cus > 0) {
-        hotspot_keepalive_n = num_cus * 64;
-        hotspot_keepalive_buf =
-            (unsigned int *)checked_hip_malloc_managed(
-                sizeof(unsigned int) * hotspot_keepalive_n);
-        memset(hotspot_keepalive_buf, 0, sizeof(unsigned int) * hotspot_keepalive_n);
-    }
 
-    HOTSPOT_TRACE("Start computing the transient temperature");
+    HOTSPOT_TRACE("Gaussian-style sequential CPU-then-GPU phase start");
 
-    
-    rodinia_mt_run_cpu_phase(MatrixPower, MatrixTemp[0], MatrixTemp[1], size);
+    HOTSPOT_TRACE("CPU batch phase start");
+    rodinia_mt_cpu_phase(MatrixPower, MatrixTemp[0], MatrixTemp[1], size, 0);
+    HOTSPOT_TRACE("CPU batch phase done");
 
-    HOTSPOT_TRACE("[hotspot] before compute_tran_temp");
+    HOTSPOT_TRACE("GPU batch phase start");
 
     int ret = compute_tran_temp(MatrixPower, MatrixTemp, grid_cols, grid_rows,
                                 total_iterations, pyramid_height,
                                 blockCols, blockRows, borderCols, borderRows);
 
-    HOTSPOT_TRACE("[hotspot] after compute_tran_temp, before hipDeviceSynchronize");
+    hotspot_gpu_keepalive(num_cus);
+
+    HOTSPOT_TRACE("after compute_tran_temp, before hipDeviceSynchronize");
 
     hipError_t e = hipDeviceSynchronize();
 
-    HOTSPOT_TRACE("[hotspot] after hipDeviceSynchronize err=%d %s",
+    HOTSPOT_TRACE("after hipDeviceSynchronize err=%d %s",
         e, hipGetErrorString(e));
+
+    HOTSPOT_TRACE("GPU batch phase done");
+    HOTSPOT_TRACE("Gaussian-style sequential CPU-then-GPU phase done");
 
     HOTSPOT_TRACE("Ending simulation");
 
     memcpy(MatrixOut, MatrixTemp[ret], sizeof(float) * size);
 
-    writeoutput(MatrixOut,grid_rows, grid_cols, ofile);
+    // writeoutput(MatrixOut,grid_rows, grid_cols, ofile);
 
-    if (hotspot_keepalive_buf != NULL) {
-        hipFree(hotspot_keepalive_buf);
-        hotspot_keepalive_buf = NULL;
-        hotspot_keepalive_n = 0;
-    }
 
     hipFree(MatrixPower);
     hipFree(MatrixTemp[0]);

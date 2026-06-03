@@ -1,4 +1,5 @@
 #include "hip/hip_runtime.h"
+static const int PF_REAL_BLOCK_CHUNK = 20;
 #include <pthread.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -10,12 +11,13 @@
 #include <fcntl.h>
 #include <float.h>
 #include <sys/time.h>
+#include <time.h>
 #ifdef __linux__
 #include <sched.h>
 #endif
 
 #define PF_LOG(fmt, ...) do {                         \
-    printf("[pf] " fmt "\n", ##__VA_ARGS__);          \
+    printf("[particlefilter] " fmt "\n", ##__VA_ARGS__);          \
     fflush(stdout);                                   \
 } while (0)
 
@@ -37,26 +39,73 @@
     PF_LOG("after sync: %s", stage);                  \
 } while (0)
 
-// ---- CPU multithread phase injected for heterogeneous MT experiments ----
+// -----------------------------------------------------------------------------
+// CPU batch phase, aligned with the gaussian CPU phase
+// -----------------------------------------------------------------------------
 typedef struct {
     int tid;
     unsigned int seed;
     volatile unsigned long long loops;
     volatile unsigned int *private_buf;
     size_t private_words;
-    int actual_threads;
 } rodinia_mt_arg_t;
+
+typedef struct {
+    pthread_mutex_t mutex;
+    pthread_cond_t  cond;
+    int             count;
+    int             total;
+    int             generation;
+} simple_barrier_t;
+
+static void simple_barrier_init(simple_barrier_t *b, int n)
+{
+    pthread_mutex_init(&b->mutex, NULL);
+    pthread_cond_init(&b->cond, NULL);
+    b->count = 0;
+    b->total = n;
+    b->generation = 0;
+}
+
+static void simple_barrier_wait(simple_barrier_t *b)
+{
+    pthread_mutex_lock(&b->mutex);
+
+    int gen = b->generation;
+    b->count++;
+
+    if (b->count == b->total) {
+        b->count = 0;
+        b->generation++;
+        pthread_cond_broadcast(&b->cond);
+    } else {
+        while (gen == b->generation) {
+            pthread_cond_wait(&b->cond, &b->mutex);
+        }
+    }
+
+    pthread_mutex_unlock(&b->mutex);
+}
+
+static void simple_barrier_destroy(simple_barrier_t *b)
+{
+    pthread_cond_destroy(&b->cond);
+    pthread_mutex_destroy(&b->mutex);
+}
+
+static simple_barrier_t rodinia_mt_start_barrier;
 
 static int rodinia_mt_threads = 4;
 static int rodinia_mt_work_percent = 8;
 static unsigned int rodinia_mt_seed = 1;
 static int rodinia_mt_inited = 0;
+static int rodinia_mt_threads_set_by_arg = 0;
 
 static pthread_t *rodinia_mt_pool = NULL;
 static rodinia_mt_arg_t *rodinia_mt_args = NULL;
-static volatile int rodinia_mt_stop = 0;
-static int rodinia_mt_started = 0;
-static volatile unsigned char *rodinia_mt_shared = NULL;
+static volatile unsigned int *rodinia_mt_private = NULL;
+static size_t rodinia_mt_private_words_per_thread = 0;
+
 static volatile double *rodinia_mt_weights = NULL;
 static volatile double *rodinia_mt_arrayX = NULL;
 static volatile double *rodinia_mt_arrayY = NULL;
@@ -64,12 +113,8 @@ static volatile double *rodinia_mt_CDF = NULL;
 static volatile double *rodinia_mt_likelihood = NULL;
 static int rodinia_mt_items = 0;
 
-static volatile unsigned int *rodinia_mt_private = NULL;
-static size_t rodinia_mt_private_words_per_thread = 0;
-
-static size_t rodinia_mt_shared_bytes = 0;
-
-static inline unsigned int rodinia_mt_xorshift32(unsigned int *state) {
+static inline unsigned int rodinia_mt_xorshift32(unsigned int *state)
+{
     unsigned int x = *state;
     x ^= x << 13;
     x ^= x >> 17;
@@ -78,187 +123,170 @@ static inline unsigned int rodinia_mt_xorshift32(unsigned int *state) {
     return *state;
 }
 
-static int rodinia_parse_threads_from_cmdline(void) {
-    FILE *cmd_fp = fopen("/proc/self/cmdline", "rb");
-    if (!cmd_fp) return -1;
+static void rodinia_mt_init_cfg(void)
+{
+    if (rodinia_mt_inited)
+        return;
 
-    char buf[8192];
-    size_t nread = fread(buf, 1, sizeof(buf) - 1, cmd_fp);
-    fclose(cmd_fp);
-    if (nread == 0) return -1;
-    buf[nread] = '\0';
-
-    size_t i = 0;
-    while (i < nread) {
-        const char *arg = &buf[i];
-        size_t len = strlen(arg);
-        if (len == 0) break;
-
-        if (strcmp(arg, "--cpu-workers") == 0) {
-            size_t j = i + len + 1;
-            if (j < nread) {
-                int v = atoi(&buf[j]);
-                if (v > 0) return v;
-            }
-        } else if (strncmp(arg, "--cpu-workers=", 17) == 0) {
-            int v = atoi(arg + 17);
-            if (v > 0) return v;
-        }
-
-        i += len + 1;
-    }
-    return -1;
-}
-
-static void rodinia_mt_init_cfg(void) {
-    if (rodinia_mt_inited) return;
     const char *s_work = getenv("RODINIA_SHARE_PERCENT");
     const char *s_seed = getenv("RODINIA_SHARE_SEED");
 
-    int parsed_threads = rodinia_parse_threads_from_cmdline();
-    if (parsed_threads <= 0) {
-        const char *s_mt = getenv("RODINIA_MT_THREADS");
-        if (s_mt) parsed_threads = atoi(s_mt);
+    if (!rodinia_mt_threads_set_by_arg) {
+        rodinia_mt_threads = 1;
     }
-    rodinia_mt_threads = (parsed_threads > 0) ? parsed_threads : 1;
 
-    if (s_work) rodinia_mt_work_percent = atoi(s_work);
-    if (s_seed) rodinia_mt_seed = (unsigned int)atoi(s_seed);
-    if (rodinia_mt_threads <= 0) rodinia_mt_threads = 1;
-    if (rodinia_mt_work_percent < 0) rodinia_mt_work_percent = 0;
-    if (rodinia_mt_work_percent > 100) rodinia_mt_work_percent = 100;
-    if (rodinia_mt_seed == 0) rodinia_mt_seed = 1;
+    if (s_work)
+        rodinia_mt_work_percent = atoi(s_work);
+    if (s_seed)
+        rodinia_mt_seed = (unsigned int)atoi(s_seed);
+
+    if (rodinia_mt_threads <= 0)
+        rodinia_mt_threads = 1;
+    if (rodinia_mt_work_percent < 0)
+        rodinia_mt_work_percent = 0;
+    if (rodinia_mt_work_percent > 100)
+        rodinia_mt_work_percent = 100;
+    if (rodinia_mt_seed == 0)
+        rodinia_mt_seed = 1;
+
+    PF_LOG("mt cfg: threads=%d work_percent=%d seed=%u",
+           rodinia_mt_threads,
+           rodinia_mt_work_percent,
+           rodinia_mt_seed);
+
     rodinia_mt_inited = 1;
 }
 
-static void rodinia_mt_set_threads(int n) {
-    if (n > 0) {
-        rodinia_mt_threads = n;
-        rodinia_mt_inited = 1;
-    }
+static void rodinia_mt_set_threads(int n)
+{
+    rodinia_mt_threads = (n > 0) ? n : 1;
+    rodinia_mt_threads_set_by_arg = 1;
 }
 
-static int rodinia_mt_visible_cpus(void) {
-#ifdef __linux__
-    cpu_set_t set;
-    CPU_ZERO(&set);
-    if (sched_getaffinity(0, sizeof(set), &set) == 0) {
-        int cnt = 0;
-        for (int cpu = 0; cpu < CPU_SETSIZE; cpu++) {
-            if (CPU_ISSET(cpu, &set)) cnt++;
-        }
-        if (cnt > 0) return cnt;
-    }
-#endif
-    long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
-    if (ncpu > 0 && ncpu <= INT_MAX) return (int)ncpu;
-    return 1;
+static inline unsigned int rodinia_mt_accumulate_double(double v, int idx)
+{
+    return (unsigned int)(((long long)(v * 1000.0)) ^ idx);
 }
 
-static int rodinia_mt_cpu_loops_per_thread = 100;
+static inline double rodinia_mt_read_particle_arrays(int idx)
+{
+    double v = 0.0;
 
-static void *rodinia_mt_worker_once(void *p) {
-    rodinia_mt_arg_t *a = (rodinia_mt_arg_t *)p;
-    unsigned int s = a->seed ^ (unsigned int)(a->tid + 1) * 0x9e3779b9u;
+    if (rodinia_mt_weights)
+        v += rodinia_mt_weights[idx];
+    if (rodinia_mt_arrayX)
+        v += rodinia_mt_arrayX[idx];
+    if (rodinia_mt_arrayY)
+        v += rodinia_mt_arrayY[idx];
+    if (rodinia_mt_CDF)
+        v += rodinia_mt_CDF[idx];
+    if (rodinia_mt_likelihood)
+        v += rodinia_mt_likelihood[idx];
 
-    PF_LOG("CPU worker %d begin", a->tid);
+    return v;
+}
 
-    for (int iter = 0; iter < rodinia_mt_cpu_loops_per_thread; iter++) {
-        int nitems = rodinia_mt_items;
+static void *rodinia_mt_worker_once(void *p)
+{
+    rodinia_mt_arg_t *arg = (rodinia_mt_arg_t *)p;
 
-        if (nitems <= 0 || rodinia_mt_threads <= 0 || rodinia_mt_work_percent <= 0) {
-            volatile unsigned int acc = 0;
-            for (int i = 0; i < 1024; i++) {
-                acc += rodinia_mt_xorshift32(&s);
-            }
-            (void)acc;
-            a->loops++;
-            continue;
-        }
+    simple_barrier_wait(&rodinia_mt_start_barrier);
 
-        int begin = (nitems * a->tid) / rodinia_mt_threads;
-        int end   = (nitems * (a->tid + 1)) / rodinia_mt_threads;
-        int own_count = end - begin;
+    unsigned int s = arg->seed ^
+                     (unsigned int)(arg->tid + 1) * 0x9e3779b9u;
 
-        if (own_count <= 0) {
-            a->loops++;
-            continue;
-        }
+    int nitems = rodinia_mt_items;
+    int nthreads = rodinia_mt_threads;
 
-        int sample_count = (own_count * rodinia_mt_work_percent) / 100;
-        if (sample_count < 64) {
-            sample_count = 64;
-        }
-
-        int window_start = begin - own_count;
-        int window_end   = end + own_count;
-
-        if (window_start < 0) {
-            window_start = 0;
-        }
-        if (window_end > nitems) {
-            window_end = nitems;
-        }
-
-        int window_count = window_end - window_start;
-        if (window_count <= 0) {
-            window_count = own_count;
-        }
-
+    if (nitems <= 0 || nthreads <= 0 || rodinia_mt_work_percent <= 0) {
         volatile unsigned int acc = 0;
-
-        for (int r = 0; r < sample_count; r++) {
-            int idx = begin + (int)(rodinia_mt_xorshift32(&s) %
-                                    (unsigned int)own_count);
-
-            double v = 0.0;
-
-            if (rodinia_mt_weights) {
-                v += rodinia_mt_weights[idx];
-            }
-            if (rodinia_mt_arrayX) {
-                v += rodinia_mt_arrayX[idx];
-            }
-            if (rodinia_mt_arrayY) {
-                v += rodinia_mt_arrayY[idx];
-            }
-
-            acc += (unsigned int)((long long)(v * 1000.0) ^ idx);
-
-            if (a->private_buf != NULL && a->private_words > 0) {
-                size_t pidx = (size_t)(rodinia_mt_xorshift32(&s) %
-                                       (unsigned int)a->private_words);
-                a->private_buf[pidx] = acc + (unsigned int)a->tid + (unsigned int)r;
-            }
-        }
-
-        for (int r = 0; r < sample_count; r++) {
-            int idx = window_start + (int)(rodinia_mt_xorshift32(&s) %
-                                           (unsigned int)window_count);
-
-            double v = 0.0;
-
-            if (rodinia_mt_weights) {
-                v += rodinia_mt_weights[idx];
-            }
-            if (rodinia_mt_CDF) {
-                v += rodinia_mt_CDF[idx];
-            }
-            if (rodinia_mt_likelihood) {
-                v += rodinia_mt_likelihood[idx];
-            }
-
-            acc += (unsigned int)((long long)(v * 1000.0) ^ idx);
-        }
-
-        (void)acc;
-        a->loops++;
+        for (int i = 0; i < 1024; i++)
+            acc += rodinia_mt_xorshift32(&s);
+        arg->loops++;
+        return NULL;
     }
 
-    PF_LOG("CPU worker %d end loops=%llu",
-           a->tid, (unsigned long long)a->loops);
+    int begin = (int)(((long long)nitems * arg->tid) / nthreads);
+    int end   = (int)(((long long)nitems * (arg->tid + 1)) / nthreads);
+    int own_count = end - begin;
 
+    if (own_count <= 0) {
+        arg->loops++;
+        return NULL;
+    }
+
+    int sample_count = (own_count * rodinia_mt_work_percent) / 100;
+    if (sample_count < 64)
+        sample_count = 64;
+
+    int window_start = begin - own_count;
+    int window_end   = end + own_count;
+
+    if (window_start < 0)
+        window_start = 0;
+    if (window_end > nitems)
+        window_end = nitems;
+
+    int window_count = window_end - window_start;
+    if (window_count <= 0)
+        window_count = own_count;
+
+    volatile unsigned int acc = 0;
+
+    // Same pattern as gaussian: local random reads from the thread-owned range,
+    // with writes redirected to a CPU-private buffer.
+    for (int r = 0; r < sample_count; r++) {
+        int idx = begin +
+            (int)(rodinia_mt_xorshift32(&s) % (unsigned int)own_count);
+
+        double v = rodinia_mt_read_particle_arrays(idx);
+        acc += rodinia_mt_accumulate_double(v, idx);
+
+        if (arg->private_buf != NULL && arg->private_words > 0) {
+            size_t pidx = (size_t)(rodinia_mt_xorshift32(&s) %
+                                   (unsigned int)arg->private_words);
+            arg->private_buf[pidx] =
+                acc + (unsigned int)arg->tid + (unsigned int)r;
+        }
+    }
+
+    // Same pattern as gaussian: neighborhood random reads. This preserves a
+    // multi-sharer behavior while keeping CPU writes away from GPU-owned arrays.
+    for (int r = 0; r < sample_count; r++) {
+        int idx = window_start +
+            (int)(rodinia_mt_xorshift32(&s) % (unsigned int)window_count);
+
+        double v = rodinia_mt_read_particle_arrays(idx);
+        acc += rodinia_mt_accumulate_double(v, idx);
+    }
+
+    arg->loops++;
     return NULL;
+}
+
+static void rodinia_mt_set_shared_data(double *weights,
+                                       double *arrayX,
+                                       double *arrayY,
+                                       double *CDF,
+                                       double *likelihood,
+                                       int nitems)
+{
+    rodinia_mt_weights = (volatile double *)weights;
+    rodinia_mt_arrayX = (volatile double *)arrayX;
+    rodinia_mt_arrayY = (volatile double *)arrayY;
+    rodinia_mt_CDF = (volatile double *)CDF;
+    rodinia_mt_likelihood = (volatile double *)likelihood;
+    rodinia_mt_items = nitems;
+}
+
+static void rodinia_mt_clear_shared_data(void)
+{
+    rodinia_mt_weights = NULL;
+    rodinia_mt_arrayX = NULL;
+    rodinia_mt_arrayY = NULL;
+    rodinia_mt_CDF = NULL;
+    rodinia_mt_likelihood = NULL;
+    rodinia_mt_items = 0;
 }
 
 static void rodinia_mt_cpu_phase_pf_sync(double *weights,
@@ -266,110 +294,181 @@ static void rodinia_mt_cpu_phase_pf_sync(double *weights,
                                          double *arrayY,
                                          double *CDF,
                                          double *likelihood,
-                                         int nitems) {
+                                         int nitems,
+                                         int iter)
+{
     rodinia_mt_init_cfg();
 
     if (rodinia_mt_work_percent <= 0) {
-        PF_LOG("CPU sync phase skipped: work_percent=%d", rodinia_mt_work_percent);
+        PF_LOG("CPU phase skipped iter=%d work_percent=%d",
+               iter, rodinia_mt_work_percent);
         return;
     }
 
-    rodinia_mt_weights = (volatile double *)weights;
-    rodinia_mt_arrayX = (volatile double *)arrayX;
-    rodinia_mt_arrayY = (volatile double *)arrayY;
-    rodinia_mt_CDF = (volatile double *)CDF;
-    rodinia_mt_likelihood = (volatile double *)likelihood;
-    rodinia_mt_items = nitems;
+    rodinia_mt_set_shared_data(weights, arrayX, arrayY, CDF, likelihood, nitems);
 
     int n = rodinia_mt_threads;
+    if (n <= 0)
+        n = 1;
 
-    PF_LOG("CPU sync phase setup: threads=%d nitems=%d work_percent=%d loops_per_thread=%d",
-           n,
-           nitems,
-           rodinia_mt_work_percent,
-           rodinia_mt_cpu_loops_per_thread);
+    simple_barrier_init(&rodinia_mt_start_barrier, n + 1);
 
-    pthread_t *pool = (pthread_t *)malloc((size_t)n * sizeof(pthread_t));
-    rodinia_mt_arg_t *args = (rodinia_mt_arg_t *)malloc((size_t)n * sizeof(rodinia_mt_arg_t));
+    if (rodinia_mt_pool == NULL) {
+        rodinia_mt_pool = (pthread_t *)malloc((size_t)n * sizeof(pthread_t));
+    }
 
-    size_t private_words_per_thread = 8192;
-    volatile unsigned int *private_buf =
-        (volatile unsigned int *)calloc((size_t)n * private_words_per_thread,
-                                        sizeof(unsigned int));
+    if (rodinia_mt_args == NULL) {
+        rodinia_mt_args =
+            (rodinia_mt_arg_t *)malloc((size_t)n * sizeof(rodinia_mt_arg_t));
+    }
 
-    if (pool == NULL || args == NULL || private_buf == NULL) {
-        fprintf(stderr, "[rodinia_mt][pf] failed to allocate sync CPU phase buffer\n");
+    if (rodinia_mt_private == NULL) {
+        rodinia_mt_private_words_per_thread = 8192;
+        rodinia_mt_private =
+            (volatile unsigned int *)calloc((size_t)n * rodinia_mt_private_words_per_thread,
+                                            sizeof(unsigned int));
+    }
+
+    if (!rodinia_mt_pool || !rodinia_mt_args || !rodinia_mt_private) {
+        fprintf(stderr,
+                "[rodinia_mt][particlefilter] failed to allocate CPU worker data\n");
         fflush(stderr);
         exit(1);
     }
 
-    PF_LOG("Before CPU worker creation");
+    PF_LOG("CPU phase start iter=%d threads=%d total_items=%d work_percent=%d",
+           iter,
+           n,
+           nitems,
+           rodinia_mt_work_percent);
 
-    int created = 0;
     for (int t = 0; t < n; t++) {
-        args[t].tid = t;
-        args[t].seed = rodinia_mt_seed ^ (unsigned int)(t + 1);
-        args[t].loops = 0;
-        args[t].private_buf = private_buf + (size_t)t * private_words_per_thread;
-        args[t].private_words = private_words_per_thread;
+        rodinia_mt_args[t].tid = t;
+        rodinia_mt_args[t].seed = rodinia_mt_seed ^
+                                  (unsigned int)(t + 1) ^
+                                  (unsigned int)iter;
+        rodinia_mt_args[t].loops = 0;
+        rodinia_mt_args[t].private_buf =
+            rodinia_mt_private + (size_t)t * rodinia_mt_private_words_per_thread;
+        rodinia_mt_args[t].private_words = rodinia_mt_private_words_per_thread;
 
-        int rc = pthread_create(&pool[t], NULL, rodinia_mt_worker_once, &args[t]);
-        PF_LOG("CPU create tid=%d rc=%d", t, rc);
+        PF_LOG("Creating pthread tid=%d iter=%d", t, iter);
+
+        int rc = pthread_create(&rodinia_mt_pool[t],
+                                NULL,
+                                rodinia_mt_worker_once,
+                                &rodinia_mt_args[t]);
 
         if (rc != 0) {
-            fprintf(stderr, "[pf] pthread_create tid=%d failed: %s\n", t, strerror(rc));
-            fflush(stderr);
-            break;
-        }
-
-        created++;
-    }
-
-    PF_LOG("Created %d/%d CPU workers", created, n);
-    PF_LOG("Before CPU workers join");
-
-    for (int t = 0; t < created; t++) {
-        PF_LOG("Joining CPU worker thread %d", t);
-
-        int rc = pthread_join(pool[t], NULL);
-        if (rc != 0) {
-            fprintf(stderr, "[pf] pthread_join tid=%d failed: %s\n", t, strerror(rc));
+            fprintf(stderr,
+                    "[rodinia_mt][particlefilter] pthread_create failed tid=%d iter=%d rc=%d (%s)\n",
+                    t,
+                    iter,
+                    rc,
+                    strerror(rc));
             fflush(stderr);
             exit(1);
         }
 
-        PF_LOG("Joined CPU worker thread %d", t);
+        PF_LOG("pthread_create success tid=%d iter=%d", t, iter);
     }
 
-    PF_LOG("CPU workers joined");
+    PF_LOG("Main thread waiting at CPU start barrier iter=%d", iter);
 
-    for (int t = 0; t < created; t++) {
-        PF_LOG("CPU worker %d final loops=%llu",
+    simple_barrier_wait(&rodinia_mt_start_barrier);
+
+    PF_LOG("CPU workers released iter=%d", iter);
+
+    for (int t = 0; t < n; t++) {
+        PF_LOG("Joining pthread tid=%d iter=%d", t, iter);
+
+        int rc = pthread_join(rodinia_mt_pool[t], NULL);
+        if (rc != 0) {
+            fprintf(stderr,
+                    "[rodinia_mt][particlefilter] pthread_join failed tid=%d iter=%d rc=%d (%s)\n",
+                    t,
+                    iter,
+                    rc,
+                    strerror(rc));
+            fflush(stderr);
+            exit(1);
+        }
+
+        PF_LOG("Joined pthread tid=%d iter=%d loops=%llu",
                t,
-               (unsigned long long)args[t].loops);
+               iter,
+               (unsigned long long)rodinia_mt_args[t].loops);
     }
 
-    free(pool);
-    free(args);
-    free((void *)private_buf);
+    // simple_barrier_destroy(&rodinia_mt_start_barrier);
 
-    rodinia_mt_weights = NULL;
-    rodinia_mt_arrayX = NULL;
-    rodinia_mt_arrayY = NULL;
-    rodinia_mt_CDF = NULL;
-    rodinia_mt_likelihood = NULL;
-    rodinia_mt_items = 0;
+    rodinia_mt_clear_shared_data();
 
-    PF_LOG("CPU sync phase cleanup done");
+    PF_LOG("CPU phase completed iter=%d", iter);
 }
-// ---- end injected MT helpers ----
-
 
 #define BLOCK_X 16
 #define BLOCK_Y 16
 #define PI 3.1415926535897932
 
 const int threads_per_block = 64;
+
+__global__ void pf_gpu_keepalive_kernel(int *buf, int n, int repeat)
+{
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
+
+    for (int i = tid; i < n; i += stride) {
+        int x = buf[i];
+
+        for (int r = 0; r < repeat; r++) {
+            x = (x ^ (r + tid)) + 0x9e3779b9;
+            x = x * 1664525 + 1013904223;
+        }
+
+        buf[i] = x;
+    }
+}
+
+static void pf_gpu_keepalive(int num_cus)
+{
+    if (num_cus <= 0)
+        return;
+
+    int warmup_threads = threads_per_block;
+    int warmup_blocks = num_cus;
+    int warmup_n = warmup_blocks * warmup_threads;
+
+    int *warmup_buf = NULL;
+
+    hipError_t err = hipMallocManaged((void **)&warmup_buf,
+                                      sizeof(int) * warmup_n,
+                                      hipMemAttachGlobal);
+    if (err != hipSuccess) {
+        fprintf(stderr, "particlefilter keepalive hipMallocManaged failed: %s\n",
+                hipGetErrorString(err));
+        exit(-1);
+    }
+
+    for (int i = 0; i < warmup_n; i++)
+        warmup_buf[i] = i;
+
+    printf("PF_MT: GPU dummy blocks=%d threads=%d repeat=%d\n",
+           warmup_blocks, warmup_threads, 64);
+
+    pf_gpu_keepalive_kernel<<<warmup_blocks, warmup_threads>>>(
+        warmup_buf, warmup_n, 64);
+
+    err = hipDeviceSynchronize();
+    if (err != hipSuccess) {
+        fprintf(stderr, "particlefilter GPU keepalive failed: %s\n",
+                hipGetErrorString(err));
+        exit(-1);
+    }
+
+    hipFree(warmup_buf);
+}
+
 
 /**
 @var M value for Linear Congruential Generator (LCG); use GCC's value
@@ -415,8 +514,8 @@ void check_error(hipError_t e) {
 static void *checked_hip_malloc_managed(size_t size)
 {
     void *ptr = NULL;
-    // åæ¥ï¼host malloc + device hipMallocï¼å hipMemcpy(H2D/D2H) ç»´æ¤ä¸¤ä»½åå­
-    // ç°å¨ï¼ç»ä¸åå­ hipMallocManagedï¼CPU/GPU å±äº«åä¸ä»½æ°æ®
+    // 原来：host malloc + device hipMalloc，再 hipMemcpy(H2D/D2H) 维护两份内存
+    // 现在：统一内存 hipMallocManaged，CPU/GPU 共享同一份数据
     hipError_t err = hipMallocManaged(&ptr, size, hipMemAttachGlobal);
     if (err != hipSuccess) {
         printf("\nCUDA error: %s\n", hipGetErrorString(err));
@@ -525,9 +624,11 @@ __device__ double d_randn(int * seed, int index) {
 __global__ void normalize_weights_only_kernel(
     double *weights,
     int Nparticles,
-    double *total_sum
+    double *total_sum,
+    int block_offset
 ) {
-    int i = blockDim.x * blockIdx.x + threadIdx.x;
+    int block_id = blockIdx.x + block_offset;
+    int i = blockDim.x * block_id + threadIdx.x;
 
     if (i < Nparticles) {
         weights[i] = weights[i] / total_sum[0];
@@ -552,9 +653,11 @@ __global__ void cdf_u0_kernel(
 
 __global__ void fill_u_kernel(
     double *u,
-    int Nparticles
+    int Nparticles,
+    int block_offset
 ) {
-    int i = blockDim.x * blockIdx.x + threadIdx.x;
+    int block_id = blockIdx.x + block_offset;
+    int i = blockDim.x * block_id + threadIdx.x;
 
     if (i < Nparticles) {
         double u1 = u[0];
@@ -652,9 +755,11 @@ __global__ void find_index_kernel(
     double *xj,
     double *yj,
     double *weights,
-    int Nparticles
+    int Nparticles,
+    int block_offset
 ) {
-    int i = blockDim.x * blockIdx.x + threadIdx.x;
+    int block_id = blockIdx.x + block_offset;
+    int i = blockDim.x * block_id + threadIdx.x;
 
     if (i < Nparticles) {
         int index = lower_bound_cdf(CDF, Nparticles, u[i]);
@@ -704,11 +809,12 @@ __global__ void normalize_weights_kernel(double * weights, int Nparticles, doubl
     }
 }
 
-__global__ void sum_kernel_parallel(double *partial_sums, double *total_sum, int num_blocks) {
+__global__ void sum_kernel_parallel(double *partial_sums, double *total_sum, int num_blocks, int block_offset) {
     __shared__ double buf[256];
 
     int tid = threadIdx.x;
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int block_id = blockIdx.x + block_offset;
+    int idx = block_id * blockDim.x + threadIdx.x;
 
     double v = 0.0;
     if (idx < num_blocks) {
@@ -748,8 +854,8 @@ __global__ void sum_kernel_parallel(double *partial_sums, double *total_sum, int
  * param11: IszY
  * param12: Nfr
  *****************************/
-__global__ void likelihood_kernel(double * arrayX, double * arrayY, double * xj, double * yj, double * CDF, int * ind, int * objxy, double * likelihood, unsigned char * I, double * u, double * weights, int Nparticles, int countOnes, int max_size, int k, int IszY, int Nfr, int *seed, double* partial_sums) {
-    int block_id = blockIdx.x;
+__global__ void likelihood_kernel(double * arrayX, double * arrayY, double * xj, double * yj, double * CDF, int * ind, int * objxy, double * likelihood, unsigned char * I, double * u, double * weights, int Nparticles, int countOnes, int max_size, int k, int IszY, int Nfr, int *seed, double* partial_sums, int block_offset) {
+    int block_id = blockIdx.x + block_offset;
     int i = blockDim.x * block_id + threadIdx.x;
     int y;
     
@@ -806,7 +912,7 @@ __global__ void likelihood_kernel(double * arrayX, double * arrayY, double * xj,
             
     }
     if (threadIdx.x == 0) {
-        partial_sums[blockIdx.x] = buffer[0];
+        partial_sums[block_id] = buffer[0];
     }
     
     __syncthreads();
@@ -1068,8 +1174,8 @@ void particleFilter(unsigned char * I, int IszX, int IszY, int Nfr, int * seed, 
                 countOnes++;
         }
     }
-    // åæ¥ï¼objxy/weights/likelihood/arrayX/... å¨ hostï¼GPU ç«¯è¿è¦ hipMalloc + hipMemcpy
-    // ç°å¨ï¼ç»ä¸åå­ managed åéï¼ä¸ä»½æéè´¯é CPU åå§åä¸ GPU kernel
+    // 原来：objxy/weights/likelihood/arrayX/... 在 host，GPU 端还要 hipMalloc + hipMemcpy
+    // 现在：统一内存 managed 分配，一份指针贯通 CPU 初始化与 GPU kernel
     int * objxy = (int *)checked_hip_malloc_managed(countOnes * 2 * sizeof (int));
     getneighbors(disk, countOnes, objxy, radius);
     //initial weights are all equal (1/Nparticles)
@@ -1104,9 +1210,9 @@ void particleFilter(unsigned char * I, int IszX, int IszY, int Nfr, int * seed, 
     int * seed_GPU;
     double* partial_sums;
 
-    // ç»ä¸åå­å«åï¼
-    // åæ¥ï¼*_GPU æ¯ device æéï¼éæ¾å¼ H2D/D2H
-    // ç°å¨ï¼*_GPU ç´æ¥æå managed æéï¼CPU/GPU åæéç´ç¨
+    // 统一内存别名：
+    // 原来：*_GPU 是 device 指针，需显式 H2D/D2H
+    // 现在：*_GPU 直接指向 managed 指针，CPU/GPU 同指针直用
     arrayX_GPU = arrayX;
     arrayY_GPU = arrayY;
     xj_GPU = xj;
@@ -1156,67 +1262,96 @@ void particleFilter(unsigned char * I, int IszX, int IszY, int Nfr, int * seed, 
     double *total_sum;
     total_sum = (double *)checked_hip_malloc_managed(sizeof(double));
 
+
+    PF_LOG("Gaussian-style sequential CPU-then-GPU phase start");
+
+    PF_LOG("CPU batch phase start");
+    rodinia_mt_cpu_phase_pf_sync(weights_GPU,
+                                arrayX_GPU,
+                                arrayY_GPU,
+                                CDF_GPU,
+                                likelihood_GPU,
+                                Nparticles,
+                                0);
+    PF_LOG("CPU batch phase done");
+
+    PF_LOG("GPU batch phase start");
+
     for (k = 1; k < Nfr; k++) {
+        PF_LOG("GPU iter=%d/%d begin", k, Nfr - 1);
 
-        PF_LOG("frame %d CPU phase begin", k);
-
-        rodinia_mt_cpu_phase_pf_sync(weights_GPU,
-                                    arrayX_GPU,
-                                    arrayY_GPU,
-                                    CDF_GPU,
-                                    likelihood_GPU,
-                                    Nparticles);
-
-        PF_LOG("frame %d CPU phase end", k);
-
-        PF_LOG("frame %d GPU phase begin", k);
+        PF_LOG("GPU iter=%d/%d before likelihood_kernel", k, Nfr - 1);
 
         *total_sum = 0.0;
 
-        likelihood_kernel <<< num_blocks, threads_per_block >>> (
-            arrayX_GPU,
-            arrayY_GPU,
-            xj_GPU,
-            yj_GPU,
-            CDF_GPU,
-            ind_GPU,
-            objxy_GPU,
-            likelihood_GPU,
-            I_GPU,
-            u_GPU,
-            weights_GPU,
-            Nparticles,
-            countOnes,
-            max_size,
-            k,
-            IszY,
-            Nfr,
-            seed_GPU,
-            partial_sums
-        );
-        HIP_KERNEL_CHECK("likelihood_kernel");
+        for (int block_base = 0; block_base < num_blocks;
+             block_base += PF_REAL_BLOCK_CHUNK) {
+            int remaining_blocks = num_blocks - block_base;
+            int launch_blocks = remaining_blocks < PF_REAL_BLOCK_CHUNK ?
+                remaining_blocks : PF_REAL_BLOCK_CHUNK;
 
-        PF_LOG("frame %d before sum_kernel_parallel", k);
+            likelihood_kernel <<< launch_blocks, threads_per_block >>> (
+                arrayX_GPU,
+                arrayY_GPU,
+                xj_GPU,
+                yj_GPU,
+                CDF_GPU,
+                ind_GPU,
+                objxy_GPU,
+                likelihood_GPU,
+                I_GPU,
+                u_GPU,
+                weights_GPU,
+                Nparticles,
+                countOnes,
+                max_size,
+                k,
+                IszY,
+                Nfr,
+                seed_GPU,
+                partial_sums,
+                block_base
+            );
+            HIP_KERNEL_CHECK("likelihood_kernel");
+        }
 
-        sum_kernel_parallel <<< num_blocks, threads_per_block >>> (
-            partial_sums,
-            total_sum,
-            num_blocks
-        );
+        PF_LOG("GPU iter=%d/%d before sum_kernel_parallel", k, Nfr - 1);
 
-        HIP_KERNEL_CHECK("sum_kernel_parallel");
+        for (int block_base = 0; block_base < num_blocks;
+             block_base += PF_REAL_BLOCK_CHUNK) {
+            int remaining_blocks = num_blocks - block_base;
+            int launch_blocks = remaining_blocks < PF_REAL_BLOCK_CHUNK ?
+                remaining_blocks : PF_REAL_BLOCK_CHUNK;
 
-        PF_LOG("frame %d before normalize_weights_only_kernel", k);
+            sum_kernel_parallel <<< launch_blocks, threads_per_block >>> (
+                partial_sums,
+                total_sum,
+                num_blocks,
+                block_base
+            );
 
-        normalize_weights_only_kernel <<< num_blocks, threads_per_block >>> (
-            weights_GPU,
-            Nparticles,
-            total_sum
-        );
+            HIP_KERNEL_CHECK("sum_kernel_parallel");
+        }
 
-        HIP_KERNEL_CHECK("normalize_weights_only_kernel");
+        PF_LOG("GPU iter=%d/%d before normalize_weights_only_kernel", k, Nfr - 1);
 
-        PF_LOG("frame %d before cdf_u0_kernel", k);
+        for (int block_base = 0; block_base < num_blocks;
+             block_base += PF_REAL_BLOCK_CHUNK) {
+            int remaining_blocks = num_blocks - block_base;
+            int launch_blocks = remaining_blocks < PF_REAL_BLOCK_CHUNK ?
+                remaining_blocks : PF_REAL_BLOCK_CHUNK;
+
+            normalize_weights_only_kernel <<< launch_blocks, threads_per_block >>> (
+                weights_GPU,
+                Nparticles,
+                total_sum,
+                block_base
+            );
+
+            HIP_KERNEL_CHECK("normalize_weights_only_kernel");
+        }
+
+        PF_LOG("GPU iter=%d/%d before cdf_u0_kernel", k, Nfr - 1);
 
         cdf_u0_kernel <<< 1, 1 >>> (
             weights_GPU,
@@ -1228,36 +1363,57 @@ void particleFilter(unsigned char * I, int IszX, int IszY, int Nfr, int * seed, 
 
         HIP_KERNEL_CHECK("cdf_u0_kernel");
 
-        PF_LOG("frame %d before fill_u_kernel", k);
+        PF_LOG("GPU iter=%d/%d before fill_u_kernel", k, Nfr - 1);
 
-        fill_u_kernel <<< num_blocks, threads_per_block >>> (
-            u_GPU,
-            Nparticles
-        );
+        for (int block_base = 0; block_base < num_blocks;
+             block_base += PF_REAL_BLOCK_CHUNK) {
+            int remaining_blocks = num_blocks - block_base;
+            int launch_blocks = remaining_blocks < PF_REAL_BLOCK_CHUNK ?
+                remaining_blocks : PF_REAL_BLOCK_CHUNK;
 
-        HIP_KERNEL_CHECK("fill_u_kernel");
+            fill_u_kernel <<< launch_blocks, threads_per_block >>> (
+                u_GPU,
+                Nparticles,
+                block_base
+            );
 
-        PF_LOG("frame %d before find_index_kernel", k);
+            HIP_KERNEL_CHECK("fill_u_kernel");
+        }
 
-        find_index_kernel <<< num_blocks, threads_per_block >>> (
-            arrayX_GPU,
-            arrayY_GPU,
-            CDF_GPU,
-            u_GPU,
-            xj_GPU,
-            yj_GPU,
-            weights_GPU,
-            Nparticles
-        );
+        PF_LOG("GPU iter=%d/%d before find_index_kernel", k, Nfr - 1);
 
-        HIP_KERNEL_CHECK("find_index_kernel");
+        for (int block_base = 0; block_base < num_blocks;
+             block_base += PF_REAL_BLOCK_CHUNK) {
+            int remaining_blocks = num_blocks - block_base;
+            int launch_blocks = remaining_blocks < PF_REAL_BLOCK_CHUNK ?
+                remaining_blocks : PF_REAL_BLOCK_CHUNK;
 
-        PF_LOG("frame %d GPU phase end", k);
+            find_index_kernel <<< launch_blocks, threads_per_block >>> (
+                arrayX_GPU,
+                arrayY_GPU,
+                CDF_GPU,
+                u_GPU,
+                xj_GPU,
+                yj_GPU,
+                weights_GPU,
+                Nparticles,
+                block_base
+            );
+
+            HIP_KERNEL_CHECK("find_index_kernel");
+        }
+
+        PF_LOG("GPU iter=%d/%d end", k, Nfr - 1);
 
     }
 
-    // åæ¥ï¼D2H memcpy éå¼åæ­¥
-    // ç°å¨ï¼managed åå­ä¸æ¾å¼åæ­¥ç¡®ä¿ CPU å¯è¯»
+    pf_gpu_keepalive(num_cus);
+
+    PF_LOG("GPU batch phase done");
+    PF_LOG("Gaussian-style sequential CPU-then-GPU phase done");
+
+    // 原来：D2H memcpy 隐式同步
+    // 现在：managed 内存下显式同步确保 CPU 可读
     hipDeviceSynchronize();
     long long back_time = get_time();
 
@@ -1394,8 +1550,8 @@ int main(int argc, char * argv[]) {
         Nparticles = target_particles;
     }
     //establish seed
-    // åæ¥ï¼seed/I å¨ hostï¼GPU ç«¯é hipMemcpy
-    // ç°å¨ï¼seed/I ç¨ managed åéï¼GPU ç´æ¥è®¿é®
+    // 原来：seed/I 在 host，GPU 端需 hipMemcpy
+    // 现在：seed/I 用 managed 分配，GPU 直接访问
     int * seed = (int *)checked_hip_malloc_managed(sizeof (int) *Nparticles);
     int i;
     for (i = 0; i < Nparticles; i++)

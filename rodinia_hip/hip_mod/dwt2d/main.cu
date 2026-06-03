@@ -360,214 +360,209 @@ void processDWT(struct dwt *d, int forward, int writeVisual)
 
 typedef struct {
     int tid;
-    int active_threads;
-    volatile unsigned char *shared_read;
-    size_t shared_bytes;
-    unsigned int *private_write;
-    size_t private_elems;
-    unsigned int sink;
-} dwt2d_cpu_dummy_arg_t;
+    int start;
+    int end;
+    uint64_t loops;
+    int *private_buf;
+    int private_size;
+} CpuArg;
 
-static volatile int dwt2d_cpu_ready_count = 0;
-static volatile int dwt2d_cpu_start_flag = 0;
+static volatile unsigned char *g_src_shared = NULL;
+static size_t g_src_shared_bytes = 0;
+static pthread_barrier_t g_cpu_start_barrier;
 
-#ifndef DWT2D_CPU_SHARED_STRIDE
-#define DWT2D_CPU_SHARED_STRIDE 16ULL
+#ifndef RODINIA_CPU_WORKER_ITERS
+#define RODINIA_CPU_WORKER_ITERS 2000ULL
 #endif
 
-#ifndef DWT2D_CPU_READ_LIMIT
-#define DWT2D_CPU_READ_LIMIT (1ULL << 20)
+#ifndef DWT2D_CPU_SHARED_DIV
+#define DWT2D_CPU_SHARED_DIV 128
 #endif
 
-#ifndef DWT2D_CPU_PRIVATE_ELEMS
-#define DWT2D_CPU_PRIVATE_ELEMS 1024ULL
+#ifndef DWT2D_SHARED_ACCESS_INTERVAL
+#define DWT2D_SHARED_ACCESS_INTERVAL 256
 #endif
 
-#ifndef DWT2D_CPU_COMPUTE_ROUNDS
-#define DWT2D_CPU_COMPUTE_ROUNDS 32
-#endif
-
-static void *dwt2d_cpu_dummy_worker(void *opaque)
+static inline uint32_t dwt2d_xorshift32(uint32_t *state)
 {
-    dwt2d_cpu_dummy_arg_t *a = (dwt2d_cpu_dummy_arg_t *)opaque;
-    volatile unsigned char *shared = a->shared_read;
-    unsigned int *priv = a->private_write;
-    unsigned int acc = (unsigned int)(a->tid + 1);
+    uint32_t x = *state;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    *state = x ? x : 1;
+    return *state;
+}
 
-    __sync_fetch_and_add(&dwt2d_cpu_ready_count, 1);
+static void *cpu_shared_worker(void *arg)
+{
+    CpuArg *a = (CpuArg *)arg;
 
-    while (!dwt2d_cpu_start_flag) {
-        sched_yield();
+    int bret = pthread_barrier_wait(&g_cpu_start_barrier);
+    if (bret != 0 && bret != PTHREAD_BARRIER_SERIAL_THREAD) {
+        DWT2D_ERR("pthread_barrier_wait failed in worker tid=%d ret=%d",
+                  a->tid, bret);
+        return NULL;
     }
 
-    size_t slice_begin =
-        (a->shared_bytes * (size_t)a->tid) / (size_t)a->active_threads;
-    size_t slice_end =
-        (a->shared_bytes * (size_t)(a->tid + 1)) / (size_t)a->active_threads;
-    size_t slice_size = slice_end > slice_begin ? (slice_end - slice_begin) : 0;
-    size_t scan_elems =
-        slice_size < DWT2D_CPU_READ_LIMIT ? slice_size : DWT2D_CPU_READ_LIMIT;
+    const int own_count = a->end - a->start;
 
-    for (size_t n = 0; n < scan_elems; n += DWT2D_CPU_SHARED_STRIDE) {
-        size_t read_idx = slice_begin + n;
-        unsigned int v = (unsigned int)shared[read_idx];
-        size_t write_idx = (n / DWT2D_CPU_SHARED_STRIDE) % a->private_elems;
-        priv[write_idx] = v + (unsigned int)n + (unsigned int)a->tid;
-        acc += priv[write_idx];
-        acc = acc * 1664525u + 1013904223u;
+    volatile unsigned char *load = g_src_shared;
+    uint32_t x = 0x9e3779b9u ^ (uint32_t)(a->tid + 1);
+    volatile uint32_t acc = 0;
+
+    const int can_touch_shared =
+        (own_count > 0 && load != NULL && g_src_shared_bytes > 0);
+
+    volatile int *private_buf = (volatile int *)a->private_buf;
+    const int can_touch_private =
+        (private_buf != NULL && a->private_size > 0);
+
+    for (uint64_t outer = 0; outer < RODINIA_CPU_WORKER_ITERS; ++outer) {
+        for (int k = 0; k < 64; ++k) {
+            uint64_t iter = outer * 64ULL + (uint64_t)k;
+
+            /*
+            * Most CPU accesses go to private memory.
+            * This keeps CPU IPC non-zero without stressing CPU/GPU coherence.
+            */
+            if (can_touch_private) {
+                int private_idx =
+                    (int)(dwt2d_xorshift32(&x) % (uint32_t)a->private_size);
+
+                int v = (int)acc + a->tid + private_idx + k;
+                private_buf[private_idx] = v;
+
+                acc += (uint32_t)private_buf[private_idx];
+            }
+
+            /*
+            * Only a small fraction of CPU accesses touch the shared managed image.
+            * CPU and GPU still share d->srcImg, but coherence pressure is reduced.
+            */
+            if (can_touch_shared &&
+                (iter % DWT2D_SHARED_ACCESS_INTERVAL) == 0) {
+                int idx = a->start +
+                        (int)(dwt2d_xorshift32(&x) % (uint32_t)own_count);
+
+                acc += load[idx];
+            }
+        }
     }
 
-    for (int round = 0; round < DWT2D_CPU_COMPUTE_ROUNDS; round++) {
-        size_t write_idx = (size_t)round % a->private_elems;
-        acc ^= priv[write_idx] + (unsigned int)round;
-        acc = acc * 1103515245u + 12345u;
-    }
-
-    for (int tail = 0; tail < a->tid; tail++) {
-        size_t write_idx = (size_t)(tail + a->tid) % a->private_elems;
-        acc ^= priv[write_idx] + (unsigned int)(tail * 17 + a->tid);
-        acc = acc * 1664525u + 1013904223u;
-    }
-
-    a->sink = acc;
-    DWT2D_LOG("CPU dummy worker end: tid=%d slice=%zu..%zu sink=%u",
-              a->tid, slice_begin, slice_end, a->sink);
+    a->loops = (uint64_t)acc;
     return NULL;
 }
 
-static void dwt2d_cpu_dummy_phase(void *shared, size_t shared_bytes, int worker_count)
+static void dwt2d_cpu_phase(int nthreads,
+                            volatile unsigned char *shared,
+                            size_t shared_bytes)
 {
-    DWT2D_LOG("CPU dummy phase enter: shared=%p bytes=%zu workers=%d",
-              shared, shared_bytes, worker_count);
-    if (worker_count <= 0 || shared == NULL || shared_bytes == 0) {
-        DWT2D_LOG("CPU dummy phase skipped");
+    DWT2D_LOG("CPU phase begin: nthreads=%d shared=%p bytes=%zu",
+              nthreads, (void *)shared, shared_bytes);
+
+    if (nthreads <= 0 || shared == NULL || shared_bytes == 0) {
+        DWT2D_LOG("CPU phase skipped");
         return;
     }
 
-    pthread_t *threads =
-        (pthread_t *)malloc((size_t)worker_count * sizeof(pthread_t));
-    dwt2d_cpu_dummy_arg_t *args =
-        (dwt2d_cpu_dummy_arg_t *)malloc((size_t)worker_count *
-                                        sizeof(dwt2d_cpu_dummy_arg_t));
-    unsigned int *private_buf =
-        (unsigned int *)malloc((size_t)worker_count *
-                               DWT2D_CPU_PRIVATE_ELEMS *
-                               sizeof(unsigned int));
+    g_src_shared = shared;
+    g_src_shared_bytes = shared_bytes;
 
-    if (!threads || !args || !private_buf) {
-        fprintf(stderr, "dwt2d CPU dummy allocation failed\n");
-        free(threads);
-        free(args);
-        free(private_buf);
-        exit(-1);
+    pthread_t *cpu_threads =
+        (pthread_t *)malloc((size_t)nthreads * sizeof(pthread_t));
+
+    CpuArg *cpu_args =
+        (CpuArg *)malloc((size_t)nthreads * sizeof(CpuArg));
+
+    if (cpu_threads == NULL || cpu_args == NULL) {
+        DWT2D_ERR("CPU phase malloc failed");
+        free(cpu_threads);
+        free(cpu_args);
+        exit(1);
     }
 
-    for (size_t i = 0;
-         i < (size_t)worker_count * DWT2D_CPU_PRIVATE_ELEMS;
-         i++) {
-        private_buf[i] = 0;
+    if (pthread_barrier_init(&g_cpu_start_barrier, NULL,
+                             nthreads + 1) != 0) {
+        DWT2D_ERR("pthread_barrier_init failed");
+        free(cpu_threads);
+        free(cpu_args);
+        exit(1);
     }
 
-    dwt2d_cpu_ready_count = 0;
-    dwt2d_cpu_start_flag = 0;
+    int private_stride = (int)(shared_bytes / (size_t)nthreads);
+    if (private_stride < 1024)
+        private_stride = 1024;
+    if (private_stride > 65536)
+        private_stride = 65536;
 
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setstacksize(&attr, 256 * 1024);
-    DWT2D_LOG("CPU dummy pthread stack size set");
+    int *cpu_private_buf =
+        (int *)calloc((size_t)nthreads * (size_t)private_stride,
+                      sizeof(int));
 
-    for (int t = 0; t < worker_count; t++) {
-        args[t].tid = t;
-        args[t].active_threads = worker_count;
-        args[t].shared_read = (volatile unsigned char *)shared;
-        args[t].shared_bytes = shared_bytes;
-        args[t].private_write =
-            private_buf + (size_t)t * DWT2D_CPU_PRIVATE_ELEMS;
-        args[t].private_elems = DWT2D_CPU_PRIVATE_ELEMS;
-        args[t].sink = 0;
+    if (cpu_private_buf == NULL) {
+        DWT2D_ERR("CPU private buffer allocation failed");
+        pthread_barrier_destroy(&g_cpu_start_barrier);
+        free(cpu_threads);
+        free(cpu_args);
+        exit(1);
+    }
 
-        int rc = pthread_create(&threads[t], &attr,
-                                dwt2d_cpu_dummy_worker, &args[t]);
+    int chunk = (int)(shared_bytes / (size_t)nthreads);
+
+    for (int t = 0; t < nthreads; ++t) {
+        cpu_args[t].tid = t;
+        cpu_args[t].start = t * chunk;
+        cpu_args[t].end = (t == nthreads - 1)
+                          ? (int)shared_bytes
+                          : (t + 1) * chunk;
+        cpu_args[t].loops = 0;
+        cpu_args[t].private_buf = cpu_private_buf + t * private_stride;
+        cpu_args[t].private_size = private_stride;
+    }
+
+    for (int t = 0; t < nthreads; ++t) {
+        DWT2D_LOG("pthread_create begin: tid=%d", t);
+        int rc = pthread_create(&cpu_threads[t], NULL,
+                                cpu_shared_worker, &cpu_args[t]);
+        DWT2D_LOG("pthread_create end: tid=%d rc=%d", t, rc);
+
         if (rc != 0) {
-            fprintf(stderr, "pthread_create failed at thread %d, rc=%d\n", t, rc);
+            DWT2D_ERR("pthread_create failed: tid=%d rc=%d", t, rc);
             exit(1);
         }
         DWT2D_LOG("CPU dummy pthread_create ok: tid=%d", t);
     }
 
-    while (dwt2d_cpu_ready_count < worker_count) {
-        sched_yield();
-    }
-    DWT2D_LOG("CPU dummy all workers ready: count=%d", worker_count);
-    dwt2d_cpu_start_flag = 1;
-    DWT2D_LOG("CPU dummy start flag released");
+    DWT2D_LOG("Main thread waiting at CPU start barrier");
 
-    for (int t = 0; t < worker_count; t++) {
-        DWT2D_LOG("CPU dummy pthread_join begin: tid=%d", t);
-        pthread_join(threads[t], NULL);
-        DWT2D_LOG("CPU dummy pthread_join end: tid=%d sink=%u", t, args[t].sink);
+    int bret = pthread_barrier_wait(&g_cpu_start_barrier);
+    if (bret != 0 && bret != PTHREAD_BARRIER_SERIAL_THREAD) {
+        DWT2D_ERR("pthread_barrier_wait failed in main ret=%d", bret);
+        exit(1);
     }
 
-    pthread_attr_destroy(&attr);
-    free(private_buf);
-    free(threads);
-    free(args);
-    DWT2D_LOG("CPU dummy phase exit");
+    DWT2D_LOG("CPU workers released");
+
+    for (int t = 0; t < nthreads; ++t) {
+        DWT2D_LOG("pthread_join begin: tid=%d", t);
+        pthread_join(cpu_threads[t], NULL);
+        DWT2D_LOG("pthread_join end: tid=%d loops=%llu",
+                  t, (unsigned long long)cpu_args[t].loops);
+    }
+
+    pthread_barrier_destroy(&g_cpu_start_barrier);
+
+    free(cpu_private_buf);
+    free(cpu_threads);
+    free(cpu_args);
+
+    g_src_shared = NULL;
+    g_src_shared_bytes = 0;
+
+    DWT2D_LOG("CPU phase end");
 }
 
-__global__ static void dwt2d_gpu_dummy_kernel(int *buf, int n, int repeat)
-{
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    int stride = blockDim.x * gridDim.x;
-
-    for (int i = tid; i < n; i += stride) {
-        int x = buf[i];
-        for (int r = 0; r < repeat; r++) {
-            x = (x ^ (r + tid)) + 0x9e3779b9;
-            x = x * 1664525 + 1013904223;
-        }
-        buf[i] = x;
-    }
-}
-
-static void dwt2d_gpu_dummy_phase(int num_cus)
-{
-    DWT2D_LOG("GPU dummy phase enter: requested_cus=%d", num_cus);
-    if (num_cus <= 0) {
-        DWT2D_LOG("GPU dummy phase skipped");
-        return;
-    }
-
-    int blocks = num_cus;
-    int threads = 256;
-    int n = blocks * threads;
-    int *buf = NULL;
-
-    hipError_t err =
-        hipMallocManaged((void **)&buf, sizeof(int) * (size_t)n, hipMemAttachGlobal);
-    if (err != hipSuccess) {
-        fprintf(stderr, "hipMallocManaged GPU dummy failed: %s\n",
-                hipGetErrorString(err));
-        exit(-1);
-    }
-
-    for (int i = 0; i < n; i++) {
-        buf[i] = i;
-    }
-
-    DWT2D_LOG("GPU dummy launch: blocks=%d threads=%d elements=%d repeat=%d",
-              blocks, threads, n, 64);
-    dwt2d_gpu_dummy_kernel<<<blocks, threads>>>(buf, n, 64);
-    err = hipDeviceSynchronize();
-    if (err != hipSuccess) {
-        fprintf(stderr, "dwt2d GPU dummy failed: %s\n",
-                hipGetErrorString(err));
-        exit(-1);
-    }
-
-    hipFree(buf);
-    DWT2D_LOG("GPU dummy phase exit");
-}
+int num_cus = 0;
 
 int main(int argc, char **argv)
 {
@@ -810,16 +805,52 @@ int main(int argc, char **argv)
     fflush(stdout);
 #endif
 
+    DWT2D_LOG("CPU phase check: mt_threads=%d", mt_threads);
+    if (mt_threads > 0) {
+        size_t cpu_shared_bytes = (size_t)inputSize / DWT2D_CPU_SHARED_DIV;
+
+        if (cpu_shared_bytes < 4096 && inputSize >= 4096) {
+            cpu_shared_bytes = 4096;
+        }
+
+        if (cpu_shared_bytes > (size_t)inputSize) {
+            cpu_shared_bytes = (size_t)inputSize;
+        }
+
+        DWT2D_LOG("CPU shared managed region limited: %zu / %d bytes, div=%d",
+                cpu_shared_bytes, inputSize, DWT2D_CPU_SHARED_DIV);
+
+        dwt2d_cpu_phase(mt_threads,
+                        (volatile unsigned char *)d->srcImg,
+                        cpu_shared_bytes);
+    }
+
     //writeComponent(r_cuda, pixWidth, pixHeight, srcFilename, ".g");
     //writeComponent(g_wave_cuda, 512000, ".g");
     //writeComponent(g_cuda, componentSize, ".g");
     //writeComponent(b_wave_cuda, componentSize, ".b");
+    /* DWT */
+    DWT2D_LOG("GPU DWT dispatch begin");
+    if (forward == 1) {
+        if(dwt97 == 1)
+            processDWT<float>(d, forward, writeVisual);
+        else
+            processDWT<int>(d, forward, writeVisual);
+    } else {
+        if(dwt97 == 1)
+            processDWT<float>(d, forward, writeVisual);
+        else
+            processDWT<int>(d, forward, writeVisual);
+    }
+    DWT2D_LOG("GPU DWT dispatch end");
+
+    DWT2D_LOG("free srcImg begin");
 	hipFree(d->srcImg);
 	cudaCheckError("Cuda free host");
-    DWT2D_LOG("srcImg freed");
-
-    printf("PASSED!\n");
-    DWT2D_LOG("main end");
+    DWT2D_LOG("free srcImg end");
+    
+	printf("PASSED!\n");
+    fflush(stdout);
 
     return 0;
 }

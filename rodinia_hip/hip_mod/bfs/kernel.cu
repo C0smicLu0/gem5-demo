@@ -47,11 +47,14 @@ Kernel(Node* g_graph_nodes,
        bool* g_updating_graph_mask,
        bool* g_graph_visited,
        int* g_cost,
-       int no_of_nodes)
+       int no_of_nodes,
+       int block_offset,
+       int total_blocks)
 {
-    for (int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int block_id = blockIdx.x + block_offset;
+    for (int tid = block_id * blockDim.x + threadIdx.x;
          tid < no_of_nodes;
-         tid += blockDim.x * gridDim.x)
+         tid += blockDim.x * total_blocks)
     {
         if (g_graph_mask[tid])
         {

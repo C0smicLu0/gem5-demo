@@ -27,6 +27,7 @@
 #endif
 
 #define MAX_THREADS_PER_BLOCK 512
+static const int BFS_REAL_BLOCK_CHUNK = 12;
 
 int no_of_nodes;
 int edge_list_size;
@@ -63,6 +64,63 @@ static void *checked_hip_malloc_managed(size_t size)
         exit(-1);
     }
     return ptr;
+}
+
+
+__global__ void bfs_gpu_keepalive_kernel(int *buf, int n, int repeat)
+{
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
+
+    for (int i = tid; i < n; i += stride) {
+        int x = buf[i];
+
+        for (int r = 0; r < repeat; r++) {
+            x = (x ^ (r + tid)) + 0x9e3779b9;
+            x = x * 1664525 + 1013904223;
+        }
+
+        buf[i] = x;
+    }
+}
+
+static void bfs_gpu_keepalive(int num_cus)
+{
+    if (num_cus <= 0)
+        return;
+
+    int warmup_threads = MAX_THREADS_PER_BLOCK;
+    int warmup_blocks = num_cus;
+    int warmup_n = warmup_blocks * warmup_threads;
+
+    int *warmup_buf = NULL;
+
+    hipError_t err = hipMallocManaged((void **)&warmup_buf,
+                                      sizeof(int) * warmup_n,
+                                      hipMemAttachGlobal);
+    if (err != hipSuccess) {
+        fprintf(stderr, "BFS keepalive hipMallocManaged failed: %s\n",
+                hipGetErrorString(err));
+        exit(-1);
+    }
+
+    for (int i = 0; i < warmup_n; i++)
+        warmup_buf[i] = i;
+
+    printf("BFS_MT: GPU dummy blocks=%d threads=%d repeat=%d\n",
+           warmup_blocks, warmup_threads, 64);
+
+    bfs_gpu_keepalive_kernel<<<warmup_blocks, warmup_threads>>>(
+        warmup_buf, warmup_n, 64);
+
+    err = hipDeviceSynchronize();
+    if (err != hipSuccess) {
+        fprintf(stderr, "BFS GPU keepalive failed: %s\n",
+                hipGetErrorString(err));
+        exit(-1);
+    }
+
+    hipFree(warmup_buf);
 }
 
 #include "kernel.cu"
@@ -242,12 +300,32 @@ void BFSGraph( int argc, char** argv)
 		h2d_time += tv.tv_sec * 1000.0 + (float) tv.tv_usec / 1000.0;
 #endif
 
-		Kernel<<< grid, threads, 0 >>>( d_graph_nodes, d_graph_edges, d_graph_mask, d_updating_graph_mask, d_graph_visited, d_cost, no_of_nodes);
-		// check if kernel execution generated and error
+		for (int block_base = 0; block_base < num_of_blocks;
+		     block_base += BFS_REAL_BLOCK_CHUNK) {
+			int remaining_blocks = num_of_blocks - block_base;
+			int launch_blocks = remaining_blocks < BFS_REAL_BLOCK_CHUNK ?
+				remaining_blocks : BFS_REAL_BLOCK_CHUNK;
+			dim3 batch_grid(launch_blocks, 1, 1);
 
-		Kernel2<<< grid, threads, 0 >>>( d_graph_mask, d_updating_graph_mask, d_graph_visited, d_over, no_of_nodes);
-		// 统一内存下，CPU 读取 d_over 前需要显式同步
-		hipDeviceSynchronize();
+			Kernel<<< batch_grid, threads, 0 >>>(d_graph_nodes,
+				d_graph_edges, d_graph_mask, d_updating_graph_mask,
+				d_graph_visited, d_cost, no_of_nodes, block_base,
+				num_of_blocks);
+			hipDeviceSynchronize();
+		}
+
+		for (int block_base = 0; block_base < num_of_blocks;
+		     block_base += BFS_REAL_BLOCK_CHUNK) {
+			int remaining_blocks = num_of_blocks - block_base;
+			int launch_blocks = remaining_blocks < BFS_REAL_BLOCK_CHUNK ?
+				remaining_blocks : BFS_REAL_BLOCK_CHUNK;
+			dim3 batch_grid(launch_blocks, 1, 1);
+
+			Kernel2<<< batch_grid, threads, 0 >>>(d_graph_mask,
+				d_updating_graph_mask, d_graph_visited, d_over, no_of_nodes,
+				block_base, num_of_blocks);
+			hipDeviceSynchronize();
+		}
 		// check if kernel execution generated and error
 
 #ifdef  TIMING
@@ -270,6 +348,8 @@ void BFSGraph( int argc, char** argv)
 
 
 	printf("Kernel Executed %d times\n",k);
+
+	bfs_gpu_keepalive(num_cus);
 
 	// copy result from device to host
 #ifdef  TIMING

@@ -242,9 +242,6 @@ add_resource_workload_args() {
       ;;
     rodinia-bfs)
       case " ${selected_profiles} " in
-        *" cores.args1 "*|*" args1 "*)
-          cpu_offset=3
-          ;;
         *" cores.args2 "*|*" args2 "*)
           cpu_offset=1
           ;;

@@ -1,95 +1,88 @@
-#!/usr/bin/python
-
-# This script generates matrices to solve a set of equations with n variables and n unknowns.
-# For each iteration, an n x n matrix and a 1 x n vector are created to describe the set of
-# equations in the form:
-#
-#              a0x + b0y + c0z + d0w = e0
-#              a1x + b1y + c1z + d1w = e1
-#              a2x + b2y + c2z + d2w = e2
-#              a3x + b3y + c3z + d3w = e3
-#
-# where in this case n=4.
-#
-# The files that are produced contain the dimension in line one, followed by
-# the n x n coefficient matrix, the 1 x n vector, and the 1 x n solution.
-# Each output file has the name matrixN.txt, where N is the value of n (e.g., matrix4.txt)
-#
-# The n x n matrix values and solution vector are confined to the values -0.9 to 0.9 
-# (one decimal place), but the 1 x n vector can have two decimal place values.
-# 
-# usage:
-# ./matrixGenerator a b c
-#
-# where a is the start value for n, b is the end value for n, and c is the step
-#
-# For example:
-#
-# ./matrixGenerator 16 256 4
-#
-# produces matrix16.txt, matrix20.txt, ... , matrix252.txt, matrix256.txt
-#
-# If there are no arguments, a is assumed to be 4 and only matrix4.txt is produced
-# If only a is present, only that matrix is produced
-# If a and b are present but not c, a step value of 1 is assumed
+#!/usr/bin/env python3
 
 import random
 import sys
 
-a = 4
-b = 4
-c = 1
 
-# parse command line
-try:
-    a = int(sys.argv[1])
-    b = a+1
-    b = int(sys.argv[2])+1
-    c = int(sys.argv[3])
-except IndexError:
-    pass
-except ValueError:
-    pass
+def main():
+    start = 4
+    end = 4
+    step = 1
 
-for sqSize in range(a,b,c):
-	#size = 100
-	#size = sqSize*sqSize
-	size = sqSize;
-	print size
-	solnVec = []
-	matrix = []
-	bVector = []
-	
-	filename = "matrix"+str(size)+".txt"
-	#f = open("matrix100.txt",'w')
-	f = open(filename,'w')
-	f.write(str(size)+"\n\n")
-	for i in range(size):
-		#solnVec.append(random.randint(-size,size)/float(size))
-		solnVec.append(random.randint(-10,10)/float(10))
-	
-	for i in range(size):
-		matrixRow = []
-		for j in range(size):
-			#matrixRow.append(random.randint(-size,size)/float(size))
-			matrixRow.append(random.randint(-10,10)/float(10))
-		matrix.append(matrixRow)
-	
-	for i in matrix:
-		linResult = 0
-		for j in range(size):
-			f.write(str(i[j])+"\t")
-			linResult+=i[j]*solnVec[j]
-		bVector.append(linResult)
-		f.write("\n")
-	
-	f.write("\n")
-	for i in bVector:
-		f.write(str(i)+"\t")
-	
-	f.write("\n\n");
-	for i in solnVec:
-		f.write(str(i)+"\t")
-	f.write("\n\n")
-	
-	f.close()
+    # 参数解析：
+    # python3 matrixGenerator.py             -> 生成 matrix4.txt
+    # python3 matrixGenerator.py 64          -> 生成 matrix64.txt
+    # python3 matrixGenerator.py 16 256      -> 生成 matrix16.txt ... matrix256.txt，步长为 1
+    # python3 matrixGenerator.py 16 256 16   -> 生成 matrix16.txt, matrix32.txt, ... matrix256.txt
+    try:
+        if len(sys.argv) >= 2:
+            start = int(sys.argv[1])
+            end = start
+
+        if len(sys.argv) >= 3:
+            end = int(sys.argv[2])
+
+        if len(sys.argv) >= 4:
+            step = int(sys.argv[3])
+
+    except ValueError:
+        print("Usage:")
+        print("  python3 matrixGenerator.py")
+        print("  python3 matrixGenerator.py <size>")
+        print("  python3 matrixGenerator.py <start> <end> <step>")
+        sys.exit(1)
+
+    if step <= 0:
+        print("Error: step must be positive.")
+        sys.exit(1)
+
+    for size in range(start, end + 1, step):
+        print(f"Generating matrix{size}.txt")
+
+        soln_vec = []
+        matrix = []
+        b_vector = []
+
+        filename = f"matrix{size}.txt"
+
+        # 随机生成解向量，范围 [-1.0, 1.0]
+        for _ in range(size):
+            soln_vec.append(random.randint(-10, 10) / 10.0)
+
+        # 随机生成系数矩阵，范围 [-1.0, 1.0]
+        for _ in range(size):
+            matrix_row = []
+            for _ in range(size):
+                matrix_row.append(random.randint(-10, 10) / 10.0)
+            matrix.append(matrix_row)
+
+        with open(filename, "w", encoding="utf-8") as f:
+            # 第一行写矩阵规模
+            f.write(f"{size}\n\n")
+
+            # 写 n x n 矩阵，同时计算 b 向量
+            for row in matrix:
+                lin_result = 0.0
+
+                for j in range(size):
+                    f.write(f"{row[j]}\t")
+                    lin_result += row[j] * soln_vec[j]
+
+                b_vector.append(lin_result)
+                f.write("\n")
+
+            # 写 b 向量
+            f.write("\n")
+            for value in b_vector:
+                f.write(f"{value}\t")
+
+            # 写理论解向量
+            f.write("\n\n")
+            for value in soln_vec:
+                f.write(f"{value}\t")
+
+            f.write("\n\n")
+
+
+if __name__ == "__main__":
+    main()

@@ -157,7 +157,7 @@ build_one_dir() {
 
     printf "======================================\n%s\n======================================\n" "$label"
 
-    if ( cd "$d" && make ); then
+    if ( cd "$d" && { make clean || true; } && make ); then
       success=$((success+1))
       collect_bins "$d" "$label"
       echo "[build] $label : SUCCESS"

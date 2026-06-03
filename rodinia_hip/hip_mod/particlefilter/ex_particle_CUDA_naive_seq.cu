@@ -1,4 +1,5 @@
 #include "hip/hip_runtime.h"
+static const int PF_REAL_BLOCK_CHUNK = 12;
 #include <pthread.h>
 #include <stdlib.h>
 /**
@@ -260,6 +261,63 @@ int C = 12345;
 
 const int threads_per_block = 128;
 
+__global__ void pf_gpu_keepalive_kernel(int *buf, int n, int repeat)
+{
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
+
+    for (int i = tid; i < n; i += stride) {
+        int x = buf[i];
+
+        for (int r = 0; r < repeat; r++) {
+            x = (x ^ (r + tid)) + 0x9e3779b9;
+            x = x * 1664525 + 1013904223;
+        }
+
+        buf[i] = x;
+    }
+}
+
+static void pf_gpu_keepalive(int num_cus)
+{
+    if (num_cus <= 0)
+        return;
+
+    int warmup_threads = threads_per_block;
+    int warmup_blocks = num_cus;
+    int warmup_n = warmup_blocks * warmup_threads;
+
+    int *warmup_buf = NULL;
+
+    hipError_t err = hipMallocManaged((void **)&warmup_buf,
+                                      sizeof(int) * warmup_n,
+                                      hipMemAttachGlobal);
+    if (err != hipSuccess) {
+        fprintf(stderr, "particlefilter keepalive hipMallocManaged failed: %s\n",
+                hipGetErrorString(err));
+        exit(-1);
+    }
+
+    for (int i = 0; i < warmup_n; i++)
+        warmup_buf[i] = i;
+
+    printf("PF_MT: GPU dummy blocks=%d threads=%d repeat=%d\n",
+           warmup_blocks, warmup_threads, 64);
+
+    pf_gpu_keepalive_kernel<<<warmup_blocks, warmup_threads>>>(
+        warmup_buf, warmup_n, 64);
+
+    err = hipDeviceSynchronize();
+    if (err != hipSuccess) {
+        fprintf(stderr, "particlefilter GPU keepalive failed: %s\n",
+                hipGetErrorString(err));
+        exit(-1);
+    }
+
+    hipFree(warmup_buf);
+}
+
+
 /*****************************
 *GET_TIME
 *returns a long int representing the time
@@ -339,8 +397,8 @@ __device__ int findIndexBin(double * CDF, int beginIndex, int endIndex, double v
 * param6: yj
 * param7: Nparticles
 *****************************/
-__global__ void kernel(double * arrayX, double * arrayY, double * CDF, double * u, double * xj, double * yj, int Nparticles){
-	int block_id = blockIdx.x;// + gridDim.x * blockIdx.y;
+__global__ void kernel(double * arrayX, double * arrayY, double * CDF, double * u, double * xj, double * yj, int Nparticles, int block_offset){
+	int block_id = blockIdx.x + block_offset;// + gridDim.x * blockIdx.y;
 	int i = blockDim.x * block_id + threadIdx.x;
 	
 	if(i < Nparticles){
@@ -806,8 +864,15 @@ void particleFilter(int * I, int IszX, int IszY, int Nfr, int * seed, int Nparti
 
 		//KERNEL FUNCTION CALL
 		rodinia_mt_cpu_phase();
-		kernel <<< num_blocks, threads_per_block >>> (arrayX_GPU, arrayY_GPU, CDF_GPU, u_GPU, xj_GPU, yj_GPU, Nparticles);
+		for (int block_base = 0; block_base < num_blocks;
+		     block_base += PF_REAL_BLOCK_CHUNK) {
+			int remaining_blocks = num_blocks - block_base;
+			int launch_blocks = remaining_blocks < PF_REAL_BLOCK_CHUNK ?
+				remaining_blocks : PF_REAL_BLOCK_CHUNK;
+
+			kernel <<< launch_blocks, threads_per_block >>> (arrayX_GPU, arrayY_GPU, CDF_GPU, u_GPU, xj_GPU, yj_GPU, Nparticles, block_base);
                 hipDeviceSynchronize();
+		}
                 long long start_copy_back = get_time();
 		//CUDA memory copying back from GPU to CPU memory
 		hipMemcpy(yj, yj_GPU, sizeof(double)*Nparticles, hipMemcpyDeviceToHost);
@@ -829,6 +894,8 @@ void particleFilter(int * I, int IszX, int IszY, int Nfr, int * seed, int Nparti
 		printf("TIME TO RESET WEIGHTS TOOK: %f\n", elapsed_time(xyj_time, reset));
 	}
 	
+	pf_gpu_keepalive(num_cus);
+
 	rodinia_mt_stop_pool();
 
 	//CUDA freeing of memory
