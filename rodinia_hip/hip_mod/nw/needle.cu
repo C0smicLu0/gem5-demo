@@ -42,7 +42,7 @@ static inline void m5_work_end_addr(uint64_t, uint64_t) {}
     fflush(stdout);                                                  \
 } while (0)
 
-static const int NW_REAL_BLOCK_CHUNK = 12;
+static const int NW_REAL_BLOCK_CHUNK = 16;
 
 __global__ void nw_gpu_keepalive_kernel(int *buf, int n, int repeat)
 {
