@@ -80,22 +80,46 @@ bash demo_test.sh all [--run-tag TAG] [--debug-flags CSV] \
   [--debug-start TICK]
 ```
 
+Check an existing full-suite batch, or scan all matching results:
+
+```bash
+bash demo_test.sh checkall [--run-tag TAG]
+```
+
 `demo_test.sh` does two different things depending on the mode:
 
 - `quick` runs `square` once with profile `cores.args1`.
-- `all` runs the demo workloads in parallel and prints `[START]`, `[DONE]`,
-  and `[FAIL]` status updates in the terminal.
+- `all` runs the demo workloads in parallel.
+- `checkall` runs `check` across the same workload/profile matrix and prints
+  compact real-time progress plus a per-workload summary.
 
 The `all` mode currently includes:
 
-- Mixed CPU-GPU demo workloads across every configured `cores.args*` profile: `square`, `hacc`, `pannotia-bc-1k-128k`, `pannotia-color-max-1k-128k`, and `pannotia-color-maxmin-1k-128k`
+- Mixed CPU-GPU demo workloads across every configured `cores.args*` profile
+  except `args0`: `square`, `hacc`, `pannotia-bc-1k-128k`,
+  `pannotia-color-max-1k-128k`, and `pannotia-color-maxmin-1k-128k`
 - All configured `rodinia-*` workloads from `test_scripts/gem5_workloads.json`
+
+`checkall` behavior:
+
+- With `--run-tag TAG`, it checks the batch produced by
+  `bash demo_test.sh all --run-tag TAG`.
+- Without `--run-tag`, it scans `tests/testing-results` and checks every
+  matching workload/profile result directory.
+- It prints one compact real-time status line per finished configuration:
+  `workload/argsX`.
+- Final output is grouped by workload, for example
+  `[PASS] square (args1, args2)` and `[MISS] square (args3(no-match))`.
+- Each workload also gets a colored `summary total=... pass=... fail=... miss=...`
+  line, followed by an overall total.
 
 Common examples:
 
 ```bash
 bash demo_test.sh quick --run-tag quick
 bash demo_test.sh all --run-tag nightly
+bash demo_test.sh checkall --run-tag nightly
+bash demo_test.sh checkall
 bash demo_test.sh all --debug-flags ProtocolTrace
 ```
 
