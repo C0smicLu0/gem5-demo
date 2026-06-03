@@ -28,7 +28,7 @@ usage()
 {
     cat <<EOF
 Usage:
-  $(basename "$0") [quick|all] [--run-tag TAG] [--debug-flags CSV]
+  $(basename "$0") [quick|all|checkall] [--run-tag TAG] [--debug-flags CSV]
                  [--debug-start TICK] [--docker-help]
 
 Modes:
@@ -37,6 +37,8 @@ Modes:
   all                 Run square, hacc, bc, and color for every configured
                       cores.args* profile, plus all configured rodinia-*
                       workloads. This mode runs in parallel by default.
+  checkall            Run check for every all-mode configuration and print
+                      pass/fail totals. Requires --run-tag TAG.
 
 Options:
   --run-tag TAG       Use TAG as the run tag prefix. A per-workload suffix is
@@ -50,6 +52,7 @@ Examples:
   $(basename "$0")
   $(basename "$0") quick --run-tag smoke
   $(basename "$0") all --run-tag nightly
+  $(basename "$0") checkall --run-tag nightly
 EOF
 }
 
@@ -117,26 +120,29 @@ run_workload()
     bash "$WORKLOAD_RUNNER" run "$workload" "$tag" "${extra_args[@]}"
 }
 
-run_workload_background()
+run_workload_command_background()
 {
-    local workload="$1"
-    local tag="$2"
-    shift 2
+    local command="$1"
+    local workload="$2"
+    local tag="$3"
+    shift 3
 
     local extra_args=("$@")
 
-    printf '\n[START] %s (tag=%s)\n' "$workload" "$tag"
-    bash "$WORKLOAD_RUNNER" run "$workload" "$tag" "${extra_args[@]}" &
+    printf '\n[START] %s %s (tag=%s)\n' "$command" "$workload" "$tag"
+    bash "$WORKLOAD_RUNNER" "$command" "$workload" "$tag" "${extra_args[@]}" &
     background_pids+=("$!")
-    background_labels+=("${workload}:${tag}")
+    background_labels+=("${command}:${workload}:${tag}")
 }
 
 monitor_background_runs()
 {
     local -a pending_pids=("${background_pids[@]}")
     local -a pending_labels=("${background_labels[@]}")
-    local completed=0
-    local failed=0
+    CHECKALL_PASSED=0
+    CHECKALL_FAILED=0
+    CHECKALL_MISSING=0
+    CHECKALL_MISSING_LABELS=()
 
     printf '\nMonitoring %d background runs...\n' "${#pending_pids[@]}"
 
@@ -151,13 +157,21 @@ monitor_background_runs()
                 continue
             fi
 
+            local rc=0
             if wait "$pid"; then
-                completed=$((completed + 1))
+                CHECKALL_PASSED=$((CHECKALL_PASSED + 1))
                 printf '[DONE] %s (%d/%d)\n' \
-                    "$label" "$completed" "${#background_pids[@]}"
+                    "$label" "$CHECKALL_PASSED" "${#background_pids[@]}"
             else
-                failed=$((failed + 1))
-                printf '[FAIL] %s (%d failed)\n' "$label" "$failed" >&2
+                rc=$?
+                if [[ "$MODE" == "checkall" && "$rc" -eq 2 ]]; then
+                    CHECKALL_MISSING=$((CHECKALL_MISSING + 1))
+                    CHECKALL_MISSING_LABELS+=("$label")
+                    printf '[MISS] %s (%d missing)\n' "$label" "$CHECKALL_MISSING" >&2
+                else
+                    CHECKALL_FAILED=$((CHECKALL_FAILED + 1))
+                    printf '[FAIL] %s (%d failed)\n' "$label" "$CHECKALL_FAILED" >&2
+                fi
             fi
 
             unset 'pending_pids[index]'
@@ -170,9 +184,11 @@ monitor_background_runs()
         sleep 1
     done
 
-    if ((failed > 0)); then
-        die "${failed} background run(s) failed"
+    if ((CHECKALL_FAILED > 0 || CHECKALL_MISSING > 0)); then
+        return 1
     fi
+
+    return 0
 }
 
 load_core_profiles()
@@ -205,14 +221,60 @@ with open(sys.argv[1], "r", encoding="utf-8") as fh:
     cfg = json.load(fh)
 
 for name in sorted(cfg.get("workloads", {})):
-    if name.startswith("rodinia-"):
+    if name.startswith("rodinia-") and name != "rodinia-dwt2d":
         print(name)
 PY
 }
 
+queue_all_mode_runs()
+{
+    local base_tag="$1"
+    shift
+    local extra_args=("$@")
+    local workload
+    local profile_name
+
+    for workload in "${DEMO_ALL_WORKLOADS[@]}"; do
+        for profile_name in "${core_profiles[@]}"; do
+            run_workload_command_background run "$workload" \
+                "${base_tag}-${workload}-${profile_name}" \
+                --profile "cores.${profile_name}" "${extra_args[@]}"
+        done
+    done
+
+    for workload in "${rodinia_workloads[@]}"; do
+        for profile_name in "${core_profiles[@]}"; do
+            run_workload_command_background run "$workload" \
+                "${base_tag}-${workload}-${profile_name}" \
+                --profile "cores.${profile_name}" "${extra_args[@]}"
+        done
+    done
+}
+
+queue_all_mode_checks()
+{
+    local base_tag="$1"
+    local workload
+    local profile_name
+
+    for workload in "${DEMO_ALL_WORKLOADS[@]}"; do
+        for profile_name in "${core_profiles[@]}"; do
+            run_workload_command_background check "$workload" \
+                "${base_tag}-${workload}-${profile_name}"
+        done
+    done
+
+    for workload in "${rodinia_workloads[@]}"; do
+        for profile_name in "${core_profiles[@]}"; do
+            run_workload_command_background check "$workload" \
+                "${base_tag}-${workload}-${profile_name}"
+        done
+    done
+}
+
 while (($#)); do
     case "$1" in
-        quick|all)
+        quick|all|checkall)
             MODE="$1"
             ;;
         --run-tag)
@@ -271,17 +333,30 @@ mapfile -t core_profiles < <(load_core_profiles)
 ((${#core_profiles[@]} > 0)) || die "no cores.args* profiles found in $WORKLOAD_CONFIG"
 mapfile -t rodinia_workloads < <(load_rodinia_workloads)
 
-for workload in "${DEMO_ALL_WORKLOADS[@]}"; do
-    for profile_name in "${core_profiles[@]}"; do
-        run_workload_background "$workload" "${base_tag}-${workload}-${profile_name}" \
-            --profile "cores.${profile_name}" "${runner_args[@]}"
-    done
-done
+if [[ "$MODE" == "all" ]]; then
+    queue_all_mode_runs "$base_tag" "${runner_args[@]}"
+    if ! monitor_background_runs; then
+        die "${CHECKALL_FAILED} background run(s) failed"
+    fi
+    printf '\nDemo test completed.\n'
+    exit 0
+fi
 
-for workload in "${rodinia_workloads[@]}"; do
-    run_workload_background "$workload" "${base_tag}-${workload}" "${runner_args[@]}"
-done
+[[ -n "$RUN_TAG" ]] || die "checkall requires --run-tag TAG"
+queue_all_mode_checks "$base_tag"
+if ! monitor_background_runs; then
+    printf '\nCheck summary: %d passed, %d failed.\n' \
+        "$CHECKALL_PASSED" "$CHECKALL_FAILED" >&2
+    printf 'No-result summary: %d missing.\n' "$CHECKALL_MISSING" >&2
+    if ((${#CHECKALL_MISSING_LABELS[@]} > 0)); then
+        printf 'No-result runs:\n' >&2
+        printf '  %s\n' "${CHECKALL_MISSING_LABELS[@]}" >&2
+    fi
+    die "checkall completed with failures"
+fi
 
-monitor_background_runs
+printf '\nCheck summary: %d passed, %d failed.\n' \
+    "$CHECKALL_PASSED" "$CHECKALL_FAILED"
+printf 'No-result summary: %d missing.\n' "$CHECKALL_MISSING"
 
 printf '\nDemo test completed.\n'

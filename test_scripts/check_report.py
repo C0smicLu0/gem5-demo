@@ -30,7 +30,7 @@ def load_json(run_dir):
     path = pathlib.Path(run_dir) / "analyze.json"
     if not path.exists():
         print(ui.style("check input not found", "red") + f": {path}", file=sys.stderr)
-        return None, path, 1
+        return None, path, 2
     try:
         return json.loads(path.read_text()), path, 0
     except json.JSONDecodeError as exc:
@@ -232,6 +232,8 @@ def render_full(data, run_dir, analyze_path):
 
     render_diagnostics(function_missing, function_failed, latency_missing, latency_over)
 
+    return status
+
 
 def main():
     parser = argparse.ArgumentParser(description="Render gem5 analyze.json checks")
@@ -244,12 +246,14 @@ def main():
         return rc
 
     if args.mode == "functional":
-        render_functional(data)
+        function_missing, function_failed = render_functional(data)
+        status = overall_status(function_missing, function_failed, [], [])
     elif args.mode == "latency":
-        render_latency(data)
+        latency_missing, latency_over = render_latency(data)
+        status = overall_status([], [], latency_missing, latency_over)
     else:
-        render_full(data, args.run_dir, analyze_path)
-    return 0
+        status = render_full(data, args.run_dir, analyze_path)
+    return 0 if status == "PASS" else 1
 
 
 if __name__ == "__main__":
