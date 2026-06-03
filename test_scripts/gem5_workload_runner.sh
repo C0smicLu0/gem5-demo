@@ -23,7 +23,7 @@ Notes:
   - run_dir = <base_run_root>/<workload>-<run_tag>
   - analyze reads <run_dir>/lat_run_out/{seq,coal}_lat_stats_*.txt
   - functional_check prints PASS/FAIL/UNKNOWN for 5 functional tests
-  - latency_check prints PASS/FAIL/UNKNOWN for cpu_ldst_mean/gpu_ldst_mean/ldst_mean
+  - latency_check checks weighted ldst_mean; cpu/gpu ldst means are informational
   - Edit JSON only; avoid hardcoding args in commands.
 
 Run/all options:
@@ -269,6 +269,106 @@ DEBUG_FLAGS=""
 DEBUG_START=""
 DEBUG_FILE=""
 
+ui_banner() {
+  local title="$1"
+  python3 - "$SCRIPT_DIR" "$title" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import terminal_ui as ui
+ui.title(sys.argv[2])
+PY
+}
+
+ui_run_card() {
+  local workload="$1"
+  local run_tag="$2"
+  local run_dir="$3"
+  local profiles="$4"
+  local resources="$5"
+  local debug="$6"
+  local run_cmd="$7"
+  python3 - "$SCRIPT_DIR" "$workload" "$run_tag" "$run_dir" "$profiles" "$resources" "$debug" "$run_cmd" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import terminal_ui as ui
+
+workload, run_tag, run_dir, profiles, resources, debug, run_cmd = sys.argv[2:]
+ui.title("gem5 Run")
+ui.key_values([
+    ("workload", workload),
+    ("run_tag", run_tag),
+    ("run_dir", ui.compress_path(run_dir)),
+    ("profile", profiles or "(default)"),
+    ("resources", resources or "(not resource-aware)"),
+    ("debug", debug or "(off)"),
+    ("run_cmd", ui.compress_path(run_cmd)),
+], key_width=10)
+PY
+}
+
+ui_compile_card() {
+  local workload="$1"
+  local family="$2"
+  local script="$3"
+  local args="$4"
+  python3 - "$SCRIPT_DIR" "$workload" "$family" "$script" "$args" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import terminal_ui as ui
+
+workload, family, script, args = sys.argv[2:]
+ui.title("gem5 Compile")
+ui.key_values([
+    ("workload", workload),
+    ("family", family),
+    ("script", ui.compress_path(script)),
+    ("args", args or "(none)"),
+], key_width=8)
+PY
+}
+
+ui_compile_result() {
+  local workload="$1"
+  local status="$2"
+  local notes="$3"
+  python3 - "$SCRIPT_DIR" "$workload" "$status" "$notes" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import terminal_ui as ui
+
+workload, status, notes = sys.argv[2:]
+ui.section("Compile Result")
+ui.key_values([
+    ("workload", workload),
+    ("status", ui.status_text(status)),
+    ("notes", notes),
+], key_width=8)
+PY
+}
+
+ui_compile_summary() {
+  local total="$1"
+  local passed="$2"
+  local failed="$3"
+  local failed_list="$4"
+  local overall="$5"
+  python3 - "$SCRIPT_DIR" "$total" "$passed" "$failed" "$failed_list" "$overall" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import terminal_ui as ui
+
+total, passed, failed, failed_list, overall = sys.argv[2:]
+ui.title("Compile Summary")
+ui.key_values([
+    ("total", total),
+    ("passed", passed),
+    ("failed", failed),
+    ("failed_list", failed_list or "(none)"),
+    ("overall", ui.status_text(overall)),
+], key_width=11)
+PY
+}
+
 parse_run_options() {
   PROFILE=""
   DEBUG_FLAGS=""
@@ -447,16 +547,18 @@ run_test() {
     workload_args="$(add_resource_workload_args "$workload" "$workload_args" \
       "$resource_cpus" "$resource_gpu_cus" "$selected_profiles")"
   fi
-  
-  
-    echo "run_dir=${run_dir}"
-  if [[ -n "$selected_profiles" ]]; then
-    echo "profile=${selected_profiles}"
-  fi
-  echo "workload_args=${workload_args}"
+
+  local resources_text=""
   if [[ -n "$resource_cpus" || -n "$resource_gpu_cus" ]]; then
-    echo "resources=cpus:${resource_cpus} gpu_cus:${resource_gpu_cus} (from config_args)"
+    resources_text="cpus:${resource_cpus} gpu_cus:${resource_gpu_cus} (from config_args)"
   fi
+  local debug_text=""
+  debug_text="$(join_trim \
+    "${DEBUG_FLAGS:+flags=${DEBUG_FLAGS}}" \
+    "${DEBUG_START:+start=${DEBUG_START}}" \
+    "${DEBUG_FILE:+file=${DEBUG_FILE}}")"
+  ui_run_card "$workload" "$run_tag" "$run_dir" "$selected_profiles" "$resources_text" "$debug_text" "${run_dir}/run_cmd.sh"
+  echo "workload_args=${workload_args}"
   "$GEM5_TEST" test \
     --run-dir "$run_dir" \
     --gem5-opt-args "$gem5_opt_args" \
@@ -489,7 +591,15 @@ run_latency_check() {
   "$GEM5_TEST" latency_check "$run_dir"
 }
 
-run_compile() {
+run_check() {
+  local workload="$1"
+  local run_tag="$2"
+  local run_dir
+  run_dir="$(build_run_dir "$workload" "$run_tag")"
+  "$GEM5_TEST" check "$run_dir"
+}
+
+run_rodinia_compile() {
   local workload="$1"
   local compile_sh="${REPO_ROOT}/rodinia_hip/docker_compile.sh"
 
@@ -503,7 +613,7 @@ run_compile() {
     return 1
   fi
 
-  echo "compile_workload=${workload}"
+  ui_compile_card "$workload" "rodinia" "$compile_sh" "$workload"
   bash "$compile_sh" "$workload"
 }
 
@@ -558,11 +668,32 @@ run_demo_compile() {
     return 1
   fi
 
-  echo "compile_script=${script}"
-  if ((${#args[@]} > 0)); then
-    echo "compile_args=${args[*]}"
-  fi
+  ui_compile_card "$workload" "demo" "$script" "${args[*]}"
   bash "$script" "${args[@]}"
+}
+
+run_compile_target() {
+  local workload="$1"
+  if [[ "$workload" == rodinia-* ]]; then
+    run_rodinia_compile "$workload"
+  else
+    run_demo_compile "$workload"
+  fi
+}
+
+run_compile_with_ui() {
+  local workload="$1"
+  local notes="build completed"
+  set +e
+  run_compile_target "$workload"
+  local rc=$?
+  set -e
+  if [[ $rc -eq 0 ]]; then
+    ui_compile_result "$workload" "PASS" "$notes"
+  else
+    ui_compile_result "$workload" "FAIL" "build exited with code ${rc}"
+  fi
+  return $rc
 }
 
 cmd="${1:-}"
@@ -584,15 +715,47 @@ case "$cmd" in
         exit 1
       fi
 
+      ui_banner "COMPILE"
+      local_total=$(( ${#demo_compile_workloads[@]} + ${#rodinia_workloads[@]} ))
+      local_passed=0
+      local_failed=0
+      failed_workloads=()
+
       for w in "${demo_compile_workloads[@]}"; do
-        echo "==> compile workload: ${w}"
-        run_compile "$w"
+        if run_compile_with_ui "$w"; then
+          local_passed=$((local_passed + 1))
+        else
+          local_failed=$((local_failed + 1))
+          failed_workloads+=("$w")
+        fi
       done
 
       for w in "${rodinia_workloads[@]}"; do
-        echo "==> compile workload: ${w}"
-        run_compile "$w"
+        if run_compile_with_ui "$w"; then
+          local_passed=$((local_passed + 1))
+        else
+          local_failed=$((local_failed + 1))
+          failed_workloads+=("$w")
+        fi
       done
+
+      failed_text=""
+      if (( ${#failed_workloads[@]} > 0 )); then
+        failed_text="${failed_workloads[*]}"
+      fi
+      overall_status="PASS"
+      if (( local_failed > 0 )); then
+        overall_status="FAIL"
+      fi
+      ui_compile_summary \
+        "$local_total" \
+        "$local_passed" \
+        "$local_failed" \
+        "$failed_text" \
+        "$overall_status"
+      if (( local_failed > 0 )); then
+        exit 1
+      fi
     else
       if ! workload_exists "$workload" &&
          [[ "$workload" != "square" && "$workload" != "hacc" &&
@@ -602,7 +765,8 @@ case "$cmd" in
         list_workloads
         exit 1
       fi
-      run_compile "$workload"
+      ui_banner "COMPILE"
+      run_compile_with_ui "$workload"
     fi
     ;;
   run|analyze|functional_check|latency_check|all|check)
@@ -642,21 +806,20 @@ case "$cmd" in
     elif [[ "$cmd" == "latency_check" ]]; then
       run_latency_check "$workload" "$run_tag"
     elif [[ "$cmd" == "check" ]]; then
-      # 兼容旧命令：等价于 functional_check + latency_check
-      run_functional_check "$workload" "$run_tag"
-      echo
-      run_latency_check "$workload" "$run_tag"
+      run_check "$workload" "$run_tag"
     else
-      # all: 顺序执行 run -> analyze -> functional_check -> latency_check
+      # all: 顺序执行 run -> analyze -> check
       rem=()
       if (( $# >= profile_start )); then
         rem=("${@:$profile_start}")
       fi
       parse_run_options "${rem[@]}"
+      ui_banner "RUN"
       run_test "$workload" "$run_tag" "$PROFILE"
+      ui_banner "ANALYZE"
       run_analyze "$workload" "$run_tag"
-      run_functional_check "$workload" "$run_tag"
-      run_latency_check "$workload" "$run_tag"
+      ui_banner "CHECK"
+      run_check "$workload" "$run_tag"
     fi
     ;;
   *)

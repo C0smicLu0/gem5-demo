@@ -12,37 +12,53 @@ import sys
 from contextlib import redirect_stdout
 from datetime import datetime
 
-ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
-ENABLE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
+import terminal_ui as ui
 
 
 def color(text, code):
-    if not ENABLE_COLOR:
-        return text
-    return f"\033[{code}m{text}\033[0m"
+    return ui.color(text, code)
 
 
 def strip_ansi(text):
-    return ANSI_RE.sub("", text)
+    return ui.strip_ansi(text)
 
 
 def section_header(title):
-    line = "═" * 72
-    print("\n" + color(line, "36"))
-    print(color(f"  {title}", "1;36"))
-    print(color(line, "36"))
+    ui.section(title)
 
 
 def status_text(status):
-    if status == "PASS":
-        return color(status, "1;32")
-    if status == "FAIL":
-        return color(status, "1;31")
-    return color(status, "1;33")
+    return ui.status_text(status)
 
 
 def fmt_int(v):
     return f"{int(v):,}"
+
+
+def print_compact_summary(run_dir, output_md, output_json, cpu_analyzer, gpu_analyzer, func_analyzer):
+    cpu_files = len(cpu_analyzer.files)
+    gpu_files = len(gpu_analyzer.files)
+    cpu_ldst = cpu_analyzer.build_summary_data().get("ldst") if cpu_files else None
+    gpu_ldst = gpu_analyzer.build_summary_data().get("ldst") if gpu_files else None
+    cpu_samples = (cpu_ldst or {}).get("samples", 0)
+    gpu_samples = (gpu_ldst or {}).get("samples", 0)
+    total_samples = cpu_samples + gpu_samples
+    if total_samples > 0:
+        weighted = ((cpu_ldst or {}).get("sum", 0.0) + (gpu_ldst or {}).get("sum", 0.0)) / total_samples
+        weighted_text = f"{weighted:.6f}"
+    else:
+        weighted_text = "missing"
+    counts = func_analyzer.build_summary_data().get("summary", {"pass": 0, "fail": 0, "unknown": 0})
+
+    ui.title("Analyze Summary")
+    ui.key_values([
+        ("run_dir", ui.compress_path(run_dir)),
+        ("latency_files", f"cpu={cpu_files} gpu={gpu_files}"),
+        ("ldst_weighted_mean", weighted_text),
+        ("functional", f"PASS={counts['pass']} FAIL={counts['fail']} UNKNOWN={counts['unknown']}"),
+        ("output_md", ui.compress_path(output_md)),
+        ("output_json", ui.compress_path(output_json)),
+    ], key_width=18)
 
 
 def read_text_file(path):
@@ -566,6 +582,9 @@ def main():
         gpu_ok = gpu_analyzer.process()
         ok = cpu_ok or gpu_ok
         if ok:
+            miss_analyzer.process()
+            func_analyzer.process()
+            print_compact_summary(run_dir, output_md, output_json, cpu_analyzer, gpu_analyzer, func_analyzer)
             if cpu_ok:
                 cpu_analyzer.print_summary()
             else:
@@ -589,9 +608,7 @@ def main():
                 total_sum = (cpu_ldst or {}).get("sum", 0.0) + (gpu_ldst or {}).get("sum", 0.0)
                 print(color("ldst_mean(weighted)", "1;34") + f": {total_sum / total_samples:.6f}")
                 print(color("samples(cpu/gpu/total)", "1;34") + f": {cpu_samples}/{gpu_samples}/{total_samples}")
-            miss_analyzer.process()
             miss_analyzer.print_summary()
-            func_analyzer.process()
             func_analyzer.print_summary()
         else:
             print("\n" + color("解析失败：lat_run_out 下无可用 seq/coal 延迟统计文件", "1;31"))

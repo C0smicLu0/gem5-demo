@@ -19,7 +19,7 @@
 #endif                                                                                   
 
 #define STR_SIZE 256
-static const int HOTSPOT_REAL_BLOCK_CHUNK = 4;
+static const int HOTSPOT_REAL_BLOCK_CHUNK = 32;
 
 #define HOTSPOT_TRACE(fmt, ...)                                      \
     do {                                                             \

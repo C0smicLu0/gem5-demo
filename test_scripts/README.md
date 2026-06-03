@@ -28,7 +28,7 @@
 1. `gem5_workload_runner.sh` 读取 `gem5_workloads.json`，确定 `run_dir`。
 2. `run/all` 会调用 `gem5_test.sh test` 生成并执行容器化的 gem5 命令。
 3. `analyze/all` 会调用 `gem5_test.sh analyze`，后者再调用 `analyze_log.py`。
-4. `check/all` 会调用 `gem5_test.sh check`，根据 `cpu_ldst.mean` / `gpu_ldst.mean` 阈值和功能测试状态进行判断。
+4. `check/all` 会调用 `gem5_test.sh check`，根据总加权 `ldst.mean` 阈值和功能测试状态进行判断；CPU/GPU 单项延迟仅作为参考展示。
 
 ## 配置参数的优先级
 

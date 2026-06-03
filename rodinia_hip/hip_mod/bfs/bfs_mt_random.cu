@@ -14,7 +14,7 @@
 #endif
 
 #define MAX_THREADS_PER_BLOCK 128
-static const int BFS_REAL_BLOCK_CHUNK = 24;
+static const int BFS_REAL_BLOCK_CHUNK = 48;
 
 #define BFS_TRACE(fmt, ...)                                      \
     do {                                                         \

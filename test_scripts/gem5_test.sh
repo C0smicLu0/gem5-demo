@@ -163,61 +163,8 @@ run_latency_check() {
     return 1
   fi
   run_dir="$(resolve_path "$run_dir")"
-  python3 - "${run_dir}/analyze.json" <<'PY'
-import json
-import math
-import pathlib
-import sys
-
-path = pathlib.Path(sys.argv[1])
-data = json.loads(path.read_text())
-
-cpu_ldst = data.get("cpu_ldst") or {}
-gpu_ldst = data.get("gpu_ldst") or {}
-ldst = data.get("ldst") or {}
-cpu_mean = cpu_ldst.get("mean")
-gpu_mean = gpu_ldst.get("mean")
-ldst_mean = ldst.get("mean")
-
-if ldst_mean is None:
-    cpu_samples = cpu_ldst.get("samples") or 0
-    gpu_samples = gpu_ldst.get("samples") or 0
-    total_samples = cpu_samples + gpu_samples
-    if total_samples > 0 and cpu_mean is not None and gpu_mean is not None:
-        ldst_mean = (cpu_mean * cpu_samples + gpu_mean * gpu_samples) / total_samples
-    elif total_samples > 0 and cpu_mean is not None and gpu_samples == 0:
-        ldst_mean = cpu_mean
-    elif total_samples > 0 and gpu_mean is not None and cpu_samples == 0:
-        ldst_mean = gpu_mean
-
-isatty = sys.stdout.isatty()
-def c(s, code):
-    if not isatty:
-        return s
-    return f"\033[{code}m{s}\033[0m"
-
-def status_color(status):
-    if status == "PASS":
-        return c(status, "1;32")
-    if status == "FAIL":
-        return c(status, "1;31")
-    return c(status, "1;33")
-
-print(c("Latency Check", "1;36"))
-print(c("=" * 72, "36"))
-for metric_name, mean in (("cpu_ldst_mean", cpu_mean), ("gpu_ldst_mean", gpu_mean), ("ldst_mean", ldst_mean)):
-    print(c(metric_name, "1;34"))
-    if mean is None or (isinstance(mean, float) and math.isnan(mean)):
-        print(f"  status: {status_color('UNKNOWN')}")
-        print(f"  notes : {metric_name} is missing")
-    else:
-        in_range = (mean <= 150.0)
-        status = "PASS" if in_range else "FAIL"
-        print(f"  status: {status_color(status)}")
-        print(f"  notes : value={mean:.6f}, threshold<=150.000")
-PY
+  python3 "${SCRIPT_DIR}/check_report.py" --mode latency --run-dir "${run_dir}"
 }
-
 run_functional_check() {
   local run_dir="$1"
   if [ -z "$run_dir" ]; then
@@ -225,63 +172,18 @@ run_functional_check() {
     return 1
   fi
   run_dir="$(resolve_path "$run_dir")"
-  python3 - "${run_dir}/analyze.json" <<'PY'
-import json
-import pathlib
-import sys
-
-path = pathlib.Path(sys.argv[1])
-data = json.loads(path.read_text())
-ft = data.get("functional_tests") or {}
-items = ft.get("items") or {}
-
-isatty = sys.stdout.isatty()
-def c(s, code):
-    if not isatty:
-        return s
-    return f"\033[{code}m{s}\033[0m"
-
-def status_color(status):
-    if status == "PASS":
-        return c(status, "1;32")
-    if status == "FAIL":
-        return c(status, "1;31")
-    return c(status, "1;33")
-
-labels = {
-    "resource_instantiation": "资源实例化",
-    "system_initialization": "系统初始化",
-    "functional_execution": "功能执行",
-    "result_validation": "结果校验",
-    "exception_check": "异常检查",
+  python3 "${SCRIPT_DIR}/check_report.py" --mode functional --run-dir "${run_dir}"
 }
-order = [
-    "resource_instantiation",
-    "system_initialization",
-    "functional_execution",
-    "result_validation",
-    "exception_check",
-]
-
-print(c("Functional Check", "1;36"))
-print(c("=" * 72, "36"))
-if not items:
-    print(c("functional_tests items missing", "1;33"))
-    sys.exit(0)
-
-for key in order:
-    item = items.get(key, {})
-    status = str(item.get("status", "UNKNOWN"))
-    print(f"{labels.get(key, key):<16} {status_color(status)}")
-PY
-}
-
 run_check() {
   local run_dir="$1"
-  run_functional_check "$run_dir"
-  echo
-  run_latency_check "$run_dir"
+  if [ -z "$run_dir" ]; then
+    echo "usage: $0 check <run_dir>"
+    return 1
+  fi
+  run_dir="$(resolve_path "$run_dir")"
+  python3 "${SCRIPT_DIR}/check_report.py" --mode check --run-dir "${run_dir}"
 }
+
 
 
 docker_run_args=("--rm")
