@@ -14,7 +14,6 @@
 #endif
 
 #define MAX_THREADS_PER_BLOCK 128
-static const int BFS_REAL_BLOCK_CHUNK = 48;
 
 #define BFS_TRACE(fmt, ...)                                      \
     do {                                                         \
@@ -80,63 +79,6 @@ static void checked_fscanf_1(FILE *f, const char *fmt, void *p, const char *what
         fprintf(stderr, "[bfs] failed to read %s\n", what);
         exit(-1);
     }
-}
-
-
-__global__ void bfs_gpu_keepalive_kernel(int *buf, int n, int repeat)
-{
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    int stride = blockDim.x * gridDim.x;
-
-    for (int i = tid; i < n; i += stride) {
-        int x = buf[i];
-
-        for (int r = 0; r < repeat; r++) {
-            x = (x ^ (r + tid)) + 0x9e3779b9;
-            x = x * 1664525 + 1013904223;
-        }
-
-        buf[i] = x;
-    }
-}
-
-static void bfs_gpu_keepalive(int num_cus)
-{
-    if (num_cus <= 0)
-        return;
-
-    int warmup_threads = MAX_THREADS_PER_BLOCK;
-    int warmup_blocks = num_cus;
-    int warmup_n = warmup_blocks * warmup_threads;
-
-    int *warmup_buf = NULL;
-
-    hipError_t err = hipMallocManaged((void **)&warmup_buf,
-                                      sizeof(int) * warmup_n,
-                                      hipMemAttachGlobal);
-    if (err != hipSuccess) {
-        fprintf(stderr, "BFS keepalive hipMallocManaged failed: %s\n",
-                hipGetErrorString(err));
-        exit(-1);
-    }
-
-    for (int i = 0; i < warmup_n; i++)
-        warmup_buf[i] = i;
-
-    printf("BFS_MT: GPU dummy blocks=%d threads=%d repeat=%d\n",
-           warmup_blocks, warmup_threads, 64);
-
-    bfs_gpu_keepalive_kernel<<<warmup_blocks, warmup_threads>>>(
-        warmup_buf, warmup_n, 64);
-
-    err = hipDeviceSynchronize();
-    if (err != hipSuccess) {
-        fprintf(stderr, "BFS GPU keepalive failed: %s\n",
-                hipGetErrorString(err));
-        exit(-1);
-    }
-
-    hipFree(warmup_buf);
 }
 
 // -----------------------------------------------------------------------------
@@ -636,54 +578,27 @@ static int run_gpu_bfs_loop(bfs_graph_t *g, const bfs_launch_config_t *lc)
 
         BFS_TRACE("Iteration %d: launching GPU kernels", k);
 
-        for (int block_base = 0; block_base < lc->num_blocks;
-             block_base += BFS_REAL_BLOCK_CHUNK) {
-            int remaining_blocks = lc->num_blocks - block_base;
-            int launch_blocks = remaining_blocks < BFS_REAL_BLOCK_CHUNK ?
-                remaining_blocks : BFS_REAL_BLOCK_CHUNK;
-            dim3 batch_grid(launch_blocks, 1, 1);
+        Kernel<<<lc->grid, lc->threads, 0>>>(
+            g->h_graph_nodes,
+            g->h_graph_edges,
+            g->h_graph_mask,
+            g->h_updating_graph_mask,
+            g->h_graph_visited,
+            g->h_cost,
+            no_of_nodes);
 
-            Kernel<<<batch_grid, lc->threads, 0>>>(
-                g->h_graph_nodes,
-                g->h_graph_edges,
-                g->h_graph_mask,
-                g->h_updating_graph_mask,
-                g->h_graph_visited,
-                g->h_cost,
-                no_of_nodes,
-                block_base,
-                lc->num_blocks);
+        Kernel2<<<lc->grid, lc->threads, 0>>>(
+            g->h_graph_mask,
+            g->h_updating_graph_mask,
+            g->h_graph_visited,
+            g->d_over,
+            no_of_nodes);
 
-            hipError_t err = hipDeviceSynchronize();
-            if (err != hipSuccess) {
-                fprintf(stderr, "BFS Kernel failed at iter=%d block_base=%d: %s\n",
-                        k, block_base, hipGetErrorString(err));
-                exit(-1);
-            }
-        }
-
-        for (int block_base = 0; block_base < lc->num_blocks;
-             block_base += BFS_REAL_BLOCK_CHUNK) {
-            int remaining_blocks = lc->num_blocks - block_base;
-            int launch_blocks = remaining_blocks < BFS_REAL_BLOCK_CHUNK ?
-                remaining_blocks : BFS_REAL_BLOCK_CHUNK;
-            dim3 batch_grid(launch_blocks, 1, 1);
-
-            Kernel2<<<batch_grid, lc->threads, 0>>>(
-                g->h_graph_mask,
-                g->h_updating_graph_mask,
-                g->h_graph_visited,
-                g->d_over,
-                no_of_nodes,
-                block_base,
-                lc->num_blocks);
-
-            hipError_t err = hipDeviceSynchronize();
-            if (err != hipSuccess) {
-                fprintf(stderr, "BFS Kernel2 failed at iter=%d block_base=%d: %s\n",
-                        k, block_base, hipGetErrorString(err));
-                exit(-1);
-            }
+        hipError_t err = hipDeviceSynchronize();
+        if (err != hipSuccess) {
+            fprintf(stderr, "BFS kernels failed at iter=%d: %s\n",
+                    k, hipGetErrorString(err));
+            exit(-1);
         }
 
         BFS_TRACE("GPU kernels completed for iter %d", k);
@@ -775,7 +690,6 @@ void BFSGraph(int argc, char **argv)
 
     BFS_TRACE("GPU batch phase start");
     int iterations = run_gpu_bfs_loop(&graph, &launch_cfg);
-    bfs_gpu_keepalive(g_cfg.gpu_cus);
     timing.loop_end_us = bfs_wall_time_us();
     
     BFS_TRACE("GPU batch phase done");

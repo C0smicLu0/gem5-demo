@@ -1,5 +1,5 @@
 #include "hip/hip_runtime.h"
-static const int PF_REAL_BLOCK_CHUNK = 20;
+static const int PF_REAL_BLOCK_CHUNK = 12;
 #include <pthread.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -412,63 +412,6 @@ static void rodinia_mt_cpu_phase_pf_sync(double *weights,
 #define PI 3.1415926535897932
 
 const int threads_per_block = 64;
-
-__global__ void pf_gpu_keepalive_kernel(int *buf, int n, int repeat)
-{
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    int stride = blockDim.x * gridDim.x;
-
-    for (int i = tid; i < n; i += stride) {
-        int x = buf[i];
-
-        for (int r = 0; r < repeat; r++) {
-            x = (x ^ (r + tid)) + 0x9e3779b9;
-            x = x * 1664525 + 1013904223;
-        }
-
-        buf[i] = x;
-    }
-}
-
-static void pf_gpu_keepalive(int num_cus)
-{
-    if (num_cus <= 0)
-        return;
-
-    int warmup_threads = threads_per_block;
-    int warmup_blocks = num_cus;
-    int warmup_n = warmup_blocks * warmup_threads;
-
-    int *warmup_buf = NULL;
-
-    hipError_t err = hipMallocManaged((void **)&warmup_buf,
-                                      sizeof(int) * warmup_n,
-                                      hipMemAttachGlobal);
-    if (err != hipSuccess) {
-        fprintf(stderr, "particlefilter keepalive hipMallocManaged failed: %s\n",
-                hipGetErrorString(err));
-        exit(-1);
-    }
-
-    for (int i = 0; i < warmup_n; i++)
-        warmup_buf[i] = i;
-
-    printf("PF_MT: GPU dummy blocks=%d threads=%d repeat=%d\n",
-           warmup_blocks, warmup_threads, 64);
-
-    pf_gpu_keepalive_kernel<<<warmup_blocks, warmup_threads>>>(
-        warmup_buf, warmup_n, 64);
-
-    err = hipDeviceSynchronize();
-    if (err != hipSuccess) {
-        fprintf(stderr, "particlefilter GPU keepalive failed: %s\n",
-                hipGetErrorString(err));
-        exit(-1);
-    }
-
-    hipFree(warmup_buf);
-}
-
 
 /**
 @var M value for Linear Congruential Generator (LCG); use GCC's value
@@ -1406,8 +1349,6 @@ void particleFilter(unsigned char * I, int IszX, int IszY, int Nfr, int * seed, 
         PF_LOG("GPU iter=%d/%d end", k, Nfr - 1);
 
     }
-
-    pf_gpu_keepalive(num_cus);
 
     PF_LOG("GPU batch phase done");
     PF_LOG("Gaussian-style sequential CPU-then-GPU phase done");
