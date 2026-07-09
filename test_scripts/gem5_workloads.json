@@ -4,9 +4,7 @@
   "config_args": "--reg-alloc-policy=dynamic --stats-dump-mode=full --mem-size=8GB",
   "config_profiles": {
     "pressure": {
-      "default": "",
-      "mild": "--l1d_size=16KiB --l1i_size=16KiB --l2_size=256KiB --l2-latency=20 --l2-hit-latency=12 --cpu-to-dir-latency=80 --recycle-latency=8 --l3-data-latency=16 --l3-tag-latency=12 --router-latency=1 --link-latency=1",
-      "aggressive": "--l1d_size=512B --l1i_size=512B --l2_size=1KiB --l2-latency=50 --l2-hit-latency=18 --cpu-to-dir-latency=120 --recycle-latency=10 --l3-data-latency=20 --l3-tag-latency=15 --router-latency=1 --link-latency=1"
+      "default": "--l1d_size=512B --l1i_size=512B --l2_size=1KiB --l2-latency=50 --l2-hit-latency=18 --cpu-to-dir-latency=120 --recycle-latency=10 --l3-data-latency=20 --l3-tag-latency=15 --router-latency=1 --link-latency=1"
     },
     "cores": {
       "args0": "-n3 -u240",
@@ -55,7 +53,7 @@
       "workload_args": "-c /gem5/rodinia_hip/hip_mod/bin/gaussian --options '-f /gem5/rodinia_hip/data/gaussian/matrix80.txt'"
     },
     "rodinia-hotspot": {
-      "workload_args": "-c /gem5/rodinia_hip/hip_mod/bin/hotspot --options '64 2 1 /gem5/rodinia_hip/data/hotspot/temp_64 /gem5/rodinia_hip/data/hotspot/power_64'"
+      "workload_args": "-c /gem5/rodinia_hip/hip_mod/bin/hotspot --options '64 2 2 /gem5/rodinia_hip/data/hotspot/temp_64 /gem5/rodinia_hip/data/hotspot/power_64'"
     },
     "rodinia-lavaMD": {
       "workload_args": "-c /gem5/rodinia_hip/hip_mod/bin/lavaMD --options '-boxes1d 10'"

@@ -19,7 +19,7 @@
 #endif                                                                                   
 
 #define STR_SIZE 256
-static const int HOTSPOT_REAL_BLOCK_CHUNK = 12;
+static const int HOTSPOT_REAL_BLOCK_CHUNK = 32;
 
 #define HOTSPOT_TRACE(fmt, ...)                                      \
     do {                                                             \
@@ -271,8 +271,8 @@ static void *rodinia_mt_worker_once(void *p)
     }
 
     int sample_count = (own_count * rodinia_mt_work_percent) / 100;
-    if (sample_count < 64)
-        sample_count = 64;
+    if (sample_count < 32)
+        sample_count = 32;
 
     int window_start = begin - own_count;
     int window_end   = end + own_count;
@@ -299,12 +299,8 @@ static void *rodinia_mt_worker_once(void *p)
 
         float v = 0.0f;
 
-        if (rodinia_mt_power)
-            v += rodinia_mt_power[idx];
         if (rodinia_mt_temp0)
             v += rodinia_mt_temp0[idx];
-        if (rodinia_mt_temp1)
-            v += rodinia_mt_temp1[idx];
 
         acc += (unsigned int)(((int)(v * 1000.0f)) ^ idx);
 
@@ -318,19 +314,15 @@ static void *rodinia_mt_worker_once(void *p)
 
     /*
      * Phase B-like:
-     * random reads from a neighboring window, similar to Gaussian's
-     * second local-neighborhood pass.
+     * Keep the neighboring-window behavior, but sample it sparsely so the
+     * CPU phase stays present without dominating overall ldst samples.
      */
-    for (int r = 0; r < sample_count; r++) {
+    for (int r = 0; r < sample_count; r += 4) {
         int idx = window_start + (int)(rodinia_mt_xorshift32(&s) %
                                        (unsigned int)window_count);
 
         float v = 0.0f;
 
-        if (rodinia_mt_power)
-            v += rodinia_mt_power[idx];
-        if (rodinia_mt_temp0)
-            v += rodinia_mt_temp0[idx];
         if (rodinia_mt_temp1)
             v += rodinia_mt_temp1[idx];
 
