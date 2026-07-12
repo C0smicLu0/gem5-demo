@@ -39,7 +39,7 @@ EOF
 }
 
 if [[ ! -f "$CONFIG_FILE" ]]; then
-  echo "config not found: $CONFIG_FILE"
+  echo "config not found: $CONFIG_FILE" 
   exit 1
 fi
 
@@ -452,7 +452,7 @@ def c(s, code):
     return f"\033[{code}m{s}\033[0m"
 
 groups = {
-    "core": [],
+    "micro": [],
     "pannotia": [],
     "rodinia": [],
     "other": [],
@@ -460,7 +460,7 @@ groups = {
 
 for k in keys:
     if k in {"square", "sleepMutex", "lfTreeBarrUniq", "hacc", "lulesh"}:
-        groups["core"].append(k)
+        groups["micro"].append(k)
     elif k.startswith("pannotia-"):
         groups["pannotia"].append(k)
     elif k.startswith("rodinia-"):
@@ -472,7 +472,7 @@ print(c("Workloads", "1;36"))
 print(c("=" * 72, "36"))
 print(f"total: {len(keys)}")
 
-ordered = [("core", "Core"), ("pannotia", "Pannotia"), ("rodinia", "Rodinia"), ("other", "Other")]
+ordered = [("micro", "Micro"), ("pannotia", "Pannotia"), ("rodinia", "Rodinia"), ("other", "Other")]
 for key, title in ordered:
     items = groups[key]
     if not items:

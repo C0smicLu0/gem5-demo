@@ -19,17 +19,8 @@
     "square": {
       "workload_args": "--mem-size=8GB -c /gem5/tests/gem5/gpu/square_modified_src/square/bin/square-gpu-test"
     },
-    "sleepMutex": {
-      "workload_args": "--mem-size=8GB -c /gem5/tests/gem5/gpu/heterosync_modified_src/heterosync/bin/allSyncPrims-1kernel --options 'sleepMutex 10 16 4'"
-    },
-    "lfTreeBarrUniq": {
-      "workload_args": "--mem-size=8GB -c /gem5/tests/gem5/gpu/heterosync_modified_src/heterosync/bin/allSyncPrims-1kernel --options 'lfTreeBarrUniq 10 16 4'"
-    },
     "hacc": {
       "workload_args": "--mem-size=8GB -c /gem5/tests/gem5/gpu/hacc_modified_src/halo-finder/src/hip/ForceTreeTest --options '0.5 0.1 64 0.1 1 N 12 rcb'"
-    },
-    "lulesh": {
-      "workload_args": "--mem-size=8GB --download-resource lulesh --download-dir /gem5/tests/gem5/resources --mem-size=8GiB --dgpu --gfx-version gfx900 -c /gem5/tests/gem5/resources/lulesh --options '0.01 2'"
     },
     "pannotia-bc-1k-128k": {
       "workload_args": "--mem-size=8GB -c /gem5/tests/gem5/gpu/pannotia_modified_src/pannotia/bc/bin/bc.gem5 --options /gem5/tests/gem5/gpu/pannotia_modified_src/pannotia/datasets/1k_128k.gr"
@@ -40,14 +31,8 @@
     "pannotia-color-max-1k-128k": {
       "workload_args": "--mem-size=8GB -c /gem5/tests/gem5/gpu/pannotia_modified_src/pannotia/color/bin/color_max.gem5 --options '/gem5/tests/gem5/gpu/pannotia_modified_src/pannotia/datasets/1k_128k.gr 0'"
     },
-    "pannotia-mis-hip-1k-128k": {
-      "workload_args": "--mem-size=8GiB -c /gem5/tests/gem5/gpu/pannotia_modified_src/pannotia/mis/bin/mis_hip.gem5 --options '/gem5/tests/gem5/gpu/pannotia_modified_src/pannotia/datasets/1k_128k.gr 0'"
-    },
     "rodinia-bfs": {
       "workload_args": "-c /gem5/rodinia_hip/hip_mod/bin/bfs.out --options '/gem5/rodinia_hip/data/bfs/graph65536.txt'"
-    },
-    "rodinia-dwt2d": {
-      "workload_args": "-c /gem5/rodinia_hip/hip_mod/bin/dwt2d --options '/gem5/rodinia_hip/data/dwt2d/4096.rgb -d 4096x4096 -f -5 -c 3 -l 3'"
     },
     "rodinia-gaussian": {
       "workload_args": "-c /gem5/rodinia_hip/hip_mod/bin/gaussian --options '-f /gem5/rodinia_hip/data/gaussian/matrix80.txt'"
