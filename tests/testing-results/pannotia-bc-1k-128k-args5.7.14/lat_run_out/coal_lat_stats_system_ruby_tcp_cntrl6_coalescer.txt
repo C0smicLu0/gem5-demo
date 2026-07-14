@@ -1,0 +1,29 @@
+object: system.ruby.tcp_cntrl6.coalescer
+[GLOBAL]
+  accesses: 0
+  total_latency: 0
+  average_latency: 0
+  min_latency: 0
+  max_latency: 0
+  over_100: 0
+  over_500: 0
+  over_1000: 0
+  over_5000: 0
+[BY_TYPE]
+----
+object: system.ruby.tcp_cntrl6.coalescer
+[GLOBAL]
+  accesses: 15562218
+  total_latency: 910872210
+  average_latency: 58.531
+  min_latency: 1
+  max_latency: 4481
+  over_100: 2241328
+  over_500: 292642
+  over_1000: 150145
+  over_5000: 0
+[BY_TYPE]
+  type=LD accesses=14717926 total_latency=631052033 avg_latency=42.8764 min_latency=1 max_latency=4481 over_100=1508474 over_500=179650 over_1000=86854 over_5000=0
+  type=ST accesses=111448 total_latency=123977 avg_latency=1.11242 min_latency=1 max_latency=790 over_100=10 over_500=8 over_1000=0 over_5000=0
+  type=ATOMIC_RETURN accesses=732844 total_latency=279696200 avg_latency=381.659 min_latency=169 max_latency=2571 over_100=732844 over_500=112984 over_1000=63291 over_5000=0
+----

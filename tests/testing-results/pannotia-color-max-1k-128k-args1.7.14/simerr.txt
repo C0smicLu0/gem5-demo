@@ -1,0 +1,181 @@
+warn: Base 10 memory/cache size 8GB will be cast to base 2 size 8GiB.
+warn: Base 10 memory/cache size 8GB will be cast to base 2 size 8GiB.
+warn: Base 10 memory/cache size 8GB will be cast to base 2 size 8GiB.
+warn: system.ruby.network adopting orphan SimObject param 'ext_links'
+warn: system.ruby.network adopting orphan SimObject param 'int_links'
+src/base/statistics.hh:279: warn: One of the stats is a legacy stat. Legacy stat is a stat that does not belong to any statistics::Group. Legacy stat is deprecated.
+src/base/statistics.hh:279: warn: One of the stats is a legacy stat. Legacy stat is a stat that does not belong to any statistics::Group. Legacy stat is deprecated.
+src/base/statistics.hh:279: warn: One of the stats is a legacy stat. Legacy stat is a stat that does not belong to any statistics::Group. Legacy stat is deprecated.
+system.remote_gdb: Listening for connections on port 7000
+tcmalloc: large alloc 1073741824 bytes == 0x5b42445ac000 @ 
+src/mem/ruby/system/Sequencer.cc:810: warn: Replacement policy updates recently became the responsibility of SLICC state machines. Make sure to setMRU() near callbacks in .sm files!
+src/sim/mem_state.cc:443: info: Increasing stack size by one page.
+src/base/loader/symtab.cc:95: warn: Cannot insert a new symbol table due to name collisions. Adding prefix to each symbol's name can resolve this issue.
+src/base/loader/symtab.cc:95: warn: Cannot insert a new symbol table due to name collisions. Adding prefix to each symbol's name can resolve this issue.
+src/base/loader/symtab.cc:95: warn: Cannot insert a new symbol table due to name collisions. Adding prefix to each symbol's name can resolve this issue.
+src/base/loader/symtab.cc:95: warn: Cannot insert a new symbol table due to name collisions. Adding prefix to each symbol's name can resolve this issue.
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/base/loader/symtab.cc:95: warn: Cannot insert a new symbol table due to name collisions. Adding prefix to each symbol's name can resolve this issue.
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/base/loader/symtab.cc:95: warn: Cannot insert a new symbol table due to name collisions. Adding prefix to each symbol's name can resolve this issue.
+src/base/loader/symtab.cc:95: warn: Cannot insert a new symbol table due to name collisions. Adding prefix to each symbol's name can resolve this issue.
+src/base/loader/symtab.cc:95: warn: Cannot insert a new symbol table due to name collisions. Adding prefix to each symbol's name can resolve this issue.
+src/base/loader/symtab.cc:95: warn: Cannot insert a new symbol table due to name collisions. Adding prefix to each symbol's name can resolve this issue.
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/base/loader/symtab.cc:95: warn: Cannot insert a new symbol table due to name collisions. Adding prefix to each symbol's name can resolve this issue.
+src/base/loader/symtab.cc:95: warn: Cannot insert a new symbol table due to name collisions. Adding prefix to each symbol's name can resolve this issue.
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/base/loader/symtab.cc:95: warn: Cannot insert a new symbol table due to name collisions. Adding prefix to each symbol's name can resolve this issue.
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall set_robust_list(...)
+src/sim/syscall_emul.cc:97: warn: ignoring syscall rt_sigaction(...)
+      (further warnings will be suppressed)
+src/sim/syscall_emul.cc:97: warn: ignoring syscall rt_sigprocmask(...)
+      (further warnings will be suppressed)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall get_mempolicy(...)
+build/VEGA_X86/arch/x86/generated/exec-ns.cc.inc:27: warn: instruction 'frndint' unimplemented
+CHK parseCOO entry
+CHK parseCOO fopen ok
+src/sim/mem_state.cc:443: info: Increasing stack size by one page.
+src/sim/mem_state.cc:443: info: Increasing stack size by one page.
+CHK parseCOO after tuple_array malloc ptr=0x7fffef88f010
+CHK parseCOO header nodes=1024 edges=262144
+CHK parseCOO first edge raw head=1 tail=916 weight=68
+CHK parseCOO progress cnt=2/262144
+CHK parseCOO progress cnt=4/262144
+CHK parseCOO progress cnt=8/262144
+CHK parseCOO progress cnt=16/262144
+CHK parseCOO progress cnt=32/262144
+CHK parseCOO progress cnt=64/262144
+CHK parseCOO progress cnt=128/262144
+CHK parseCOO progress cnt=256/262144
+CHK parseCOO progress cnt=512/262144
+CHK parseCOO progress cnt=1024/262144
+CHK parseCOO progress cnt=2048/262144
+CHK parseCOO progress cnt=4096/262144
+CHK parseCOO progress cnt=8192/262144
+CHK parseCOO progress cnt=16384/262144
+CHK parseCOO progress cnt=32768/262144
+CHK parseCOO progress cnt=65536/262144
+CHK parseCOO progress cnt=131072/262144
+CHK parseCOO progress cnt=196608/262144
+CHK parseCOO progress cnt=262144/262144
+CHK parseCOO before sort cnt=262144 edges=262144
+src/arch/generic/debugfaults.hh:145: warn: MOVNTDQ: Ignoring non-temporal hint, modeling as cacheable!
+CHK parseCOO after sort
+CHK parseCOO before csr arrays malloc
+CHK parseCOO after csr arrays malloc row=0x4c53e0 col=0x4c63f0 data=0x5c6400
+CHK parseCOO after csr fill row_cnt=1024 idx=262144
+CHK parseCOO before freeing parse buffers
+CHK parseCOO after freeing parse buffers
+CHK parseCOO csr built cnt=262144
+CHK color_max after host malloc
+CHK color_max after host init
+CHK color_max before hipMalloc row_d
+src/gpu-compute/gpu_compute_driver.cc:675: warn: unimplemented ioctl: AMDKFD_IOC_ACQUIRE_VM
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mbind(...)
+src/gpu-compute/gpu_compute_driver.cc:283: warn: unimplemented ioctl: AMDKFD_IOC_SET_MEMORY_POLICY
+src/sim/syscall_emul.hh:2037: warn: mmap: writing to shared mmap region is currently unsupported. The write succeeds on the target, but it will not be propagated to the host or shared mappings
+src/gpu-compute/gpu_compute_driver.cc:144: warn: Unrecognized kfd mmap type 0
+src/gpu-compute/gpu_compute_driver.cc:852: warn: unimplemented ioctl: AMDKFD_IOC_MAP_MEMORY_TO_GPU
+src/gpu-compute/gpu_compute_driver.cc:441: warn: Signal events are only supported currently
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/power_state.cc:105: warn: PowerState: Already in the requested power state, request ignored
+src/sim/syscall_emul.cc:86: warn: ignoring syscall set_robust_list(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/gpu-compute/gpu_compute_driver.cc:585: warn: unimplemented ioctl: AMDKFD_IOC_SET_SCRATCH_BACKING_VA
+src/gpu-compute/gpu_compute_driver.cc:595: warn: unimplemented ioctl: AMDKFD_IOC_SET_TRAP_HANDLER
+CHK color_max after hipMalloc row_d
+CHK color_max after hipMalloc col_d
+CHK color_max after hipMalloc stop_d
+CHK color_max after hipMalloc color_d
+CHK color_max after hipMalloc node_value_d
+CHK color_max after hipMalloc max_d
+CHK color_max before m5_work_begin
+CHK color_max after m5_work_begin
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall set_robust_list(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:97: warn: ignoring syscall sched_yield(...)
+      (further warnings will be suppressed)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall set_robust_list(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall set_robust_list(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall set_robust_list(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall set_robust_list(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall set_robust_list(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall set_robust_list(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall set_robust_list(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall set_robust_list(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall set_robust_list(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall set_robust_list(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall set_robust_list(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall set_robust_list(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall set_robust_list(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall madvise(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall madvise(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall madvise(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall madvise(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall madvise(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall madvise(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall madvise(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall madvise(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall madvise(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall madvise(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall madvise(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall madvise(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall madvise(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall madvise(...)
+CHK color_max after cpu join
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall set_robust_list(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall madvise(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall sched_setaffinity(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall set_robust_list(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+src/sim/syscall_emul.cc:86: warn: ignoring syscall mprotect(...)
+build/VEGA_X86/arch/x86/generated/exec-ns.cc.inc:27: warn: instruction 'frndint' unimplemented
+CHK color_max before gpu loop blocks=896 threads=64 gpu_cus=224
+src/gpu-compute/gpu_command_processor.cc:653: warn: Ignoring vendor packet

@@ -1,0 +1,76 @@
+object: system.ruby.cp_cntrl11.sequencer1
+[GLOBAL]
+  accesses: 11255
+  total_latency: 884178
+  average_latency: 78.5587
+  min_latency: 1
+  max_latency: 21938
+  over_100: 984
+  over_500: 89
+  over_1000: 83
+  over_5000: 62
+[BY_TYPE]
+  type=LD accesses=1143 total_latency=132045 avg_latency=115.525 min_latency=1 max_latency=11096 over_100=536 over_500=4 over_1000=3 over_5000=2
+  type=ST accesses=462 total_latency=633020 avg_latency=1370.17 min_latency=1 max_latency=21938 over_100=118 over_500=76 over_1000=75 over_5000=55
+  type=IFETCH accesses=9482 total_latency=94710 avg_latency=9.9884 min_latency=1 max_latency=6618 over_100=314 over_500=6 over_1000=3 over_5000=3
+  type=RMW_Read accesses=132 total_latency=1596 avg_latency=12.0909 min_latency=1 max_latency=190 over_100=8 over_500=0 over_1000=0 over_5000=0
+  type=Locked_RMW_Read accesses=18 total_latency=22789 avg_latency=1266.06 min_latency=1 max_latency=10887 over_100=8 over_500=3 over_1000=2 over_5000=2
+  type=Locked_RMW_Write accesses=18 total_latency=18 avg_latency=1 min_latency=1 max_latency=1 over_100=0 over_500=0 over_1000=0 over_5000=0
+----
+object: system.ruby.cp_cntrl11.sequencer1
+[GLOBAL]
+  accesses: 11255
+  total_latency: 884178
+  average_latency: 78.5587
+  min_latency: 1
+  max_latency: 21938
+  over_100: 984
+  over_500: 89
+  over_1000: 83
+  over_5000: 62
+[BY_TYPE]
+  type=LD accesses=1143 total_latency=132045 avg_latency=115.525 min_latency=1 max_latency=11096 over_100=536 over_500=4 over_1000=3 over_5000=2
+  type=ST accesses=462 total_latency=633020 avg_latency=1370.17 min_latency=1 max_latency=21938 over_100=118 over_500=76 over_1000=75 over_5000=55
+  type=IFETCH accesses=9482 total_latency=94710 avg_latency=9.9884 min_latency=1 max_latency=6618 over_100=314 over_500=6 over_1000=3 over_5000=3
+  type=RMW_Read accesses=132 total_latency=1596 avg_latency=12.0909 min_latency=1 max_latency=190 over_100=8 over_500=0 over_1000=0 over_5000=0
+  type=Locked_RMW_Read accesses=18 total_latency=22789 avg_latency=1266.06 min_latency=1 max_latency=10887 over_100=8 over_500=3 over_1000=2 over_5000=2
+  type=Locked_RMW_Write accesses=18 total_latency=18 avg_latency=1 min_latency=1 max_latency=1 over_100=0 over_500=0 over_1000=0 over_5000=0
+----
+object: system.ruby.cp_cntrl11.sequencer1
+[GLOBAL]
+  accesses: 11255
+  total_latency: 884178
+  average_latency: 78.5587
+  min_latency: 1
+  max_latency: 21938
+  over_100: 984
+  over_500: 89
+  over_1000: 83
+  over_5000: 62
+[BY_TYPE]
+  type=LD accesses=1143 total_latency=132045 avg_latency=115.525 min_latency=1 max_latency=11096 over_100=536 over_500=4 over_1000=3 over_5000=2
+  type=ST accesses=462 total_latency=633020 avg_latency=1370.17 min_latency=1 max_latency=21938 over_100=118 over_500=76 over_1000=75 over_5000=55
+  type=IFETCH accesses=9482 total_latency=94710 avg_latency=9.9884 min_latency=1 max_latency=6618 over_100=314 over_500=6 over_1000=3 over_5000=3
+  type=RMW_Read accesses=132 total_latency=1596 avg_latency=12.0909 min_latency=1 max_latency=190 over_100=8 over_500=0 over_1000=0 over_5000=0
+  type=Locked_RMW_Read accesses=18 total_latency=22789 avg_latency=1266.06 min_latency=1 max_latency=10887 over_100=8 over_500=3 over_1000=2 over_5000=2
+  type=Locked_RMW_Write accesses=18 total_latency=18 avg_latency=1 min_latency=1 max_latency=1 over_100=0 over_500=0 over_1000=0 over_5000=0
+----
+object: system.ruby.cp_cntrl11.sequencer1
+[GLOBAL]
+  accesses: 9574
+  total_latency: 867626
+  average_latency: 90.6231
+  min_latency: 1
+  max_latency: 20569
+  over_100: 765
+  over_500: 86
+  over_1000: 70
+  over_5000: 66
+[BY_TYPE]
+  type=LD accesses=825 total_latency=96914 avg_latency=117.472 min_latency=1 max_latency=5548 over_100=418 over_500=4 over_1000=3 over_5000=1
+  type=ST accesses=301 total_latency=653711 avg_latency=2171.8 min_latency=1 max_latency=20569 over_100=81 over_500=61 over_1000=60 over_5000=60
+  type=IFETCH accesses=8281 total_latency=75728 avg_latency=9.14479 min_latency=1 max_latency=6134 over_100=250 over_500=16 over_1000=2 over_5000=1
+  type=RMW_Read accesses=131 total_latency=1617 avg_latency=12.3435 min_latency=1 max_latency=202 over_100=8 over_500=0 over_1000=0 over_5000=0
+  type=Locked_RMW_Read accesses=18 total_latency=39638 avg_latency=2202.11 min_latency=1 max_latency=10664 over_100=8 over_500=5 over_1000=5 over_5000=4
+  type=Locked_RMW_Write accesses=18 total_latency=18 avg_latency=1 min_latency=1 max_latency=1 over_100=0 over_500=0 over_1000=0 over_5000=0
+----

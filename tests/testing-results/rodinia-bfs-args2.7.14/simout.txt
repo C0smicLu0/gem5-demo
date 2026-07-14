@@ -1,0 +1,552 @@
+gem5 Simulator System.  https://www.gem5.org
+gem5 is copyrighted software; use the --copyright option for details.
+
+gem5 version 25.0.0.1
+gem5 compiled Jul 12 2026 13:08:51
+gem5 started Jul 14 2026 04:29:40
+gem5 executing on 9f691eee74c9, pid 1
+command line: /gem5/build/VEGA_X86/gem5.opt -d /gem5/tests/testing-results/rodinia-bfs-args2.7.14 -re /gem5/configs/example/apu_se.py --reg-alloc-policy=dynamic --stats-dump-mode=full --mem-size=8GB --l1d_size=512B --l1i_size=512B --l2_size=1KiB --l2-latency=50 --l2-hit-latency=18 --cpu-to-dir-latency=120 --recycle-latency=10 --l3-data-latency=20 --l3-tag-latency=15 --router-latency=1 --link-latency=1 -n32 -u208 -c /gem5/rodinia_hip/hip_mod/bin/bfs.out --options '/gem5/rodinia_hip/data/bfs/graph65536.txt --cpu-workers 31 --gpu-cus 208'
+
+Num SQC =  52 Num scalar caches =  52 Num CU =  208
+incrementing idx on  4
+incrementing idx on  8
+incrementing idx on  12
+incrementing idx on  16
+incrementing idx on  20
+incrementing idx on  24
+incrementing idx on  28
+incrementing idx on  32
+incrementing idx on  36
+incrementing idx on  40
+incrementing idx on  44
+incrementing idx on  48
+incrementing idx on  52
+incrementing idx on  56
+incrementing idx on  60
+incrementing idx on  64
+incrementing idx on  68
+incrementing idx on  72
+incrementing idx on  76
+incrementing idx on  80
+incrementing idx on  84
+incrementing idx on  88
+incrementing idx on  92
+incrementing idx on  96
+incrementing idx on  100
+incrementing idx on  104
+incrementing idx on  108
+incrementing idx on  112
+incrementing idx on  116
+incrementing idx on  120
+incrementing idx on  124
+incrementing idx on  128
+incrementing idx on  132
+incrementing idx on  136
+incrementing idx on  140
+incrementing idx on  144
+incrementing idx on  148
+incrementing idx on  152
+incrementing idx on  156
+incrementing idx on  160
+incrementing idx on  164
+incrementing idx on  168
+incrementing idx on  172
+incrementing idx on  176
+incrementing idx on  180
+incrementing idx on  184
+incrementing idx on  188
+incrementing idx on  192
+incrementing idx on  196
+incrementing idx on  200
+incrementing idx on  204
+incrementing idx on  4
+incrementing idx on  8
+incrementing idx on  12
+incrementing idx on  16
+incrementing idx on  20
+incrementing idx on  24
+incrementing idx on  28
+incrementing idx on  32
+incrementing idx on  36
+incrementing idx on  40
+incrementing idx on  44
+incrementing idx on  48
+incrementing idx on  52
+incrementing idx on  56
+incrementing idx on  60
+incrementing idx on  64
+incrementing idx on  68
+incrementing idx on  72
+incrementing idx on  76
+incrementing idx on  80
+incrementing idx on  84
+incrementing idx on  88
+incrementing idx on  92
+incrementing idx on  96
+incrementing idx on  100
+incrementing idx on  104
+incrementing idx on  108
+incrementing idx on  112
+incrementing idx on  116
+incrementing idx on  120
+incrementing idx on  124
+incrementing idx on  128
+incrementing idx on  132
+incrementing idx on  136
+incrementing idx on  140
+incrementing idx on  144
+incrementing idx on  148
+incrementing idx on  152
+incrementing idx on  156
+incrementing idx on  160
+incrementing idx on  164
+incrementing idx on  168
+incrementing idx on  172
+incrementing idx on  176
+incrementing idx on  180
+incrementing idx on  184
+incrementing idx on  188
+incrementing idx on  192
+incrementing idx on  196
+incrementing idx on  200
+incrementing idx on  204
+Global frequency set at 1000000000000 ticks per second
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+[bfs] Enter BFSGraph
+[bfs] after arg parse: input=/gem5/rodinia_hip/data/bfs/graph65536.txt gpu_cus=208
+[bfs] Opening graph file: /gem5/rodinia_hip/data/bfs/graph65536.txt
+[bfs] Finished reading file: nodes=65536 edges=393216 source=0
+[bfs] BFS_MT: nodes=65536 gpu_cus=208 gpu_blocks=512 threads_per_block=128
+[bfs] Allocated managed memory and initialized graph data
+[bfs] CPU-then-GPU phase start
+[bfs] CPU batch phase start
+[bfs] CPU phase start: requested_workers=31 planned_workers=31 edges=393216
+[bfs] pthread_create stopped at worker=30 ret=11
+[bfs] Created 30/31 CPU workers
+[bfs] Joining CPU worker thread 0
+[bfs] Joined CPU worker thread 0 sink=852093828
+[bfs] Joining CPU worker thread 1
+[bfs] Joined CPU worker thread 1 sink=888487994
+[bfs] Joining CPU worker thread 2
+[bfs] Joined CPU worker thread 2 sink=923829110
+[bfs] Joining CPU worker thread 3
+[bfs] Joined CPU worker thread 3 sink=963571117
+[bfs] Joining CPU worker thread 4
+[bfs] Joined CPU worker thread 4 sink=861422922
+[bfs] Joining CPU worker thread 5
+[bfs] Joined CPU worker thread 5 sink=2610677588
+[bfs] Joining CPU worker thread 6
+[bfs] Joined CPU worker thread 6 sink=2644751033
+[bfs] Joining CPU worker thread 7
+[bfs] Joined CPU worker thread 7 sink=2679153059
+[bfs] Joining CPU worker thread 8
+[bfs] Joined CPU worker thread 8 sink=2589152415
+[bfs] Joining CPU worker thread 9
+[bfs] Joined CPU worker thread 9 sink=2610799269
+[bfs] Joining CPU worker thread 10
+[bfs] Joined CPU worker thread 10 sink=4362163362
+[bfs] Joining CPU worker thread 11
+[bfs] Joined CPU worker thread 11 sink=4387522448
+[bfs] Joining CPU worker thread 12
+[bfs] Joined CPU worker thread 12 sink=4294082346
+[bfs] Joining CPU worker thread 13
+[bfs] Joined CPU worker thread 13 sink=4327138249
+[bfs] Joining CPU worker thread 14
+[bfs] Joined CPU worker thread 14 sink=4361896854
+[bfs] Joining CPU worker thread 15
+[bfs] Joined CPU worker thread 15 sink=6119627968
+[bfs] Joining CPU worker thread 16
+[bfs] Joined CPU worker thread 16 sink=6016557015
+[bfs] Joining CPU worker thread 17
+[bfs] Joined CPU worker thread 17 sink=6049821614
+[bfs] Joining CPU worker thread 18
+[bfs] Joined CPU worker thread 18 sink=6071687895
+[bfs] Joining CPU worker thread 19
+[bfs] Joined CPU worker thread 19 sink=6123514999
+[bfs] Joining CPU worker thread 20
+[bfs] Joined CPU worker thread 20 sink=7734429261
+[bfs] Joining CPU worker thread 21
+[bfs] Joined CPU worker thread 21 sink=7764963189
+[bfs] Joining CPU worker thread 22
+[bfs] Joined CPU worker thread 22 sink=7790203331
+[bfs] Joining CPU worker thread 23
+[bfs] Joined CPU worker thread 23 sink=7838772475
+[bfs] Joining CPU worker thread 24
+[bfs] Joined CPU worker thread 24 sink=7730940550
+[bfs] Joining CPU worker thread 25
+[bfs] Joined CPU worker thread 25 sink=9482357607
+[bfs] Joining CPU worker thread 26
+[bfs] Joined CPU worker thread 26 sink=9514589381
+[bfs] Joining CPU worker thread 27
+[bfs] Joined CPU worker thread 27 sink=9548884218
+[bfs] Joining CPU worker thread 28
+[bfs] Joined CPU worker thread 28 sink=9449548077
+[bfs] Joining CPU worker thread 29
+[bfs] Joined CPU worker thread 29 sink=9475636017
+[bfs] CPU workers joined
+[bfs] CPU phase completed
+[bfs] CPU batch phase done
+[bfs] GPU batch phase start
+[bfs] GPU BFS main loop begin
+[bfs] Iteration 0: launching GPU kernels
+[bfs] GPU kernels completed for iter 0
+[bfs] Iteration 0 finished, stop=1
+[bfs] Iteration 1: launching GPU kernels
+[bfs] GPU kernels completed for iter 1
+[bfs] Iteration 1 finished, stop=1
+[bfs] Iteration 2: launching GPU kernels
+[bfs] GPU kernels completed for iter 2
+[bfs] Iteration 2 finished, stop=1
+[bfs] Iteration 3: launching GPU kernels
+[bfs] GPU kernels completed for iter 3
+[bfs] Iteration 3 finished, stop=1
+[bfs] Iteration 4: launching GPU kernels
+[bfs] GPU kernels completed for iter 4
+[bfs] Iteration 4 finished, stop=1
+[bfs] Iteration 5: launching GPU kernels
+[bfs] GPU kernels completed for iter 5
+[bfs] Iteration 5 finished, stop=1
+[bfs] Iteration 6: launching GPU kernels
+[bfs] GPU kernels completed for iter 6
+[bfs] Iteration 6 finished, stop=1
+[bfs] Iteration 7: launching GPU kernels
+[bfs] GPU kernels completed for iter 7
+[bfs] Iteration 7 finished, stop=1
+[bfs] Iteration 8: launching GPU kernels
+[bfs] GPU kernels completed for iter 8
+[bfs] Iteration 8 finished, stop=1
+[bfs] Iteration 9: launching GPU kernels
+[bfs] GPU kernels completed for iter 9
+[bfs] Iteration 9 finished, stop=0
+[bfs] GPU BFS main loop done, iterations=10
+BFS_MT: GPU dummy blocks=208 threads=128 repeat=64
+[bfs] GPU batch phase done
+[bfs] sequential CPU-then-GPU phase done
+Kernel Executed 10 times
+
+==================== BFS_MT Timing Summary ====================
+[TIMING] cpu_threads:             31
+[TIMING] gpu_cus:                 208
+[TIMING] read+parse:              15614360 us
+[TIMING] setup (alloc+init):      64 us
+[TIMING] bfs loop (cpu+gpu+sync): 117431 us (iters=10)
+[TIMING] avg per iter:            11743.10 us/iter
+[TIMING] total runtime:           15732283 us
+===============================================================
+PASSED!
+breaking loop due to: exiting with last active thread context.
+Ticks: 15985219125000
+Exiting because  exiting with last active thread context

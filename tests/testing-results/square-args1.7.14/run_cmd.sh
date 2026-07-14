@@ -1,0 +1,3 @@
+#!/bin/bash
+set -e
+docker run --rm -it -u 1002:1002 -v /home/orange/gem5-demo:/gem5 -w /gem5 ghcr.io/gem5/gcn-gpu:v25-1 /gem5/build/VEGA_X86/gem5.opt -d /gem5/tests/testing-results/square-args1.7.14 -re /gem5/configs/example/apu_se.py --reg-alloc-policy=dynamic --stats-dump-mode=full --mem-size=8GB --l1d_size=512B --l1i_size=512B --l2_size=1KiB --l2-latency=50 --l2-hit-latency=18 --cpu-to-dir-latency=120 --recycle-latency=10 --l3-data-latency=20 --l3-tag-latency=15 --router-latency=1 --link-latency=1 -n16 -u224 --mem-size=8GB -c /gem5/tests/gem5/gpu/square_modified_src/square/bin/square-gpu-test --options --cpu-workers\ 14\ --gpu-cus\ 224 

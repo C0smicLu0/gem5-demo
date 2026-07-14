@@ -1,0 +1,47 @@
+指标 2.1 测试结果：
+
+(base) orange@roo-MZ72-HB2-00:~/gem5-demo/test_scripts$ ./functional_check.sh all
+
+=================================================================================================================================================
+  Functional Check Summary
+=================================================================================================================================================
+results_root : /home/orange/gem5-demo/tests/testing-results
+scan_suffix  : args1.7.14
+run_dirs     : 11
+workload                      | 资源 | 初始化 | 执行 | 结果 | 异常 | overall | notes                  
+------------------------------+------+--------+------+------+------+---------+------------------------
+hacc                          | PASS | PASS   | PASS | PASS | PASS | PASS    | PASS=5 FAIL=0 UNKNOWN=0
+pannotia-bc-1k-128k           | PASS | PASS   | PASS | PASS | PASS | PASS    | PASS=5 FAIL=0 UNKNOWN=0
+pannotia-color-max-1k-128k    | PASS | PASS   | PASS | PASS | PASS | PASS    | PASS=5 FAIL=0 UNKNOWN=0
+pannotia-color-maxmin-1k-128k | PASS | PASS   | PASS | PASS | PASS | PASS    | PASS=5 FAIL=0 UNKNOWN=0
+rodinia-bfs                   | PASS | PASS   | PASS | PASS | PASS | PASS    | PASS=5 FAIL=0 UNKNOWN=0
+rodinia-gaussian              | PASS | PASS   | PASS | PASS | PASS | PASS    | PASS=5 FAIL=0 UNKNOWN=0
+rodinia-hotspot               | PASS | PASS   | PASS | PASS | PASS | PASS    | PASS=5 FAIL=0 UNKNOWN=0
+rodinia-lavaMD                | PASS | PASS   | PASS | PASS | PASS | PASS    | PASS=5 FAIL=0 UNKNOWN=0
+rodinia-nw                    | PASS | PASS   | PASS | PASS | PASS | PASS    | PASS=5 FAIL=0 UNKNOWN=0
+rodinia-particlefilter        | PASS | PASS   | PASS | PASS | PASS | PASS    | PASS=5 FAIL=0 UNKNOWN=0
+square                        | PASS | PASS   | PASS | PASS | PASS | PASS    | PASS=5 FAIL=0 UNKNOWN=0
+
+指标 2.2 测试结果：
+(base) orange@roo-MZ72-HB2-00:~/gem5-demo/test_scripts$ ./latency_check.sh all
+
+=================================================================================================================================================
+  Latency Check Summary
+=================================================================================================================================================
+results_root : /home/orange/gem5-demo/tests/testing-results
+scope        : all
+workloads    : 11
+threshold    : <= 150.000
+workload                      | args1      | args2      | args3      | args4      | args5     
+------------------------------+------------+------------+------------+------------+-----------
+hacc                          | 35.664258  | 31.461410  | 24.978006  | 19.773157  | 16.022651 
+pannotia-bc-1k-128k           | 31.629317  | 31.416022  | 31.046723  | 30.596697  | 30.136457 
+pannotia-color-max-1k-128k    | 21.820945  | 21.726161  | 21.553979  | 21.234263  | 20.732977 
+pannotia-color-maxmin-1k-128k | 26.136610  | 25.803200  | 25.415756  | 24.952374  | 24.262382 
+rodinia-bfs                   | 58.878493  | 58.223149  | 57.552705  | 56.437935  | 55.178326 
+rodinia-gaussian              | 87.049234  | 87.104516  | 79.126918  | 80.655264  | 79.573976 
+rodinia-hotspot               | 82.452434  | 78.190466  | 73.907209  | 69.990359  | 66.951147 
+rodinia-lavaMD                | 114.259575 | 109.837613 | 106.161622 | 96.814901  | 87.257821 
+rodinia-nw                    | 125.874783 | 124.747083 | 138.903818 | 113.138167 | 100.487371
+rodinia-particlefilter        | 122.897867 | 122.444089 | 112.916423 | 120.764314 | 121.490612
+square                        | 67.658435  | 57.685423  | 39.355470  | 29.061980  | 24.501835

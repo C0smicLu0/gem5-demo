@@ -1,0 +1,15 @@
+object: system.ruby.tcp_cntrl31.coalescer
+[GLOBAL]
+  accesses: 66006
+  total_latency: 25009574
+  average_latency: 378.898
+  min_latency: 1
+  max_latency: 6997
+  over_100: 28824
+  over_500: 9536
+  over_1000: 7495
+  over_5000: 31
+[BY_TYPE]
+  type=LD accesses=53306 total_latency=24672775 avg_latency=462.852 min_latency=1 max_latency=6997 over_100=28298 over_500=9259 over_1000=7429 over_5000=31
+  type=ST accesses=12700 total_latency=336799 avg_latency=26.5196 min_latency=1 max_latency=1638 over_100=526 over_500=277 over_1000=66 over_5000=0
+----

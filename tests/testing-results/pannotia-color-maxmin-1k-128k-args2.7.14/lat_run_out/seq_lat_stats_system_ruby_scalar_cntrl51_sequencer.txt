@@ -1,0 +1,14 @@
+object: system.ruby.scalar_cntrl51.sequencer
+[GLOBAL]
+  accesses: 2001
+  total_latency: 110613
+  average_latency: 55.2789
+  min_latency: 1
+  max_latency: 1528
+  over_100: 378
+  over_500: 4
+  over_1000: 4
+  over_5000: 0
+[BY_TYPE]
+  type=LD accesses=2001 total_latency=110613 avg_latency=55.2789 min_latency=1 max_latency=1528 over_100=378 over_500=4 over_1000=4 over_5000=0
+----

@@ -1,0 +1,926 @@
+gem5 Simulator System.  https://www.gem5.org
+gem5 is copyrighted software; use the --copyright option for details.
+
+gem5 version 25.0.0.1
+gem5 compiled Jul 12 2026 13:08:51
+gem5 started Jul 14 2026 02:38:15
+gem5 executing on 57231a256562, pid 1
+command line: /gem5/build/VEGA_X86/gem5.opt -d /gem5/tests/testing-results/rodinia-gaussian-args2.7.14 -re /gem5/configs/example/apu_se.py --reg-alloc-policy=dynamic --stats-dump-mode=full --mem-size=8GB --l1d_size=512B --l1i_size=512B --l2_size=1KiB --l2-latency=50 --l2-hit-latency=18 --cpu-to-dir-latency=120 --recycle-latency=10 --l3-data-latency=20 --l3-tag-latency=15 --router-latency=1 --link-latency=1 -n32 -u208 -c /gem5/rodinia_hip/hip_mod/bin/gaussian --options '-f /gem5/rodinia_hip/data/gaussian/matrix80.txt --cpu-workers 30 --gpu-cus 208'
+
+Num SQC =  52 Num scalar caches =  52 Num CU =  208
+incrementing idx on  4
+incrementing idx on  8
+incrementing idx on  12
+incrementing idx on  16
+incrementing idx on  20
+incrementing idx on  24
+incrementing idx on  28
+incrementing idx on  32
+incrementing idx on  36
+incrementing idx on  40
+incrementing idx on  44
+incrementing idx on  48
+incrementing idx on  52
+incrementing idx on  56
+incrementing idx on  60
+incrementing idx on  64
+incrementing idx on  68
+incrementing idx on  72
+incrementing idx on  76
+incrementing idx on  80
+incrementing idx on  84
+incrementing idx on  88
+incrementing idx on  92
+incrementing idx on  96
+incrementing idx on  100
+incrementing idx on  104
+incrementing idx on  108
+incrementing idx on  112
+incrementing idx on  116
+incrementing idx on  120
+incrementing idx on  124
+incrementing idx on  128
+incrementing idx on  132
+incrementing idx on  136
+incrementing idx on  140
+incrementing idx on  144
+incrementing idx on  148
+incrementing idx on  152
+incrementing idx on  156
+incrementing idx on  160
+incrementing idx on  164
+incrementing idx on  168
+incrementing idx on  172
+incrementing idx on  176
+incrementing idx on  180
+incrementing idx on  184
+incrementing idx on  188
+incrementing idx on  192
+incrementing idx on  196
+incrementing idx on  200
+incrementing idx on  204
+incrementing idx on  4
+incrementing idx on  8
+incrementing idx on  12
+incrementing idx on  16
+incrementing idx on  20
+incrementing idx on  24
+incrementing idx on  28
+incrementing idx on  32
+incrementing idx on  36
+incrementing idx on  40
+incrementing idx on  44
+incrementing idx on  48
+incrementing idx on  52
+incrementing idx on  56
+incrementing idx on  60
+incrementing idx on  64
+incrementing idx on  68
+incrementing idx on  72
+incrementing idx on  76
+incrementing idx on  80
+incrementing idx on  84
+incrementing idx on  88
+incrementing idx on  92
+incrementing idx on  96
+incrementing idx on  100
+incrementing idx on  104
+incrementing idx on  108
+incrementing idx on  112
+incrementing idx on  116
+incrementing idx on  120
+incrementing idx on  124
+incrementing idx on  128
+incrementing idx on  132
+incrementing idx on  136
+incrementing idx on  140
+incrementing idx on  144
+incrementing idx on  148
+incrementing idx on  152
+incrementing idx on  156
+incrementing idx on  160
+incrementing idx on  164
+incrementing idx on  168
+incrementing idx on  172
+incrementing idx on  176
+incrementing idx on  180
+incrementing idx on  184
+incrementing idx on  188
+incrementing idx on  192
+incrementing idx on  196
+incrementing idx on  200
+incrementing idx on  204
+Global frequency set at 1000000000000 ticks per second
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+Forcing maxCoalescedReqs to 32 (TLB assoc.) 
+[gaussian] WG size of kernel 1 = 64, WG size of kernel 2= 4 X 4
+[gaussian] Total Device found: 1
+
+Device Name 		 -  
+**************************************
+Total Global Memory			 - 4194304 KB
+Shared memory available per block 	 - 64 KB
+Number of registers per thread block 	 - 65536
+Warp size in threads 			 - 64
+Memory Pitch 				 - 4294967296 bytes
+Maximum threads per block 		 - 1024
+Maximum Thread Dimension (block) 	 - 1024 1024 1024
+Maximum Thread Dimension (grid) 	 - 2147483647 2147483647 2147483647
+Total constant memory 			 - 4294967296 bytes
+CUDA ver 				 - 9.0
+Clock rate 				 - 1000000 KHz
+Texture Alignment 			 - 0 bytes
+Number of Multi processors 		 - 208
+
+[gaussian] Read file from /gem5/rodinia_hip/data/gaussian/matrix80.txt
+[gaussian] before fscanf Size
+[gaussian] InitProblemOnce: filename=/gem5/rodinia_hip/data/gaussian/matrix80.txt Size=80
+[gaussian] before malloc a, bytes=25600
+[gaussian] after malloc a
+[gaussian] before InitMat
+[gaussian] InitMat progress row=0/80
+[gaussian] InitMat progress row=64/80
+[gaussian] InitMat done rows=80 cols=80
+[gaussian] after InitMat
+[gaussian] before malloc b, bytes=320
+[gaussian] after malloc b
+[gaussian] before InitAry
+[gaussian] InitAry done size=80
+[gaussian] after InitAry
+[gaussian] before malloc m, bytes=25600
+[gaussian] after malloc m
+[gaussian] after arg parse: Size=80 mt_threads=30 num_cus=208
+[gaussian] after InitPerRun
+[gaussian] ForwardSub enter: Size=80 num_cus=208 block_size=64 grid_size=208
+[gaussian] 2D config: blockSize2d=4 gridSize2d=20 dimGridXY=20 x 20
+[gaussian] Gaussian sequential CPU-then-GPU phase start
+[gaussian] CPU batch phase start
+[gaussian] mt cfg: threads=30 work_percent=8 seed=1
+[gaussian] CPU phase start iter=0 threads=30 size=80
+[gaussian] Creating pthread tid=0 iter=0
+[gaussian] pthread_create success tid=0 iter=0
+[gaussian] Creating pthread tid=1 iter=0
+[gaussian] pthread_create success tid=1 iter=0
+[gaussian] Creating pthread tid=2 iter=0
+[gaussian] pthread_create success tid=2 iter=0
+[gaussian] Creating pthread tid=3 iter=0
+[gaussian] pthread_create success tid=3 iter=0
+[gaussian] Creating pthread tid=4 iter=0
+[gaussian] pthread_create success tid=4 iter=0
+[gaussian] Creating pthread tid=5 iter=0
+[gaussian] pthread_create success tid=5 iter=0
+[gaussian] Creating pthread tid=6 iter=0
+[gaussian] pthread_create success tid=6 iter=0
+[gaussian] Creating pthread tid=7 iter=0
+[gaussian] pthread_create success tid=7 iter=0
+[gaussian] Creating pthread tid=8 iter=0
+[gaussian] pthread_create success tid=8 iter=0
+[gaussian] Creating pthread tid=9 iter=0
+[gaussian] pthread_create success tid=9 iter=0
+[gaussian] Creating pthread tid=10 iter=0
+[gaussian] pthread_create success tid=10 iter=0
+[gaussian] Creating pthread tid=11 iter=0
+[gaussian] pthread_create success tid=11 iter=0
+[gaussian] Creating pthread tid=12 iter=0
+[gaussian] pthread_create success tid=12 iter=0
+[gaussian] Creating pthread tid=13 iter=0
+[gaussian] pthread_create success tid=13 iter=0
+[gaussian] Creating pthread tid=14 iter=0
+[gaussian] pthread_create success tid=14 iter=0
+[gaussian] Creating pthread tid=15 iter=0
+[gaussian] pthread_create success tid=15 iter=0
+[gaussian] Creating pthread tid=16 iter=0
+[gaussian] pthread_create success tid=16 iter=0
+[gaussian] Creating pthread tid=17 iter=0
+[gaussian] pthread_create success tid=17 iter=0
+[gaussian] Creating pthread tid=18 iter=0
+[gaussian] pthread_create success tid=18 iter=0
+[gaussian] Creating pthread tid=19 iter=0
+[gaussian] pthread_create success tid=19 iter=0
+[gaussian] Creating pthread tid=20 iter=0
+[gaussian] pthread_create success tid=20 iter=0
+[gaussian] Creating pthread tid=21 iter=0
+[gaussian] pthread_create success tid=21 iter=0
+[gaussian] Creating pthread tid=22 iter=0
+[gaussian] pthread_create success tid=22 iter=0
+[gaussian] Creating pthread tid=23 iter=0
+[gaussian] pthread_create success tid=23 iter=0
+[gaussian] Creating pthread tid=24 iter=0
+[gaussian] pthread_create success tid=24 iter=0
+[gaussian] Creating pthread tid=25 iter=0
+[gaussian] pthread_create success tid=25 iter=0
+[gaussian] Creating pthread tid=26 iter=0
+[gaussian] pthread_create success tid=26 iter=0
+[gaussian] Creating pthread tid=27 iter=0
+[gaussian] pthread_create success tid=27 iter=0
+[gaussian] Creating pthread tid=28 iter=0
+[gaussian] pthread_create success tid=28 iter=0
+[gaussian] Creating pthread tid=29 iter=0
+[gaussian] pthread_create success tid=29 iter=0
+[gaussian] Main thread waiting at CPU start barrier iter=0
+[gaussian] CPU workers released iter=0
+[gaussian] Joining pthread tid=0 iter=0
+[gaussian] Joined pthread tid=0 iter=0 loops=1
+[gaussian] Joining pthread tid=1 iter=0
+[gaussian] Joined pthread tid=1 iter=0 loops=1
+[gaussian] Joining pthread tid=2 iter=0
+[gaussian] Joined pthread tid=2 iter=0 loops=1
+[gaussian] Joining pthread tid=3 iter=0
+[gaussian] Joined pthread tid=3 iter=0 loops=1
+[gaussian] Joining pthread tid=4 iter=0
+[gaussian] Joined pthread tid=4 iter=0 loops=1
+[gaussian] Joining pthread tid=5 iter=0
+[gaussian] Joined pthread tid=5 iter=0 loops=1
+[gaussian] Joining pthread tid=6 iter=0
+[gaussian] Joined pthread tid=6 iter=0 loops=1
+[gaussian] Joining pthread tid=7 iter=0
+[gaussian] Joined pthread tid=7 iter=0 loops=1
+[gaussian] Joining pthread tid=8 iter=0
+[gaussian] Joined pthread tid=8 iter=0 loops=1
+[gaussian] Joining pthread tid=9 iter=0
+[gaussian] Joined pthread tid=9 iter=0 loops=1
+[gaussian] Joining pthread tid=10 iter=0
+[gaussian] Joined pthread tid=10 iter=0 loops=1
+[gaussian] Joining pthread tid=11 iter=0
+[gaussian] Joined pthread tid=11 iter=0 loops=1
+[gaussian] Joining pthread tid=12 iter=0
+[gaussian] Joined pthread tid=12 iter=0 loops=1
+[gaussian] Joining pthread tid=13 iter=0
+[gaussian] Joined pthread tid=13 iter=0 loops=1
+[gaussian] Joining pthread tid=14 iter=0
+[gaussian] Joined pthread tid=14 iter=0 loops=1
+[gaussian] Joining pthread tid=15 iter=0
+[gaussian] Joined pthread tid=15 iter=0 loops=1
+[gaussian] Joining pthread tid=16 iter=0
+[gaussian] Joined pthread tid=16 iter=0 loops=1
+[gaussian] Joining pthread tid=17 iter=0
+[gaussian] Joined pthread tid=17 iter=0 loops=1
+[gaussian] Joining pthread tid=18 iter=0
+[gaussian] Joined pthread tid=18 iter=0 loops=1
+[gaussian] Joining pthread tid=19 iter=0
+[gaussian] Joined pthread tid=19 iter=0 loops=1
+[gaussian] Joining pthread tid=20 iter=0
+[gaussian] Joined pthread tid=20 iter=0 loops=1
+[gaussian] Joining pthread tid=21 iter=0
+[gaussian] Joined pthread tid=21 iter=0 loops=1
+[gaussian] Joining pthread tid=22 iter=0
+[gaussian] Joined pthread tid=22 iter=0 loops=1
+[gaussian] Joining pthread tid=23 iter=0
+[gaussian] Joined pthread tid=23 iter=0 loops=1
+[gaussian] Joining pthread tid=24 iter=0
+[gaussian] Joined pthread tid=24 iter=0 loops=1
+[gaussian] Joining pthread tid=25 iter=0
+[gaussian] Joined pthread tid=25 iter=0 loops=1
+[gaussian] Joining pthread tid=26 iter=0
+[gaussian] Joined pthread tid=26 iter=0 loops=1
+[gaussian] Joining pthread tid=27 iter=0
+[gaussian] Joined pthread tid=27 iter=0 loops=1
+[gaussian] Joining pthread tid=28 iter=0
+[gaussian] Joined pthread tid=28 iter=0 loops=1
+[gaussian] Joining pthread tid=29 iter=0
+[gaussian] Joined pthread tid=29 iter=0 loops=1
+[gaussian] CPU phase completed iter=0
+[gaussian] CPU batch phase done
+[gaussian] GPU batch phase start
+[gaussian] GPU iter=0/79 before Fan1
+[gaussian] GPU iter=0 after Fan1 launch
+[gaussian] GPU iter=0 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=0 after Fan2 launch
+[gaussian] GPU iter=0 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=1 after Fan1 launch
+[gaussian] GPU iter=1 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=1 after Fan2 launch
+[gaussian] GPU iter=1 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=2 after Fan1 launch
+[gaussian] GPU iter=2 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=2 after Fan2 launch
+[gaussian] GPU iter=2 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=3 after Fan1 launch
+[gaussian] GPU iter=3 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=3 after Fan2 launch
+[gaussian] GPU iter=3 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=4 after Fan1 launch
+[gaussian] GPU iter=4 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=4 after Fan2 launch
+[gaussian] GPU iter=4 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=5 after Fan1 launch
+[gaussian] GPU iter=5 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=5 after Fan2 launch
+[gaussian] GPU iter=5 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=6 after Fan1 launch
+[gaussian] GPU iter=6 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=6 after Fan2 launch
+[gaussian] GPU iter=6 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=7 after Fan1 launch
+[gaussian] GPU iter=7 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=7 after Fan2 launch
+[gaussian] GPU iter=7 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=8 after Fan1 launch
+[gaussian] GPU iter=8 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=8 after Fan2 launch
+[gaussian] GPU iter=8 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=9 after Fan1 launch
+[gaussian] GPU iter=9 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=9 after Fan2 launch
+[gaussian] GPU iter=9 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=10 after Fan1 launch
+[gaussian] GPU iter=10 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=10 after Fan2 launch
+[gaussian] GPU iter=10 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=11 after Fan1 launch
+[gaussian] GPU iter=11 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=11 after Fan2 launch
+[gaussian] GPU iter=11 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=12 after Fan1 launch
+[gaussian] GPU iter=12 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=12 after Fan2 launch
+[gaussian] GPU iter=12 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=13 after Fan1 launch
+[gaussian] GPU iter=13 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=13 after Fan2 launch
+[gaussian] GPU iter=13 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=14 after Fan1 launch
+[gaussian] GPU iter=14 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=14 after Fan2 launch
+[gaussian] GPU iter=14 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=15 after Fan1 launch
+[gaussian] GPU iter=15 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=15 after Fan2 launch
+[gaussian] GPU iter=15 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=16/79 before Fan1
+[gaussian] GPU iter=16 after Fan1 launch
+[gaussian] GPU iter=16 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=16 after Fan2 launch
+[gaussian] GPU iter=16 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=17 after Fan1 launch
+[gaussian] GPU iter=17 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=17 after Fan2 launch
+[gaussian] GPU iter=17 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=18 after Fan1 launch
+[gaussian] GPU iter=18 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=18 after Fan2 launch
+[gaussian] GPU iter=18 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=19 after Fan1 launch
+[gaussian] GPU iter=19 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=19 after Fan2 launch
+[gaussian] GPU iter=19 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=20 after Fan1 launch
+[gaussian] GPU iter=20 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=20 after Fan2 launch
+[gaussian] GPU iter=20 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=21 after Fan1 launch
+[gaussian] GPU iter=21 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=21 after Fan2 launch
+[gaussian] GPU iter=21 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=22 after Fan1 launch
+[gaussian] GPU iter=22 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=22 after Fan2 launch
+[gaussian] GPU iter=22 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=23 after Fan1 launch
+[gaussian] GPU iter=23 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=23 after Fan2 launch
+[gaussian] GPU iter=23 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=24 after Fan1 launch
+[gaussian] GPU iter=24 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=24 after Fan2 launch
+[gaussian] GPU iter=24 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=25 after Fan1 launch
+[gaussian] GPU iter=25 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=25 after Fan2 launch
+[gaussian] GPU iter=25 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=26 after Fan1 launch
+[gaussian] GPU iter=26 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=26 after Fan2 launch
+[gaussian] GPU iter=26 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=27 after Fan1 launch
+[gaussian] GPU iter=27 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=27 after Fan2 launch
+[gaussian] GPU iter=27 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=28 after Fan1 launch
+[gaussian] GPU iter=28 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=28 after Fan2 launch
+[gaussian] GPU iter=28 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=29 after Fan1 launch
+[gaussian] GPU iter=29 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=29 after Fan2 launch
+[gaussian] GPU iter=29 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=30 after Fan1 launch
+[gaussian] GPU iter=30 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=30 after Fan2 launch
+[gaussian] GPU iter=30 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=31 after Fan1 launch
+[gaussian] GPU iter=31 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=31 after Fan2 launch
+[gaussian] GPU iter=31 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=32/79 before Fan1
+[gaussian] GPU iter=32 after Fan1 launch
+[gaussian] GPU iter=32 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=32 after Fan2 launch
+[gaussian] GPU iter=32 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=33 after Fan1 launch
+[gaussian] GPU iter=33 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=33 after Fan2 launch
+[gaussian] GPU iter=33 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=34 after Fan1 launch
+[gaussian] GPU iter=34 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=34 after Fan2 launch
+[gaussian] GPU iter=34 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=35 after Fan1 launch
+[gaussian] GPU iter=35 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=35 after Fan2 launch
+[gaussian] GPU iter=35 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=36 after Fan1 launch
+[gaussian] GPU iter=36 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=36 after Fan2 launch
+[gaussian] GPU iter=36 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=37 after Fan1 launch
+[gaussian] GPU iter=37 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=37 after Fan2 launch
+[gaussian] GPU iter=37 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=38 after Fan1 launch
+[gaussian] GPU iter=38 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=38 after Fan2 launch
+[gaussian] GPU iter=38 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=39 after Fan1 launch
+[gaussian] GPU iter=39 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=39 after Fan2 launch
+[gaussian] GPU iter=39 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=40 after Fan1 launch
+[gaussian] GPU iter=40 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=40 after Fan2 launch
+[gaussian] GPU iter=40 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=41 after Fan1 launch
+[gaussian] GPU iter=41 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=41 after Fan2 launch
+[gaussian] GPU iter=41 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=42 after Fan1 launch
+[gaussian] GPU iter=42 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=42 after Fan2 launch
+[gaussian] GPU iter=42 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=43 after Fan1 launch
+[gaussian] GPU iter=43 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=43 after Fan2 launch
+[gaussian] GPU iter=43 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=44 after Fan1 launch
+[gaussian] GPU iter=44 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=44 after Fan2 launch
+[gaussian] GPU iter=44 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=45 after Fan1 launch
+[gaussian] GPU iter=45 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=45 after Fan2 launch
+[gaussian] GPU iter=45 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=46 after Fan1 launch
+[gaussian] GPU iter=46 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=46 after Fan2 launch
+[gaussian] GPU iter=46 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=47 after Fan1 launch
+[gaussian] GPU iter=47 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=47 after Fan2 launch
+[gaussian] GPU iter=47 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=48/79 before Fan1
+[gaussian] GPU iter=48 after Fan1 launch
+[gaussian] GPU iter=48 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=48 after Fan2 launch
+[gaussian] GPU iter=48 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=49 after Fan1 launch
+[gaussian] GPU iter=49 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=49 after Fan2 launch
+[gaussian] GPU iter=49 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=50 after Fan1 launch
+[gaussian] GPU iter=50 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=50 after Fan2 launch
+[gaussian] GPU iter=50 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=51 after Fan1 launch
+[gaussian] GPU iter=51 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=51 after Fan2 launch
+[gaussian] GPU iter=51 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=52 after Fan1 launch
+[gaussian] GPU iter=52 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=52 after Fan2 launch
+[gaussian] GPU iter=52 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=53 after Fan1 launch
+[gaussian] GPU iter=53 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=53 after Fan2 launch
+[gaussian] GPU iter=53 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=54 after Fan1 launch
+[gaussian] GPU iter=54 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=54 after Fan2 launch
+[gaussian] GPU iter=54 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=55 after Fan1 launch
+[gaussian] GPU iter=55 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=55 after Fan2 launch
+[gaussian] GPU iter=55 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=56 after Fan1 launch
+[gaussian] GPU iter=56 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=56 after Fan2 launch
+[gaussian] GPU iter=56 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=57 after Fan1 launch
+[gaussian] GPU iter=57 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=57 after Fan2 launch
+[gaussian] GPU iter=57 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=58 after Fan1 launch
+[gaussian] GPU iter=58 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=58 after Fan2 launch
+[gaussian] GPU iter=58 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=59 after Fan1 launch
+[gaussian] GPU iter=59 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=59 after Fan2 launch
+[gaussian] GPU iter=59 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=60 after Fan1 launch
+[gaussian] GPU iter=60 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=60 after Fan2 launch
+[gaussian] GPU iter=60 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=61 after Fan1 launch
+[gaussian] GPU iter=61 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=61 after Fan2 launch
+[gaussian] GPU iter=61 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=62 after Fan1 launch
+[gaussian] GPU iter=62 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=62 after Fan2 launch
+[gaussian] GPU iter=62 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=63 after Fan1 launch
+[gaussian] GPU iter=63 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=63 after Fan2 launch
+[gaussian] GPU iter=63 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=64/79 before Fan1
+[gaussian] GPU iter=64 after Fan1 launch
+[gaussian] GPU iter=64 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=64 after Fan2 launch
+[gaussian] GPU iter=64 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=65 after Fan1 launch
+[gaussian] GPU iter=65 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=65 after Fan2 launch
+[gaussian] GPU iter=65 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=66 after Fan1 launch
+[gaussian] GPU iter=66 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=66 after Fan2 launch
+[gaussian] GPU iter=66 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=67 after Fan1 launch
+[gaussian] GPU iter=67 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=67 after Fan2 launch
+[gaussian] GPU iter=67 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=68 after Fan1 launch
+[gaussian] GPU iter=68 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=68 after Fan2 launch
+[gaussian] GPU iter=68 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=69 after Fan1 launch
+[gaussian] GPU iter=69 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=69 after Fan2 launch
+[gaussian] GPU iter=69 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=70 after Fan1 launch
+[gaussian] GPU iter=70 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=70 after Fan2 launch
+[gaussian] GPU iter=70 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=71 after Fan1 launch
+[gaussian] GPU iter=71 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=71 after Fan2 launch
+[gaussian] GPU iter=71 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=72 after Fan1 launch
+[gaussian] GPU iter=72 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=72 after Fan2 launch
+[gaussian] GPU iter=72 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=73 after Fan1 launch
+[gaussian] GPU iter=73 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=73 after Fan2 launch
+[gaussian] GPU iter=73 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=74 after Fan1 launch
+[gaussian] GPU iter=74 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=74 after Fan2 launch
+[gaussian] GPU iter=74 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=75 after Fan1 launch
+[gaussian] GPU iter=75 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=75 after Fan2 launch
+[gaussian] GPU iter=75 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=76 after Fan1 launch
+[gaussian] GPU iter=76 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=76 after Fan2 launch
+[gaussian] GPU iter=76 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=77 after Fan1 launch
+[gaussian] GPU iter=77 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=77 after Fan2 launch
+[gaussian] GPU iter=77 after Fan2 sync err=hipSuccess
+[gaussian] GPU iter=78 after Fan1 launch
+[gaussian] GPU iter=78 after Fan1 sync err=hipSuccess
+[gaussian] GPU iter=78 after Fan2 launch
+[gaussian] GPU iter=78 after Fan2 sync err=hipSuccess
+[gaussian] GPU batch phase done
+[gaussian] Gaussian sequential CPU-then-GPU phase done
+[gaussian] Time total (including memory transfers)	0.096520 sec
+[gaussian] Time for CUDA kernels:	0.096396 sec
+Exec: 96.396004
+[gaussian] PASSED!
+breaking loop due to: exiting with last active thread context.
+Ticks: 554676556000
+Exiting because  exiting with last active thread context

@@ -5,6 +5,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." >/dev/null 2>&1 && pwd)"
 RESULTS_ROOT="${REPO_ROOT}/tests/testing-results"
+VERSION_SUFFIX=".7.14"
+export VERSION_SUFFIX
 
 usage() {
   cat <<'USAGE'
@@ -27,7 +29,8 @@ import re
 import sys
 
 root = sys.argv[1]
-pattern = re.compile(r"args[1-5]$")
+suffix = re.escape(os.environ.get("VERSION_SUFFIX", ""))
+pattern = re.compile(rf"args[1-5]{suffix}$")
 
 if not os.path.isdir(root):
     raise SystemExit(0)
@@ -46,7 +49,8 @@ import re
 import sys
 
 root = sys.argv[1]
-pattern = re.compile(r"^(.*)-(.*args([1-5]))$")
+suffix = re.escape(os.environ.get("VERSION_SUFFIX", ""))
+pattern = re.compile(rf"^(.*)-(.*args([1-5]){suffix})$")
 seen = []
 
 if not os.path.isdir(root):
@@ -77,7 +81,8 @@ import sys
 
 root = sys.argv[1]
 workload = sys.argv[2]
-pattern = re.compile(r"^(.*)-(.*args([1-5]))$")
+suffix = re.escape(os.environ.get("VERSION_SUFFIX", ""))
+pattern = re.compile(rf"^(.*)-(.*args([1-5]){suffix})$")
 rows = []
 
 if os.path.isdir(root):
@@ -102,6 +107,7 @@ run_table() {
 
   python3 - "$SCRIPT_DIR" "$RESULTS_ROOT" "$scope" "$@" <<'PY'
 import re
+import os
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -113,7 +119,8 @@ import terminal_ui as ui
 results_root = Path(sys.argv[2])
 scope = sys.argv[3]
 run_names = sys.argv[4:]
-pattern = re.compile(r"^(.*)-(.*?(args([1-5])))$")
+suffix = re.escape(os.environ.get("VERSION_SUFFIX", ""))
+pattern = re.compile(rf"^(.*)-(.*?(args([1-5])){suffix})$")
 arg_order = ["args1", "args2", "args3", "args4", "args5"]
 
 by_workload = defaultdict(dict)

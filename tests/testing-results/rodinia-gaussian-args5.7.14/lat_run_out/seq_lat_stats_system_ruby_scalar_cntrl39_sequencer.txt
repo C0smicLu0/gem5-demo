@@ -1,0 +1,53 @@
+object: system.ruby.scalar_cntrl39.sequencer
+[GLOBAL]
+  accesses: 0
+  total_latency: 0
+  average_latency: 0
+  min_latency: 0
+  max_latency: 0
+  over_100: 0
+  over_500: 0
+  over_1000: 0
+  over_5000: 0
+[BY_TYPE]
+----
+object: system.ruby.scalar_cntrl39.sequencer
+[GLOBAL]
+  accesses: 0
+  total_latency: 0
+  average_latency: 0
+  min_latency: 0
+  max_latency: 0
+  over_100: 0
+  over_500: 0
+  over_1000: 0
+  over_5000: 0
+[BY_TYPE]
+----
+object: system.ruby.scalar_cntrl39.sequencer
+[GLOBAL]
+  accesses: 0
+  total_latency: 0
+  average_latency: 0
+  min_latency: 0
+  max_latency: 0
+  over_100: 0
+  over_500: 0
+  over_1000: 0
+  over_5000: 0
+[BY_TYPE]
+----
+object: system.ruby.scalar_cntrl39.sequencer
+[GLOBAL]
+  accesses: 504
+  total_latency: 174794
+  average_latency: 346.813
+  min_latency: 1
+  max_latency: 1853
+  over_100: 293
+  over_500: 114
+  over_1000: 106
+  over_5000: 0
+[BY_TYPE]
+  type=LD accesses=504 total_latency=174794 avg_latency=346.813 min_latency=1 max_latency=1853 over_100=293 over_500=114 over_1000=106 over_5000=0
+----

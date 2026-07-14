@@ -1,0 +1,53 @@
+object: system.ruby.sqc_cntrl0.sequencer
+[GLOBAL]
+  accesses: 0
+  total_latency: 0
+  average_latency: 0
+  min_latency: 0
+  max_latency: 0
+  over_100: 0
+  over_500: 0
+  over_1000: 0
+  over_5000: 0
+[BY_TYPE]
+----
+object: system.ruby.sqc_cntrl0.sequencer
+[GLOBAL]
+  accesses: 0
+  total_latency: 0
+  average_latency: 0
+  min_latency: 0
+  max_latency: 0
+  over_100: 0
+  over_500: 0
+  over_1000: 0
+  over_5000: 0
+[BY_TYPE]
+----
+object: system.ruby.sqc_cntrl0.sequencer
+[GLOBAL]
+  accesses: 0
+  total_latency: 0
+  average_latency: 0
+  min_latency: 0
+  max_latency: 0
+  over_100: 0
+  over_500: 0
+  over_1000: 0
+  over_5000: 0
+[BY_TYPE]
+----
+object: system.ruby.sqc_cntrl0.sequencer
+[GLOBAL]
+  accesses: 1195
+  total_latency: 161364
+  average_latency: 135.033
+  min_latency: 1
+  max_latency: 1482
+  over_100: 585
+  over_500: 57
+  over_1000: 29
+  over_5000: 0
+[BY_TYPE]
+  type=IFETCH accesses=1195 total_latency=161364 avg_latency=135.033 min_latency=1 max_latency=1482 over_100=585 over_500=57 over_1000=29 over_5000=0
+----

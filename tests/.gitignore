@@ -1,2 +1,9 @@
-testing-results
+# 忽略 testing-results 下所有内容，但不忽略目录本身
+/testing-results/*
+
+# 保留名称以 7.14 结尾的目录
+!/testing-results/*7.14/
+
+# 保留这些目录内的所有内容
+!/testing-results/*7.14/**
 gem5/resources

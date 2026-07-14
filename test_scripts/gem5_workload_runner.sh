@@ -247,6 +247,13 @@ add_resource_workload_args() {
           ;;
       esac
       ;;
+    rodinia-gaussian)
+      case " ${selected_profiles} " in
+        *" cores.args5 "*|*" args5 "*)
+          cpu_offset=3
+          ;;
+      esac
+      ;;
     # rodinia-lavaMD)
     #   case " ${selected_profiles} " in
     #     *" cores.args2 "*|*" args2 "*)

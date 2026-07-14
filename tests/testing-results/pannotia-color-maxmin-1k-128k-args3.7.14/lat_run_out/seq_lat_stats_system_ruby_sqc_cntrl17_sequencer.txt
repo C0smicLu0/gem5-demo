@@ -1,0 +1,14 @@
+object: system.ruby.sqc_cntrl17.sequencer
+[GLOBAL]
+  accesses: 921
+  total_latency: 308045
+  average_latency: 334.468
+  min_latency: 99
+  max_latency: 1030
+  over_100: 454
+  over_500: 213
+  over_1000: 213
+  over_5000: 0
+[BY_TYPE]
+  type=IFETCH accesses=921 total_latency=308045 avg_latency=334.468 min_latency=99 max_latency=1030 over_100=454 over_500=213 over_1000=213 over_5000=0
+----

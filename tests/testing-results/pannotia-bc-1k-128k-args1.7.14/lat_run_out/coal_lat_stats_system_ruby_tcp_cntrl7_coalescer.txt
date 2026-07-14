@@ -1,0 +1,32 @@
+object: system.ruby.tcp_cntrl7.coalescer
+[GLOBAL]
+  accesses: 15704944
+  total_latency: 911476409
+  average_latency: 58.0375
+  min_latency: 1
+  max_latency: 4482
+  over_100: 2220302
+  over_500: 281880
+  over_1000: 150438
+  over_5000: 0
+[BY_TYPE]
+  type=LD accesses=14873971 total_latency=636162748 avg_latency=42.7702 min_latency=1 max_latency=4482 over_100=1499248 over_500=173100 over_1000=86353 over_5000=0
+  type=ST accesses=109940 total_latency=127699 avg_latency=1.16153 min_latency=1 max_latency=658 over_100=21 over_500=20 over_1000=0 over_5000=0
+  type=ATOMIC_RETURN accesses=721033 total_latency=275185962 avg_latency=381.655 min_latency=169 max_latency=2626 over_100=721033 over_500=108760 over_1000=64085 over_5000=0
+----
+object: system.ruby.tcp_cntrl7.coalescer
+[GLOBAL]
+  accesses: 15716730
+  total_latency: 919981325
+  average_latency: 58.5352
+  min_latency: 1
+  max_latency: 4965
+  over_100: 2230032
+  over_500: 288386
+  over_1000: 151420
+  over_5000: 0
+[BY_TYPE]
+  type=LD accesses=14880836 total_latency=640694663 avg_latency=43.055 min_latency=1 max_latency=4965 over_100=1504429 over_500=176403 over_1000=86330 over_5000=0
+  type=ST accesses=110312 total_latency=128066 avg_latency=1.16094 min_latency=1 max_latency=658 over_100=21 over_500=20 over_1000=0 over_5000=0
+  type=ATOMIC_RETURN accesses=725582 total_latency=279158596 avg_latency=384.737 min_latency=169 max_latency=2601 over_100=725582 over_500=111963 over_1000=65090 over_5000=0
+----

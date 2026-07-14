@@ -1,0 +1,19 @@
+object: system.ruby.cp_cntrl10.sequencer1
+[GLOBAL]
+  accesses: 5495
+  total_latency: 369264
+  average_latency: 67.2
+  min_latency: 1
+  max_latency: 14921
+  over_100: 513
+  over_500: 69
+  over_1000: 61
+  over_5000: 18
+[BY_TYPE]
+  type=LD accesses=618 total_latency=58397 avg_latency=94.4935 min_latency=1 max_latency=6062 over_100=221 over_500=3 over_1000=3 over_5000=1
+  type=ST accesses=338 total_latency=191349 avg_latency=566.121 min_latency=1 max_latency=14921 over_100=80 over_500=47 over_1000=41 over_5000=12
+  type=IFETCH accesses=4459 total_latency=100960 avg_latency=22.6418 min_latency=1 max_latency=6541 over_100=196 over_500=15 over_1000=14 over_5000=4
+  type=RMW_Read accesses=44 total_latency=919 avg_latency=20.8864 min_latency=1 max_latency=186 over_100=5 over_500=0 over_1000=0 over_5000=0
+  type=Locked_RMW_Read accesses=18 total_latency=17621 avg_latency=978.944 min_latency=1 max_latency=9052 over_100=11 over_500=4 over_1000=3 over_5000=1
+  type=Locked_RMW_Write accesses=18 total_latency=18 avg_latency=1 min_latency=1 max_latency=1 over_100=0 over_500=0 over_1000=0 over_5000=0
+----
